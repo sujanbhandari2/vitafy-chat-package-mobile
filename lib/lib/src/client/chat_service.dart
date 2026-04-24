@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 
 import 'chat_api.dart';
 import 'chat_config.dart';
+import 'chat_connection_state.dart';
 import 'chat_dio.dart';
 import 'chat_repository.dart';
 import 'chat_repository_impl.dart';
@@ -38,6 +39,9 @@ class ChatService {
   ChatApi get api => _api;
   ChatSocketApi get socketApi => _socketApi;
   ChatRepository get repository => _repository;
+
+  Stream<ChatConnectionState> get connectionState =>
+      _socketClient.connectionState;
 
   Future<void> dispose() async {
     await _socketClient.close();

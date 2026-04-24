@@ -55,5 +55,54 @@ void main() {
       expect(message.replyToMessageId, '99');
       expect(message.replyTo?.content, 'original');
     });
+
+    test('DeliveredReceipt and ReadReceipt parse snake_case keys', () {
+      final delivered = DeliveredReceipt.fromJson({
+        'id': 'd1',
+        'message_id': 'm1',
+        'user_id': 'u1',
+        'deliveredAt': '2026-04-23T12:00:00.000Z',
+        'conversation_id': 'c1',
+      });
+      expect(delivered.messageId, 'm1');
+      expect(delivered.conversationId, 'c1');
+
+      final read = ReadReceipt.fromJson({
+        'id': 'r1',
+        'messageId': 'm1',
+        'chatUserId': 'u1',
+        'readAt': '2026-04-23T12:01:00.000Z',
+      });
+      expect(read.userId, 'u1');
+    });
+
+    test('RemovedReactionEvent fromJson', () {
+      final removed = RemovedReactionEvent.fromJson({
+        'messageId': 'm1',
+        'conversationId': 'c1',
+        'userId': 'u2',
+      });
+      expect(removed.messageId, 'm1');
+      expect(removed.userId, 'u2');
+    });
+
+    test('ChatTypingEvent.fromJson accepts snake_case keys', () {
+      final typing = ChatTypingEvent.fromJson({
+        'conversation_id': 'conv-9',
+        'user_id': 'user-2',
+        'name': 'Bob',
+      });
+      expect(typing.conversationId, 'conv-9');
+      expect(typing.userId, 'user-2');
+      expect(typing.name, 'Bob');
+    });
+
+    test('ChatTypingEvent.fromJson accepts chatUserId', () {
+      final typing = ChatTypingEvent.fromJson({
+        'conversationId': 'c1',
+        'chatUserId': 'legacy-u',
+      });
+      expect(typing.userId, 'legacy-u');
+    });
   });
 }

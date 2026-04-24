@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:dio/dio.dart';
+
 import 'chat_auth.dart';
 import 'models/chat_message.dart';
 import 'models/conversation.dart';
@@ -43,7 +45,12 @@ abstract class ChatRepository {
     required String userId,
     String? actorUserId,
   });
-  Future<List<ChatAttachment>> uploadFiles(ChatAuth auth, List<File> files);
+  Future<List<ChatAttachment>> uploadFiles(
+    ChatAuth auth,
+    List<File> files, {
+    void Function(int sent, int total)? onSendProgress,
+    CancelToken? cancelToken,
+  });
   Future<ChatMessage> sendRestMessage(
     ChatAuth auth, {
     required String conversationId,
@@ -163,8 +170,13 @@ class ChatTypingEvent {
 
   factory ChatTypingEvent.fromJson(Map<String, dynamic> json) {
     return ChatTypingEvent(
-      conversationId: json['conversationId']?.toString() ?? '',
-      userId: json['userId']?.toString() ?? '',
+      conversationId: json['conversationId']?.toString() ??
+          json['conversation_id']?.toString() ??
+          '',
+      userId: json['userId']?.toString() ??
+          json['user_id']?.toString() ??
+          json['chatUserId']?.toString() ??
+          '',
       name: json['name']?.toString(),
     );
   }

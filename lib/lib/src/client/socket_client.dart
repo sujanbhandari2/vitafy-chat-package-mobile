@@ -4,6 +4,8 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 
 import 'chat_auth.dart';
 import 'chat_config.dart';
+import 'chat_connection_state.dart';
+import 'chat_exceptions.dart';
 import 'chat_logger.dart';
 
 class SocketClient {
@@ -21,7 +23,18 @@ class SocketClient {
   final _eventsController = StreamController<SocketEvent>.broadcast();
   Stream<SocketEvent> get events => _eventsController.stream;
 
+  final _connectionStateController =
+      StreamController<ChatConnectionState>.broadcast();
+  Stream<ChatConnectionState> get connectionState =>
+      _connectionStateController.stream;
+
   bool get isConnected => _socket?.connected ?? false;
+
+  void _emitConnection(ChatConnectionState state) {
+    if (!_connectionStateController.isClosed) {
+      _connectionStateController.add(state);
+    }
+  }
 
   Future<void> connect(ChatAuth auth) async {
     if (_socket != null &&
@@ -49,6 +62,8 @@ class SocketClient {
       },
     );
 
+    _emitConnection(ChatConnectionState.connecting);
+
     final socket = io.io(
       effectiveSocketUrl,
       io.OptionBuilder()
@@ -71,10 +86,21 @@ class SocketClient {
         'Socket connected',
         data: {'id': socket.id, ..._sanitizedAuth(auth)},
       );
+      _emitConnection(ChatConnectionState.connected);
       _eventsController.add(const SocketEvent(type: SocketEventType.connected));
       if (!connectedCompleter.isCompleted) {
         connectedCompleter.complete();
       }
+    });
+
+    socket.on('reconnect_attempt', (_) {
+      _emitConnection(ChatConnectionState.reconnecting);
+    });
+    socket.on('reconnect', (_) {
+      _emitConnection(ChatConnectionState.connected);
+    });
+    socket.on('reconnect_failed', (_) {
+      _emitConnection(ChatConnectionState.failed);
     });
 
     socket.onDisconnect((reason) {
@@ -82,6 +108,9 @@ class SocketClient {
         'Socket disconnected',
         data: {'reason': reason},
       );
+      if (connectedCompleter.isCompleted) {
+        _emitConnection(ChatConnectionState.disconnected);
+      }
       _eventsController.add(
         SocketEvent(
           type: SocketEventType.disconnected,
@@ -90,7 +119,9 @@ class SocketClient {
       );
       if (!connectedCompleter.isCompleted) {
         connectedCompleter.completeError(
-          Exception('Socket disconnected before connect: $reason'),
+          ChatSocketHandshakeException(
+            message: 'Socket disconnected before connect: $reason',
+          ),
         );
       }
     });
@@ -108,7 +139,10 @@ class SocketClient {
       );
       if (!connectedCompleter.isCompleted) {
         connectedCompleter.completeError(
-          Exception('Socket connect error: ${error.toString()}'),
+          ChatSocketHandshakeException(
+            message: 'Socket connect error: ${error.toString()}',
+            cause: error,
+          ),
         );
       }
     });
@@ -126,7 +160,10 @@ class SocketClient {
       );
       if (!connectedCompleter.isCompleted) {
         connectedCompleter.completeError(
-          Exception('Socket error before connect: ${error.toString()}'),
+          ChatSocketHandshakeException(
+            message: 'Socket error before connect: ${error.toString()}',
+            cause: error,
+          ),
         );
       }
     });
@@ -154,11 +191,13 @@ class SocketClient {
     try {
       await connectedCompleter.future.timeout(
         _config.connectTimeout,
-        onTimeout: () => throw Exception(
-          'Socket connect timeout after ${_config.connectTimeout.inSeconds}s',
+        onTimeout: () => throw ChatSocketHandshakeException(
+          message:
+              'Socket connect timeout after ${_config.connectTimeout.inSeconds}s',
         ),
       );
     } catch (_) {
+      _emitConnection(ChatConnectionState.failed);
       if (identical(_socket, socket)) {
         socket.disconnect();
         socket.dispose();
@@ -176,7 +215,7 @@ class SocketClient {
   ) async {
     final socket = _socket;
     if (socket == null || !socket.connected) {
-      throw Exception('Socket is not connected');
+      throw const ChatSocketNotConnectedException();
     }
 
     _config.socketLogger?.call(
@@ -199,18 +238,31 @@ class SocketClient {
           final data = _unwrapAck(response);
           completer.complete(mapper(data));
         } catch (error, stackTrace) {
-          completer.completeError(error, stackTrace);
+          if (error is ChatSocketServerAckException) {
+            completer.completeError(error, stackTrace);
+          } else if (error is FormatException || error is TypeError) {
+            completer.completeError(
+              ChatModelParseException(
+                message: error.toString(),
+                cause: error,
+              ),
+              stackTrace,
+            );
+          } else {
+            completer.completeError(error, stackTrace);
+          }
         }
       },
     );
 
     return completer.future.timeout(
-      const Duration(seconds: 8),
-      onTimeout: () => throw Exception('Socket event timeout: $event'),
+      _config.socketAckTimeout,
+      onTimeout: () => throw ChatSocketAckTimeoutException(eventName: event),
     );
   }
 
   void disconnect() {
+    _emitConnection(ChatConnectionState.disconnected);
     _socket?.disconnect();
     _socket?.dispose();
     _socket = null;
@@ -220,6 +272,7 @@ class SocketClient {
   Future<void> close() async {
     disconnect();
     await _eventsController.close();
+    await _connectionStateController.close();
   }
 
   void _registerEvent(io.Socket socket, String event, SocketEventType type) {
@@ -236,7 +289,9 @@ class SocketClient {
     if (response is Map) {
       final responseMap = Map<String, dynamic>.from(response);
       if (responseMap['ok'] == false) {
-        throw Exception(responseMap['error']?.toString() ?? 'Socket error');
+        throw ChatSocketServerAckException(
+          message: responseMap['error']?.toString() ?? 'Socket error',
+        );
       }
       if (responseMap.containsKey('data')) {
         return responseMap['data'];

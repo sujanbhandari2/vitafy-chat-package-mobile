@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 
 import 'chat_auth.dart';
 import 'chat_config.dart';
+import 'chat_exceptions.dart';
 import 'models/chat_message.dart';
 
 class ChatApi {
@@ -12,12 +13,22 @@ class ChatApi {
   final Dio _dio;
   final ChatServiceConfig _config;
 
-  Future<Map<String, dynamic>> getTenantScope(ChatAuth auth) async {
-    final response = await _dio.get(
-      _chatUri('tenant'),
-      options: _authOptions(auth),
-    );
-    return _asMap(_unwrapData(response.data));
+  Future<T> _guard<T>(Future<T> Function() body) async {
+    try {
+      return await body();
+    } on DioException catch (e, st) {
+      Error.throwWithStackTrace(ChatHttpException.fromDio(e), st);
+    }
+  }
+
+  Future<Map<String, dynamic>> getTenantScope(ChatAuth auth) {
+    return _guard(() async {
+      final response = await _dio.get(
+        _chatUri('tenant'),
+        options: _authOptions(auth),
+      );
+      return _asMap(_unwrapData(response.data));
+    });
   }
 
   Future<Map<String, dynamic>> registerOrGetUser(
@@ -26,42 +37,48 @@ class ChatApi {
     required String providerUserId,
     required String email,
     String? name,
-  }) async {
-    final response = await _dio.post(
-      _chatUri('users'),
-      options: _authOptions(auth),
-      data: {
-        'providerId': providerId,
-        'providerUserId': providerUserId,
-        'email': email,
-        if (name != null && name.trim().isNotEmpty) 'name': name,
-      },
-    );
+  }) {
+    return _guard(() async {
+      final response = await _dio.post(
+        _chatUri('users'),
+        options: _authOptions(auth),
+        data: {
+          'providerId': providerId,
+          'providerUserId': providerUserId,
+          'email': email,
+          if (name != null && name.trim().isNotEmpty) 'name': name,
+        },
+      );
 
-    return _asMap(_unwrapData(response.data));
+      return _asMap(_unwrapData(response.data));
+    });
   }
 
   Future<List<Map<String, dynamic>>> getConversations(
     ChatAuth auth, {
     String? forUserId,
-  }) async {
-    final response = await _dio.get(
-      _chatUri('conversations'),
-      options: _authOptions(auth),
-      queryParameters: {
-        if (forUserId != null && forUserId.trim().isNotEmpty)
-          'forUserId': forUserId,
-      },
-    );
-    return _asMapList(_unwrapData(response.data));
+  }) {
+    return _guard(() async {
+      final response = await _dio.get(
+        _chatUri('conversations'),
+        options: _authOptions(auth),
+        queryParameters: {
+          if (forUserId != null && forUserId.trim().isNotEmpty)
+            'forUserId': forUserId,
+        },
+      );
+      return _asMapList(_unwrapData(response.data));
+    });
   }
 
-  Future<List<Map<String, dynamic>>> getUsers(ChatAuth auth) async {
-    final response = await _dio.get(
-      _chatUri('users'),
-      options: _authOptions(auth),
-    );
-    return _asMapList(_unwrapData(response.data));
+  Future<List<Map<String, dynamic>>> getUsers(ChatAuth auth) {
+    return _guard(() async {
+      final response = await _dio.get(
+        _chatUri('users'),
+        options: _authOptions(auth),
+      );
+      return _asMapList(_unwrapData(response.data));
+    });
   }
 
   Future<Map<String, dynamic>> getMessagesPage(
@@ -69,14 +86,16 @@ class ChatApi {
     String conversationId, {
     int page = 1,
     int pageSize = 50,
-  }) async {
-    final response = await _dio.get(
-      _chatUri('conversations/$conversationId/messages'),
-      options: _authOptions(auth),
-      queryParameters: {'page': page, 'pageSize': pageSize},
-    );
+  }) {
+    return _guard(() async {
+      final response = await _dio.get(
+        _chatUri('conversations/$conversationId/messages'),
+        options: _authOptions(auth),
+        queryParameters: {'page': page, 'pageSize': pageSize},
+      );
 
-    return _asMap(_unwrapData(response.data));
+      return _asMap(_unwrapData(response.data));
+    });
   }
 
   Future<Map<String, dynamic>> createConversation(
@@ -84,19 +103,21 @@ class ChatApi {
     required String type,
     String? creatorUserId,
     List<String>? participantIds,
-  }) async {
-    final response = await _dio.post(
-      _chatUri('conversations'),
-      options: _authOptions(auth),
-      data: {
-        'type': type,
-        if (creatorUserId != null && creatorUserId.trim().isNotEmpty)
-          'creatorUserId': creatorUserId,
-        if (participantIds != null) 'participantIds': participantIds,
-      },
-    );
+  }) {
+    return _guard(() async {
+      final response = await _dio.post(
+        _chatUri('conversations'),
+        options: _authOptions(auth),
+        data: {
+          'type': type,
+          if (creatorUserId != null && creatorUserId.trim().isNotEmpty)
+            'creatorUserId': creatorUserId,
+          if (participantIds != null) 'participantIds': participantIds,
+        },
+      );
 
-    return _asMap(_unwrapData(response.data));
+      return _asMap(_unwrapData(response.data));
+    });
   }
 
   Future<Map<String, dynamic>> addParticipant(
@@ -104,55 +125,63 @@ class ChatApi {
     required String conversationId,
     required String userId,
     String? actorUserId,
-  }) async {
-    final response = await _dio.post(
-      _chatUri('conversations/$conversationId/participants'),
-      options: _authOptions(auth),
-      data: {
-        'userId': userId,
-        if (actorUserId != null && actorUserId.trim().isNotEmpty)
-          'actorUserId': actorUserId,
-      },
-    );
+  }) {
+    return _guard(() async {
+      final response = await _dio.post(
+        _chatUri('conversations/$conversationId/participants'),
+        options: _authOptions(auth),
+        data: {
+          'userId': userId,
+          if (actorUserId != null && actorUserId.trim().isNotEmpty)
+            'actorUserId': actorUserId,
+        },
+      );
 
-    return _asMap(_unwrapData(response.data));
+      return _asMap(_unwrapData(response.data));
+    });
   }
 
   Future<List<ChatAttachment>> uploadFiles(
     ChatAuth auth,
-    List<File> files,
-  ) async {
+    List<File> files, {
+    void Function(int sent, int total)? onSendProgress,
+    CancelToken? cancelToken,
+  }) async {
     if (files.isEmpty) {
       return const [];
     }
 
-    final payload = <String, dynamic>{};
-    if (files.length == 1) {
-      payload['file'] = await MultipartFile.fromFile(files.first.path);
-    } else {
-      payload['files'] = await Future.wait(
-        files.map((file) => MultipartFile.fromFile(file.path)),
+    return _guard(() async {
+      final payload = <String, dynamic>{};
+      if (files.length == 1) {
+        payload['file'] = await MultipartFile.fromFile(files.first.path);
+      } else {
+        payload['files'] = await Future.wait(
+          files.map((file) => MultipartFile.fromFile(file.path)),
+        );
+      }
+
+      final response = await _dio.post(
+        _normalizePath(_config.uploadPath),
+        options: _authOptions(
+          auth,
+          includeDefaultHeaders: false,
+          contentType: 'multipart/form-data',
+        ),
+        data: FormData.fromMap(payload),
+        cancelToken: cancelToken,
+        onSendProgress: onSendProgress,
       );
-    }
 
-    final response = await _dio.post(
-      _normalizePath(_config.uploadPath),
-      options: _authOptions(
-        auth,
-        includeDefaultHeaders: false,
-        contentType: 'multipart/form-data',
-      ),
-      data: FormData.fromMap(payload),
-    );
-
-    final data = _asMap(_unwrapData(response.data));
-    final attachments = data['attachments'] as List<dynamic>? ?? <dynamic>[];
-    return attachments
-        .map(
-          (item) =>
-              ChatAttachment.fromJson(Map<String, dynamic>.from(item as Map)),
-        )
-        .toList();
+      final data = _asMap(_unwrapData(response.data));
+      final attachments = data['attachments'] as List<dynamic>? ?? <dynamic>[];
+      return attachments
+          .map(
+            (item) =>
+                ChatAttachment.fromJson(Map<String, dynamic>.from(item as Map)),
+          )
+          .toList();
+    });
   }
 
   Future<Map<String, dynamic>> postMessage(
@@ -163,23 +192,25 @@ class ChatApi {
     String content = '',
     List<ChatAttachment> attachments = const [],
     String? replyToMessageId,
-  }) async {
-    final response = await _dio.post(
-      _chatUri('conversations/$conversationId/messages'),
-      options: _authOptions(auth),
-      data: {
-        'senderId': senderId,
-        'type': type.apiValue,
-        'content': content,
-        if (attachments.isNotEmpty)
-          'attachments':
-              attachments.map((attachment) => attachment.toJson()).toList(),
-        if (replyToMessageId != null && replyToMessageId.trim().isNotEmpty)
-          'replyToMessageId': replyToMessageId,
-      },
-    );
+  }) {
+    return _guard(() async {
+      final response = await _dio.post(
+        _chatUri('conversations/$conversationId/messages'),
+        options: _authOptions(auth),
+        data: {
+          'senderId': senderId,
+          'type': type.apiValue,
+          'content': content,
+          if (attachments.isNotEmpty)
+            'attachments':
+                attachments.map((attachment) => attachment.toJson()).toList(),
+          if (replyToMessageId != null && replyToMessageId.trim().isNotEmpty)
+            'replyToMessageId': replyToMessageId,
+        },
+      );
 
-    return _asMap(_unwrapData(response.data));
+      return _asMap(_unwrapData(response.data));
+    });
   }
 
   Options _authOptions(

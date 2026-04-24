@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:dio/dio.dart';
+
 import 'chat_api.dart';
 import 'chat_auth.dart';
 import 'chat_repository.dart';
@@ -125,8 +127,18 @@ class BackendChatRepositoryImpl implements ChatRepository {
   }
 
   @override
-  Future<List<ChatAttachment>> uploadFiles(ChatAuth auth, List<File> files) {
-    return _chatApi.uploadFiles(auth, files);
+  Future<List<ChatAttachment>> uploadFiles(
+    ChatAuth auth,
+    List<File> files, {
+    void Function(int sent, int total)? onSendProgress,
+    CancelToken? cancelToken,
+  }) {
+    return _chatApi.uploadFiles(
+      auth,
+      files,
+      onSendProgress: onSendProgress,
+      cancelToken: cancelToken,
+    );
   }
 
   @override

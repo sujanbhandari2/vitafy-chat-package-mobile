@@ -4,6 +4,8 @@ import 'package:dio/dio.dart';
 
 import 'chat_auth.dart';
 import 'chat_config.dart';
+import 'chat_connection_state.dart';
+import 'chat_exceptions.dart';
 import 'chat_repository.dart';
 import 'chat_service.dart';
 import 'models/chat_message.dart';
@@ -22,6 +24,8 @@ class ChatClient {
   ChatRepository get repository => _service.repository;
   ChatServiceConfig get config => _service.config;
   Stream<ChatSocketEvent> get events => repository.socketEvents;
+  Stream<ChatConnectionState> get connectionState =>
+      _service.connectionState;
 
   Future<void> connect(ChatAuth auth) => repository.connectSocket(auth);
 
@@ -100,14 +104,36 @@ class ChatClient {
     );
   }
 
-  Future<List<ChatAttachment>> uploadFiles(ChatAuth auth, List<File> files) {
-    return repository.uploadFiles(auth, files);
+  Future<List<ChatAttachment>> uploadFiles(
+    ChatAuth auth,
+    List<File> files, {
+    void Function(int sent, int total)? onSendProgress,
+    CancelToken? cancelToken,
+  }) {
+    return repository.uploadFiles(
+      auth,
+      files,
+      onSendProgress: onSendProgress,
+      cancelToken: cancelToken,
+    );
   }
 
-  Future<ChatAttachment> uploadFile(ChatAuth auth, File file) async {
-    final attachments = await repository.uploadFiles(auth, [file]);
+  Future<ChatAttachment> uploadFile(
+    ChatAuth auth,
+    File file, {
+    void Function(int sent, int total)? onSendProgress,
+    CancelToken? cancelToken,
+  }) async {
+    final attachments = await repository.uploadFiles(
+      auth,
+      [file],
+      onSendProgress: onSendProgress,
+      cancelToken: cancelToken,
+    );
     if (attachments.isEmpty) {
-      throw Exception('Upload returned no attachments');
+      throw const ChatUnexpectedResponseException(
+        message: 'Upload returned no attachments',
+      );
     }
     return attachments.first;
   }

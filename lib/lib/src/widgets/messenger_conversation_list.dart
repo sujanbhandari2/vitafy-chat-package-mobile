@@ -432,14 +432,18 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     if (widget.emptyConversationsBuilder != null) {
       return widget.emptyConversationsBuilder!(context);
     }
-    return Center(
-      child: Text(
-        widget.emptyConversationsMessage,
-        style: TextStyle(
-          color: MessengerTheme.of(context).subtleText,
-          fontWeight: FontWeight.w600,
+    return Semantics(
+      container: true,
+      label: 'No conversations',
+      child: Center(
+        child: Text(
+          widget.emptyConversationsMessage,
+          style: TextStyle(
+            color: MessengerTheme.of(context).subtleText,
+            fontWeight: FontWeight.w600,
+          ),
+          textAlign: TextAlign.center,
         ),
-        textAlign: TextAlign.center,
       ),
     );
   }

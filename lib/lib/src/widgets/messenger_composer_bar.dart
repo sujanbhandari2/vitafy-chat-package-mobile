@@ -1,9 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/messenger_attachment.dart';
 import '../theme/messenger_theme.dart';
 
-class MessengerComposerBar extends StatelessWidget {
+class MessengerComposerBar extends StatefulWidget {
   const MessengerComposerBar({
     super.key,
     required this.controller,
@@ -19,6 +21,11 @@ class MessengerComposerBar extends StatelessWidget {
     this.hintText = 'Type your message...',
     this.attachmentSheetTitle = 'Attachments',
     this.attachmentOptions,
+    this.typingConversationId,
+    this.onTypingStart,
+    this.onTypingStop,
+    this.typingStartMinInterval = const Duration(seconds: 2),
+    this.typingStopIdle = const Duration(seconds: 2),
   });
 
   final TextEditingController controller;
@@ -35,97 +42,144 @@ class MessengerComposerBar extends StatelessWidget {
   final String attachmentSheetTitle;
   final List<MessengerAttachmentOption>? attachmentOptions;
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = MessengerTheme.of(context);
-    return Container(
-      decoration: BoxDecoration(
-        color: theme.surface,
-        border: Border(top: BorderSide(color: theme.border)),
-      ),
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-      child: AnimatedBuilder(
-        animation: controller,
-        builder: (context, _) {
-          final hasText = controller.text.trim().isNotEmpty;
-          final canSend = hasText && !isSending;
+  final String? typingConversationId;
+  final Future<void> Function(String conversationId)? onTypingStart;
+  final Future<void> Function(String conversationId)? onTypingStop;
+  final Duration typingStartMinInterval;
+  final Duration typingStopIdle;
 
-          return Row(
-            children: [
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: theme.composerFieldBackground,
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: controller,
-                          textInputAction: TextInputAction.send,
-                          onSubmitted: (_) {
-                            if (canSend) {
-                              onSend();
-                            }
-                          },
-                          minLines: 1,
-                          maxLines: 4,
-                          decoration: InputDecoration(
-                            hintText: hintText,
-                            hintStyle: TextStyle(color: theme.mutedText),
-                            border: InputBorder.none,
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 10,
-                            ),
-                          ),
-                        ),
-                      ),
-                      Container(
-                        width: 1,
-                        height: 24,
-                        color: theme.border,
-                      ),
-                      IconButton(
-                        onPressed:
-                            isSending ? null : () => _showAttachments(context),
-                        icon: Icon(
-                          Icons.add_rounded,
-                          color: theme.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              IconButton(
-                onPressed: onToggleRecording,
-                icon: Icon(
-                  isRecording ? Icons.stop_circle_outlined : Icons.mic_none,
-                  color:
-                      isRecording ? const Color(0xFFDC2626) : theme.mutedText,
-                ),
-              ),
-              _CircleButton(
-                icon: Icons.send_rounded,
-                color: canSend
-                    ? theme.primary
-                    : theme.primary.withValues(alpha: 0.35),
-                iconColor: Colors.white,
-                onTap: canSend ? onSend : null,
-              ),
-            ],
-          );
-        },
-      ),
-    );
+  bool get _typingEnabled =>
+      typingConversationId != null &&
+      typingConversationId!.trim().isNotEmpty &&
+      onTypingStart != null &&
+      onTypingStop != null;
+
+  @override
+  State<MessengerComposerBar> createState() => _MessengerComposerBarState();
+}
+
+class _MessengerComposerBarState extends State<MessengerComposerBar> {
+  Timer? _idleStopTimer;
+  DateTime? _lastTypingStartSent;
+  bool _hadNonEmptyForTyping = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_handleTextChanged);
+  }
+
+  @override
+  void didUpdateWidget(MessengerComposerBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_handleTextChanged);
+      widget.controller.addListener(_handleTextChanged);
+      _cancelIdleTimer();
+      unawaited(_emitStopIfNeeded(oldWidget));
+      _lastTypingStartSent = null;
+      _hadNonEmptyForTyping = false;
+    }
+    if (oldWidget.typingConversationId != widget.typingConversationId &&
+        widget._typingEnabled) {
+      _cancelIdleTimer();
+      unawaited(_emitStop());
+      _lastTypingStartSent = null;
+      _hadNonEmptyForTyping = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_handleTextChanged);
+    _cancelIdleTimer();
+    unawaited(_emitStop());
+    super.dispose();
+  }
+
+  void _cancelIdleTimer() {
+    _idleStopTimer?.cancel();
+    _idleStopTimer = null;
+  }
+
+  Future<void> _emitStop() async {
+    if (!widget._typingEnabled) {
+      return;
+    }
+    final id = widget.typingConversationId!.trim();
+    try {
+      await widget.onTypingStop!(id);
+    } catch (_) {}
+  }
+
+  Future<void> _emitStopIfNeeded(MessengerComposerBar old) async {
+    if (!old._typingEnabled) {
+      return;
+    }
+    final id = old.typingConversationId!.trim();
+    try {
+      await old.onTypingStop!(id);
+    } catch (_) {}
+  }
+
+  Future<void> _emitStart() async {
+    if (!widget._typingEnabled) {
+      return;
+    }
+    final id = widget.typingConversationId!.trim();
+    try {
+      await widget.onTypingStart!(id);
+    } catch (_) {}
+  }
+
+  void _scheduleIdleStop() {
+    if (!widget._typingEnabled) {
+      return;
+    }
+    _cancelIdleTimer();
+    _idleStopTimer = Timer(widget.typingStopIdle, () {
+      if (!mounted) {
+        return;
+      }
+      _idleStopTimer = null;
+      if (widget.controller.text.trim().isEmpty) {
+        return;
+      }
+      unawaited(_emitStop());
+      _lastTypingStartSent = null;
+      _hadNonEmptyForTyping = false;
+    });
+  }
+
+  void _handleTextChanged() {
+    if (!widget._typingEnabled) {
+      return;
+    }
+
+    final trimmed = widget.controller.text.trim();
+    if (trimmed.isEmpty) {
+      _cancelIdleTimer();
+      if (_hadNonEmptyForTyping) {
+        unawaited(_emitStop());
+      }
+      _lastTypingStartSent = null;
+      _hadNonEmptyForTyping = false;
+      return;
+    }
+
+    _hadNonEmptyForTyping = true;
+    final now = DateTime.now();
+    final last = _lastTypingStartSent;
+    final min = widget.typingStartMinInterval;
+    if (last == null || now.difference(last) >= min) {
+      _lastTypingStartSent = now;
+      unawaited(_emitStart());
+    }
+    _scheduleIdleStop();
   }
 
   Future<void> _showAttachments(BuildContext context) async {
-    final items = attachmentOptions ?? _defaultAttachmentOptions(context);
+    final items = widget.attachmentOptions ?? _defaultAttachmentOptions(context);
     if (items.isEmpty) {
       return;
     }
@@ -143,7 +197,7 @@ class MessengerComposerBar extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                attachmentSheetTitle,
+                widget.attachmentSheetTitle,
                 style:
                     const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
               ),
@@ -176,38 +230,135 @@ class MessengerComposerBar extends StatelessWidget {
       MessengerAttachmentOption(
         label: 'Camera',
         icon: Icons.photo_camera_outlined,
-        onTap: onPickCamera,
+        onTap: widget.onPickCamera,
       ),
     );
     options.add(
       MessengerAttachmentOption(
         label: 'Images',
         icon: Icons.image_outlined,
-        onTap: onPickImage,
+        onTap: widget.onPickImage,
       ),
     );
     options.add(
       MessengerAttachmentOption(
         label: 'Video',
         icon: Icons.videocam_outlined,
-        onTap: onPickVideo,
+        onTap: widget.onPickVideo,
       ),
     );
     options.add(
       MessengerAttachmentOption(
         label: 'Audio',
         icon: Icons.graphic_eq_rounded,
-        onTap: onPickAudio,
+        onTap: widget.onPickAudio,
       ),
     );
     options.add(
       MessengerAttachmentOption(
         label: 'Documents',
         icon: Icons.description_outlined,
-        onTap: onPickDocument,
+        onTap: widget.onPickDocument,
       ),
     );
     return options;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = MessengerTheme.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.surface,
+        border: Border(top: BorderSide(color: theme.border)),
+      ),
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+      child: AnimatedBuilder(
+        animation: widget.controller,
+        builder: (context, _) {
+          final hasText = widget.controller.text.trim().isNotEmpty;
+          final canSend = hasText && !widget.isSending;
+
+          return Row(
+            children: [
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: theme.composerFieldBackground,
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Semantics(
+                          label: 'Message composer',
+                          textField: true,
+                          child: TextField(
+                            controller: widget.controller,
+                            textInputAction: TextInputAction.send,
+                            onSubmitted: (_) {
+                              if (canSend) {
+                                widget.onSend();
+                              }
+                            },
+                            minLines: 1,
+                            maxLines: 4,
+                            decoration: InputDecoration(
+                              hintText: widget.hintText,
+                              hintStyle: TextStyle(color: theme.mutedText),
+                              border: InputBorder.none,
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Container(
+                        width: 1,
+                        height: 24,
+                        color: theme.border,
+                      ),
+                      IconButton(
+                        onPressed: widget.isSending
+                            ? null
+                            : () => _showAttachments(context),
+                        icon: Icon(
+                          Icons.add_rounded,
+                          color: theme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              IconButton(
+                onPressed: widget.onToggleRecording,
+                icon: Icon(
+                  widget.isRecording
+                      ? Icons.stop_circle_outlined
+                      : Icons.mic_none,
+                  color: widget.isRecording
+                      ? const Color(0xFFDC2626)
+                      : theme.mutedText,
+                ),
+              ),
+              _CircleButton(
+                icon: Icons.send_rounded,
+                color: canSend
+                    ? theme.primary
+                    : theme.primary.withValues(alpha: 0.35),
+                iconColor: Colors.white,
+                onTap: canSend ? widget.onSend : null,
+              ),
+            ],
+          );
+        },
+      ),
+    );
   }
 }
 

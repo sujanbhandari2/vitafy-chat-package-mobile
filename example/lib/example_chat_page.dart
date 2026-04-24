@@ -23,7 +23,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   final ScrollController _messagesScrollController = ScrollController();
 
   StreamSubscription<ChatSocketEvent>? _socketSubscription;
-  ChatClient? _client;
+  ChatSession? _session;
+  ChatClient? get _client => _session?.client;
   ChatAuth? _apiAuth;
   ChatAuth? _sessionAuth;
   ChatTenantScope? _tenantScope;
@@ -33,6 +34,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   List<Conversation> _conversations = const [];
   final Map<String, List<ChatMessage>> _messagesByConversation = {};
   final Map<String, int> _unreadByConversation = {};
+  final Map<String, Set<String>> _typingUserIdsByConversation = {};
 
   String? _selectedConversationId;
   String _statusText = 'Bootstrapping package flow...';
@@ -94,7 +96,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     }
 
     try {
-      await client.connect(sessionAuth);
+      await _session!.reconnectSocket();
       if (!mounted) {
         return true;
       }
@@ -151,9 +153,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
     await _disposeActiveClient();
 
-    ChatClient? bootstrappingClient;
+    ChatSession? bootstrappingSession;
     try {
-      final client = ChatClient(
+      final session = ChatSession(
         config: ChatServiceConfig(
           apiBaseUrl: apiBaseUrl,
           socketUrl: socketUrl,
@@ -164,30 +166,28 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
               _appendLog('SOCKET $message', data: data),
         ),
       );
-      bootstrappingClient = client;
+      bootstrappingSession = session;
 
       final apiAuth = ChatAuth(apiKey: apiKey);
-      final tenantScope = await client.getTenantScope(apiAuth);
-      final registeredUser = await client.registerOrGetUser(
-        apiAuth,
+      final bootstrapResult = await session.bootstrap(
+        apiAuth: apiAuth,
         providerId: providerId,
         providerUserId: providerUserId,
         email: email,
         name: name.isEmpty ? null : name,
       );
-      final sessionAuth = ChatAuth(
-        apiKey: apiKey,
-        chatUserId: registeredUser.id,
-      );
+      final tenantScope = session.tenantScope!;
+      final registeredUser = session.currentUser!;
+      final sessionAuth = session.sessionAuth!;
 
       if (!mounted) {
-        await client.dispose();
+        await session.dispose();
         return;
       }
 
-      _listenToSocketEvents(client);
+      _listenToSocketEvents(session.client);
       setState(() {
-        _client = client;
+        _session = session;
         _apiAuth = apiAuth;
         _sessionAuth = sessionAuth;
         _tenantScope = tenantScope;
@@ -195,21 +195,16 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         _isSocketConnected = false;
         _messagesByConversation.clear();
         _unreadByConversation.clear();
+        _typingUserIdsByConversation.clear();
         _selectedConversationId = null;
       });
-      bootstrappingClient = null;
+      bootstrappingSession = null;
 
-      var socketConnected = false;
-      try {
-        await client.connect(sessionAuth);
-        socketConnected = true;
-      } catch (error, stackTrace) {
+      final socketConnected = bootstrapResult.socketConnected;
+      if (!socketConnected && bootstrapResult.connectError != null) {
         _appendLog(
           'Socket connect failed, continuing in REST-only mode',
-          data: {
-            'error': error.toString(),
-            'stackTrace': stackTrace.toString()
-          },
+          data: {'error': bootstrapResult.connectError.toString()},
         );
       }
 
@@ -253,8 +248,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       });
       _showSnack('Bootstrap failed. Check console logs for details.');
     } finally {
-      if (bootstrappingClient != null) {
-        await bootstrappingClient.dispose();
+      if (bootstrappingSession != null) {
+        await bootstrappingSession.dispose();
       }
       if (mounted) {
         setState(() {
@@ -367,8 +362,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     String conversationId, {
     bool tryReconnect = true,
   }) async {
+    final session = _session;
     final client = _client;
-    if (client == null) {
+    if (session == null || client == null) {
       return;
     }
 
@@ -376,7 +372,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     if (previousConversationId != null &&
         previousConversationId != conversationId) {
       try {
-        await client.leaveConversation(previousConversationId);
+        await session.leaveConversation(previousConversationId);
       } catch (error) {
         _appendLog(
           'Leave conversation failed',
@@ -411,7 +407,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         return;
       }
 
-      await client.joinConversation(conversationId);
+      await session.joinConversation(conversationId);
 
       if (!mounted) {
         return;
@@ -662,6 +658,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       _conversations = const [];
       _messagesByConversation.clear();
       _unreadByConversation.clear();
+      _typingUserIdsByConversation.clear();
       _selectedConversationId = null;
       _statusText = 'Logged out.';
     });
@@ -673,11 +670,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   Future<void> _disposeActiveClient() async {
     await _socketSubscription?.cancel();
     _socketSubscription = null;
-    final client = _client;
-    _client = null;
+    final session = _session;
+    _session = null;
     _isSocketConnected = false;
-    if (client != null) {
-      await client.dispose();
+    if (session != null) {
+      await session.dispose();
     }
   }
 
@@ -760,16 +757,28 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         break;
       case ChatSocketEventType.userTyping:
         final typing = event.typing;
-        if (typing != null) {
+        if (typing != null &&
+            typing.userId.isNotEmpty &&
+            typing.conversationId.isNotEmpty) {
           setState(() {
-            _statusText = '${_nameForUser(typing.userId)} is typing...';
+            final set = _typingUserIdsByConversation.putIfAbsent(
+              typing.conversationId,
+              () => <String>{},
+            );
+            set.add(typing.userId);
           });
         }
         break;
       case ChatSocketEventType.userStoppedTyping:
-        setState(() {
-          _statusText = 'Realtime event: typing stopped.';
-        });
+        final typing = event.typing;
+        if (typing != null &&
+            typing.userId.isNotEmpty &&
+            typing.conversationId.isNotEmpty) {
+          setState(() {
+            final set = _typingUserIdsByConversation[typing.conversationId];
+            set?.remove(typing.userId);
+          });
+        }
         break;
       case ChatSocketEventType.userOnline:
         final presence = event.presence;
@@ -1149,6 +1158,43 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         userId;
   }
 
+  List<MessengerTypingUser> _remoteTypingUsersForShell() {
+    final conversationId = _selectedConversationId;
+    if (conversationId == null) {
+      return const [];
+    }
+    final ids = _typingUserIdsByConversation[conversationId];
+    if (ids == null || ids.isEmpty) {
+      return const [];
+    }
+    return ids
+        .map(
+          (id) => MessengerTypingUser(
+            userId: id,
+            displayLabel: _nameForUser(id),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Future<void> _onTypingStart(String conversationId) async {
+    if (!_isSocketConnected || _client == null) {
+      return;
+    }
+    try {
+      await _client!.startTyping(conversationId);
+    } catch (_) {}
+  }
+
+  Future<void> _onTypingStop(String conversationId) async {
+    if (!_isSocketConnected || _client == null) {
+      return;
+    }
+    try {
+      await _client!.stopTyping(conversationId);
+    } catch (_) {}
+  }
+
   String _initials(String text) {
     final parts = text
         .trim()
@@ -1233,74 +1279,74 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       body: SafeArea(
         child: Column(
           children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFFF0F7F5), Color(0xFFFFFFFF)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      _statusChip(
-                        'Tenant',
-                        _tenantScope?.tenantId ?? 'pending',
-                      ),
-                      _statusChip(
-                        'Chat user',
-                        _currentUser?.id ?? 'pending',
-                      ),
-                      _statusChip(
-                        'Socket',
-                        _sessionAuth == null
-                            ? 'pending'
-                            : (_isSocketConnected
-                                ? 'connected'
-                                : 'disconnected'),
-                      ),
-                      _statusChip(
-                        'Conversations',
-                        '${_conversations.length}',
-                      ),
-                      _statusChip(
-                        'Users',
-                        '${_uiUsers.length}',
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    _statusText,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: const Color(0xFF334155),
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                  if (_isBootstrapping) ...[
-                    const SizedBox(height: 12),
-                    const LinearProgressIndicator(
-                      minHeight: 4,
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  Text(
-                    'Transport logs are printed to the console.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: const Color(0xFF64748B),
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                ],
-              ),
-            ),
+            // Container(
+            //   width: double.infinity,
+            //   padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            //   decoration: const BoxDecoration(
+            //     gradient: LinearGradient(
+            //       colors: [Color(0xFFF0F7F5), Color(0xFFFFFFFF)],
+            //       begin: Alignment.topLeft,
+            //       end: Alignment.bottomRight,
+            //     ),
+            //   ),
+            //   child: Column(
+            //     crossAxisAlignment: CrossAxisAlignment.start,
+            //     children: [
+            //       Wrap(
+            //         spacing: 8,
+            //         runSpacing: 8,
+            //         children: [
+            //           _statusChip(
+            //             'Tenant',
+            //             _tenantScope?.tenantId ?? 'pending',
+            //           ),
+            //           _statusChip(
+            //             'Chat user',
+            //             _currentUser?.id ?? 'pending',
+            //           ),
+            //           _statusChip(
+            //             'Socket',
+            //             _sessionAuth == null
+            //                 ? 'pending'
+            //                 : (_isSocketConnected
+            //                     ? 'connected'
+            //                     : 'disconnected'),
+            //           ),
+            //           _statusChip(
+            //             'Conversations',
+            //             '${_conversations.length}',
+            //           ),
+            //           _statusChip(
+            //             'Users',
+            //             '${_uiUsers.length}',
+            //           ),
+            //         ],
+            //       ),
+            //       const SizedBox(height: 10),
+            //       Text(
+            //         _statusText,
+            //         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            //               color: const Color(0xFF334155),
+            //               fontWeight: FontWeight.w600,
+            //             ),
+            //       ),
+            //       if (_isBootstrapping) ...[
+            //         const SizedBox(height: 12),
+            //         const LinearProgressIndicator(
+            //           minHeight: 4,
+            //         ),
+            //       ],
+            //       const SizedBox(height: 12),
+            //       Text(
+            //         'Transport logs are printed to the console.',
+            //         style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            //               color: const Color(0xFF64748B),
+            //               fontWeight: FontWeight.w600,
+            //             ),
+            //       ),
+            //     ],
+            //   ),
+            // ),
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -1350,6 +1396,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                       'No conversations yet. Use the people list to create one through the package flow.',
                   emptyUsersMessage:
                       'No users found for this tenant. Register another user from a second device or profile to test direct chat creation.',
+                  remoteTypingUsers: _remoteTypingUsersForShell(),
+                  onTypingStart: _onTypingStart,
+                  onTypingStop: _onTypingStop,
                 ),
               ),
             ),
