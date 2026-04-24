@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/messenger_conversation.dart';
 import '../models/messenger_message.dart';
 import '../models/messenger_attachment.dart';
+import '../models/messenger_typing.dart';
 import 'messenger_avatar.dart';
 import 'messenger_composer_bar.dart';
 import 'messenger_message_bubble.dart';
@@ -38,6 +39,12 @@ class MessengerChatThread extends StatelessWidget {
     this.reactionOptions = const ['👍', '❤️', '😂', '😮', '😢', '🙏'],
     this.showDateSeparators = true,
     this.isMobile = false,
+    this.emptyMessagesMessage = 'No messages yet.',
+    this.emptyMessagesBuilder,
+    this.remoteTypingUsers = const [],
+    this.typingIndicatorPrefix = '',
+    this.onTypingStart,
+    this.onTypingStop,
   });
 
   final MessengerConversation? conversation;
@@ -68,10 +75,23 @@ class MessengerChatThread extends StatelessWidget {
   final List<String> reactionOptions;
   final bool showDateSeparators;
   final bool isMobile;
+  final String emptyMessagesMessage;
+  final WidgetBuilder? emptyMessagesBuilder;
+  final List<MessengerTypingUser> remoteTypingUsers;
+  final String typingIndicatorPrefix;
+  final Future<void> Function(String conversationId)? onTypingStart;
+  final Future<void> Function(String conversationId)? onTypingStop;
 
   @override
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
+    final visibleTyping = remoteTypingUsers
+        .where((user) => user.userId != currentUserId)
+        .toList(growable: false);
+    final typingLine = visibleTyping.isEmpty
+        ? ''
+        : _formatRemoteTypingLine(visibleTyping, typingIndicatorPrefix);
+
     final stage = Column(
       children: [
         _ThreadHeader(
@@ -83,16 +103,37 @@ class MessengerChatThread extends StatelessWidget {
           child: Container(
             color: isMobile ? theme.threadBackgroundMobile : theme.background,
             child: conversation == null
-                ? const Center(
-                    child: Text(
-                      'Select a conversation.',
-                      style: TextStyle(
-                        color: Color(0xFF64748B),
-                        fontWeight: FontWeight.w700,
+                ? Semantics(
+                    container: true,
+                    label: 'No conversation selected',
+                    child: const Center(
+                      child: Text(
+                        'Select a conversation.',
+                        style: TextStyle(
+                          color: Color(0xFF64748B),
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   )
-                : ListView.builder(
+                : messages.isEmpty
+                    ? Semantics(
+                        container: true,
+                        label: 'No messages in conversation',
+                        child: emptyMessagesBuilder != null
+                            ? emptyMessagesBuilder!(context)
+                            : Center(
+                                child: Text(
+                                  emptyMessagesMessage,
+                                  style: TextStyle(
+                                    color: theme.subtleText,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                      )
+                    : ListView.builder(
                     controller: messagesScrollController,
                     padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
                     itemCount: messages.length,
@@ -137,6 +178,8 @@ class MessengerChatThread extends StatelessWidget {
                   ),
           ),
         ),
+        if (conversation != null && typingLine.isNotEmpty)
+          _RemoteTypingStrip(text: typingLine, theme: theme),
         if (conversation != null)
           MessengerComposerBar(
             controller: composerController,
@@ -152,6 +195,9 @@ class MessengerChatThread extends StatelessWidget {
             hintText: composerHintText,
             attachmentSheetTitle: attachmentSheetTitle,
             attachmentOptions: attachmentOptions,
+            typingConversationId: conversation?.id,
+            onTypingStart: onTypingStart,
+            onTypingStop: onTypingStop,
           ),
       ],
     );
@@ -167,6 +213,62 @@ class MessengerChatThread extends StatelessWidget {
         border: Border.all(color: const Color(0xFFD8E3FB)),
       ),
       child: stage,
+    );
+  }
+}
+
+String _formatRemoteTypingLine(
+  List<MessengerTypingUser> users,
+  String prefix,
+) {
+  if (users.isEmpty) {
+    return '';
+  }
+  final names = users.map((e) => e.displayLabel).toList();
+  final String core;
+  if (names.length == 1) {
+    core = '${names[0]} is typing';
+  } else if (names.length == 2) {
+    core = '${names[0]} and ${names[1]} are typing';
+  } else {
+    core =
+        '${names[0]}, ${names[1]} and ${names.length - 2} others are typing';
+  }
+  final p = prefix.trim();
+  if (p.isEmpty) {
+    return core;
+  }
+  return '$p $core';
+}
+
+class _RemoteTypingStrip extends StatelessWidget {
+  const _RemoteTypingStrip({
+    required this.text,
+    required this.theme,
+  });
+
+  final String text;
+  final MessengerThemeData theme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: 'Typing: $text',
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 2, 12, 2),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            text,
+            style: TextStyle(
+              color: theme.mutedText,
+              fontSize: 12.5,
+              fontStyle: FontStyle.italic,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -44,9 +44,12 @@ class MessengerMessageBubble extends StatelessWidget {
     final textColor = isMine ? theme.bubbleMineText : theme.bubbleOtherText;
     final timeColor = isMine ? theme.bubbleMineTime : theme.bubbleOtherTime;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
+    return Semantics(
+      container: true,
+      label: 'Message from ${message.senderLabel}',
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
         mainAxisAlignment:
             isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -174,6 +177,7 @@ class MessengerMessageBubble extends StatelessWidget {
             ),
           ),
         ],
+      ),
       ),
     );
   }

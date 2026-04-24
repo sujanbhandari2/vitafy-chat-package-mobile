@@ -7,6 +7,7 @@ import '../models/messenger_message.dart';
 import '../models/messenger_user.dart';
 import '../models/messenger_search_visibility.dart';
 import '../models/messenger_attachment.dart';
+import '../models/messenger_typing.dart';
 import '../theme/messenger_theme.dart';
 import 'messenger_chat_thread.dart';
 import 'messenger_conversation_list.dart';
@@ -56,6 +57,12 @@ class MessengerChatShell extends StatefulWidget {
     this.attachmentOptions,
     this.theme,
     this.desktopBreakpoint = 980,
+    this.emptyMessagesMessage = 'No messages yet.',
+    this.emptyMessagesBuilder,
+    this.remoteTypingUsers = const [],
+    this.typingIndicatorPrefix = '',
+    this.onTypingStart,
+    this.onTypingStop,
   });
 
   final String currentUserId;
@@ -101,6 +108,12 @@ class MessengerChatShell extends StatefulWidget {
   final List<MessengerAttachmentOption>? attachmentOptions;
   final MessengerThemeData? theme;
   final double desktopBreakpoint;
+  final String emptyMessagesMessage;
+  final WidgetBuilder? emptyMessagesBuilder;
+  final List<MessengerTypingUser> remoteTypingUsers;
+  final String typingIndicatorPrefix;
+  final Future<void> Function(String conversationId)? onTypingStart;
+  final Future<void> Function(String conversationId)? onTypingStop;
 
   @override
   State<MessengerChatShell> createState() => _MessengerChatShellState();
@@ -192,6 +205,12 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
                   enableReactions: widget.enableReactions,
                   reactionOptions: widget.reactionOptions,
                   showDateSeparators: widget.showDateSeparators,
+                  emptyMessagesMessage: widget.emptyMessagesMessage,
+                  emptyMessagesBuilder: widget.emptyMessagesBuilder,
+                  remoteTypingUsers: widget.remoteTypingUsers,
+                  typingIndicatorPrefix: widget.typingIndicatorPrefix,
+                  onTypingStart: widget.onTypingStart,
+                  onTypingStop: widget.onTypingStop,
                 ),
               ),
             ],
@@ -225,6 +244,12 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
                 enableReactions: widget.enableReactions,
                 reactionOptions: widget.reactionOptions,
                 showDateSeparators: widget.showDateSeparators,
+                emptyMessagesMessage: widget.emptyMessagesMessage,
+                emptyMessagesBuilder: widget.emptyMessagesBuilder,
+                remoteTypingUsers: widget.remoteTypingUsers,
+                typingIndicatorPrefix: widget.typingIndicatorPrefix,
+                onTypingStart: widget.onTypingStart,
+                onTypingStop: widget.onTypingStop,
               )
             : MessengerConversationList(
                 isMobile: true,

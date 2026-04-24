@@ -3,6 +3,7 @@ export 'src/models/messenger_attachment.dart';
 export 'src/models/messenger_message.dart';
 export 'src/models/messenger_search_visibility.dart';
 export 'src/models/messenger_user.dart';
+export 'src/models/messenger_typing.dart';
 export 'src/theme/messenger_theme.dart';
 export 'src/widgets/messenger_avatar.dart';
 export 'src/widgets/messenger_chat_shell.dart';

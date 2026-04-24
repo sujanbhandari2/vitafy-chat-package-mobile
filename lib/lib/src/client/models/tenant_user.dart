@@ -28,13 +28,16 @@ class TenantUser {
   factory TenantUser.fromJson(Map<String, dynamic> json) {
     final rawRole = json['role']?.toString();
     return TenantUser(
-      id: json['id'] as String,
-      tenantId: json['tenantId'] as String,
+      id: json['id']?.toString() ?? '',
+      tenantId: json['tenantId']?.toString() ?? '',
       name: json['name']?.toString() ?? json['username']?.toString() ?? '',
       email: json['email']?.toString() ?? '',
       role: rawRole == null ? AppRole.client : parseRole(rawRole),
-      isOnline: json['isOnline'] as bool? ?? false,
-      createdAt: DateTime.parse(json['createdAt'] as String),
+      isOnline:
+          json['isOnline'] as bool? ?? json['is_online'] as bool? ?? false,
+      createdAt: DateTime.parse(
+        json['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
+      ),
       avatarUrl: json['avatarUrl']?.toString(),
       status: json['status']?.toString(),
     );
