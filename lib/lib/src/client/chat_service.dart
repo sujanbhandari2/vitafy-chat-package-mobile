@@ -17,9 +17,10 @@ class ChatService {
         _dio = dio ?? createChatDio(config),
         _socketClient = socketClient ??
             SocketClient(
+              config: config,
               socketUrl: config.socketUrl,
             ) {
-    _api = ChatApi(_dio);
+    _api = ChatApi(_dio, config);
     _socketApi = ChatSocketApi(_socketClient);
     _repository = BackendChatRepositoryImpl(_api, _socketApi);
   }

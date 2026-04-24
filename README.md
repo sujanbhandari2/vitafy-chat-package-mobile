@@ -1,10 +1,10 @@
 # Health Messenger UI
 
-Reusable chat UI widgets plus a backend client toolkit for Socket.IO + REST chat services.
+Reusable chat UI widgets plus a backend-aware Flutter client for REST + Socket.IO chat services.
 
 **What this package provides**
 - UI toolkit: chat shells, lists, bubbles, composer, and theme helpers.
-- Client toolkit: REST + Socket.IO integration, models, and repository API.
+- Client toolkit: tenant-scoped API key auth, chat-user registration, uploads, paginated message history, and realtime events.
 
 ## Getting started
 
@@ -20,17 +20,40 @@ import 'package:health_messenger_ui/lib/health_messenger_client.dart';
 
 final client = ChatClient(
   config: ChatServiceConfig(
-    apiBaseUrl: 'https://your-backend.example.com/api',
+    apiBaseUrl: 'https://your-backend.example.com',
     socketUrl: 'https://your-backend.example.com',
+    apiLogger: (message, {data}) => print('API: $message -> $data'),
+    socketLogger: (message, {data}) => print('SOCKET: $message -> $data'),
   ),
 );
 
-await client.connect('<auth-token>');
-client.events.listen((event) {
-  // Handle ChatSocketEvent
-});
+const auth = ChatAuth(
+  apiKey: '<accessKey>:<secretKey>',
+  chatUserId: '<chatUserId>',
+);
 
-final conversations = await client.getConversations('<auth-token>');
+final me = await client.registerOrGetUser(
+  auth,
+  providerId: 'mobile-app',
+  providerUserId: 'user-123',
+  email: 'user@example.com',
+  name: 'Jane Doe',
+);
+
+await client.connect(auth);
+final conversations = await client.getConversations(auth, forUserId: me.id);
+final messagesPage = await client.getMessages(auth, conversations.first.id);
+
+await client.joinConversation(conversations.first.id);
+await client.sendMessage(
+  conversationId: conversations.first.id,
+  type: MessageType.text,
+  content: 'Hello from Flutter',
+);
+
+client.events.listen((event) {
+  // Handle ChatSocketEventType.messageReceived, userTyping, userOnline, etc.
+});
 ```
 
 **UI Toolkit**
@@ -41,5 +64,7 @@ import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 ```
 
 ## Notes
-- The client SDK is backend-agnostic as long as your REST and Socket.IO API match the expected endpoints/events.
+- Default REST routes target `/api/v1/chat` and uploads target `/api/upload/file`.
+- Socket auth sends both `auth.apiKey` and `X-Api-Key`, plus `auth.userId/chatUserId` when provided.
+- `apiLogger` and `socketLogger` are optional named parameters intended for development-time transport debugging.
 - For a full working example, open the `example` app in this package.

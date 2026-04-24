@@ -1,3 +1,4 @@
+import 'chat_auth.dart';
 import 'chat_repository.dart';
 import 'models/chat_message.dart';
 import 'socket_client.dart';
@@ -27,75 +28,94 @@ class ChatSocketApi {
           );
           break;
         case SocketEventType.messageReceived:
-          final payload = Map<String, dynamic>.from(socketEvent.payload as Map);
           yield ChatSocketEvent(
             type: ChatSocketEventType.messageReceived,
-            message: ChatMessage.fromJson(payload),
+            message: ChatMessage.fromJson(_mapPayload(socketEvent.payload)),
           );
           break;
         case SocketEventType.messageReacted:
-          final payload = Map<String, dynamic>.from(socketEvent.payload as Map);
-          if (payload['reactions'] is List) {
-            final reactions = (payload['reactions'] as List)
-                .map(
-                  (item) =>
-                      MessageReaction.fromJson(
-                        Map<String, dynamic>.from(item as Map),
-                      ).copyWith(
-                        conversationId: payload['conversationId']?.toString(),
-                      ),
-                )
-                .toList();
-            yield ChatSocketEvent(
-              type: ChatSocketEventType.messageReacted,
-              reactions: reactions,
-            );
-          } else {
-            yield ChatSocketEvent(
-              type: ChatSocketEventType.messageReacted,
-              reaction: MessageReaction.fromJson(payload),
-            );
-          }
-          break;
-        case SocketEventType.messageDeleted:
-          final payload = Map<String, dynamic>.from(socketEvent.payload as Map);
           yield ChatSocketEvent(
-            type: ChatSocketEventType.messageDeleted,
-            deleted: DeletedMessageEvent.fromJson(payload),
+            type: ChatSocketEventType.messageReacted,
+            reaction:
+                MessageReaction.fromJson(_mapPayload(socketEvent.payload)),
+          );
+          break;
+        case SocketEventType.reactionRemoved:
+          yield ChatSocketEvent(
+            type: ChatSocketEventType.reactionRemoved,
+            removedReaction: RemovedReactionEvent.fromJson(
+              _mapPayload(socketEvent.payload),
+            ),
           );
           break;
         case SocketEventType.messageDelivered:
-          final payload = Map<String, dynamic>.from(socketEvent.payload as Map);
           yield ChatSocketEvent(
             type: ChatSocketEventType.messageDelivered,
-            delivered: DeliveredReceipt.fromJson(payload),
+            delivered:
+                DeliveredReceipt.fromJson(_mapPayload(socketEvent.payload)),
           );
           break;
         case SocketEventType.messageRead:
-          final payload = Map<String, dynamic>.from(socketEvent.payload as Map);
           yield ChatSocketEvent(
             type: ChatSocketEventType.messageRead,
-            receipt: ReadReceipt.fromJson(payload),
+            receipt: ReadReceipt.fromJson(_mapPayload(socketEvent.payload)),
+          );
+          break;
+        case SocketEventType.userTyping:
+          yield ChatSocketEvent(
+            type: ChatSocketEventType.userTyping,
+            typing: ChatTypingEvent.fromJson(_mapPayload(socketEvent.payload)),
+          );
+          break;
+        case SocketEventType.userStoppedTyping:
+          yield ChatSocketEvent(
+            type: ChatSocketEventType.userStoppedTyping,
+            typing: ChatTypingEvent.fromJson(_mapPayload(socketEvent.payload)),
+          );
+          break;
+        case SocketEventType.userOnline:
+          yield ChatSocketEvent(
+            type: ChatSocketEventType.userOnline,
+            presence:
+                ChatPresenceEvent.fromJson(_mapPayload(socketEvent.payload)),
+          );
+          break;
+        case SocketEventType.userOffline:
+          yield ChatSocketEvent(
+            type: ChatSocketEventType.userOffline,
+            presence:
+                ChatPresenceEvent.fromJson(_mapPayload(socketEvent.payload)),
           );
           break;
       }
     }
   }
 
-  Future<void> connect(String token) => _socketClient.connect(token);
+  Future<void> connect(ChatAuth auth) => _socketClient.connect(auth);
 
   void disconnect() => _socketClient.disconnect();
 
   Future<void> joinConversation(String conversationId) {
-    return _socketClient.emitWithAck<void>('join_conversation', {
-      'conversationId': conversationId,
-    }, (_) {});
+    return _socketClient.emitWithAck<void>(
+      'join_conversation',
+      {'conversationId': conversationId},
+      (_) {},
+    );
+  }
+
+  Future<void> leaveConversation(String conversationId) {
+    return _socketClient.emitWithAck<void>(
+      'leave_conversation',
+      {'conversationId': conversationId},
+      (_) {},
+    );
   }
 
   Future<ChatMessage> sendMessage({
     required String conversationId,
     required MessageType type,
     required String content,
+    String? replyToMessageId,
   }) {
     return _socketClient.emitWithAck<ChatMessage>(
       'send_message',
@@ -103,89 +123,91 @@ class ChatSocketApi {
         'conversationId': conversationId,
         'type': type.apiValue,
         'content': content,
+        if (replyToMessageId != null && replyToMessageId.trim().isNotEmpty)
+          'replyToMessageId': replyToMessageId,
       },
-      (data) => ChatMessage.fromJson(Map<String, dynamic>.from(data as Map)),
+      (data) => ChatMessage.fromJson(_mapPayload(data)),
+    );
+  }
+
+  Future<void> startTyping(String conversationId) {
+    return _socketClient.emitWithAck<void>(
+      'typing_start',
+      {'conversationId': conversationId},
+      (_) {},
+    );
+  }
+
+  Future<void> stopTyping(String conversationId) {
+    return _socketClient.emitWithAck<void>(
+      'typing_stop',
+      {'conversationId': conversationId},
+      (_) {},
     );
   }
 
   Future<MessageReaction> reactToMessage({
+    required String conversationId,
     required String messageId,
     required String reactionType,
   }) {
-    return addReaction(messageId: messageId, emoji: reactionType);
-  }
-
-  Future<MessageReaction> addReaction({
-    required String messageId,
-    required String emoji,
-  }) {
     return _socketClient.emitWithAck<MessageReaction>(
-      'add_reaction',
-      {'messageId': messageId, 'emoji': emoji},
-      (data) => _mapReactionAckData(data, messageId, emoji),
+      'react_message',
+      {
+        'conversationId': conversationId,
+        'messageId': messageId,
+        'reactionType': reactionType,
+      },
+      (data) => MessageReaction.fromJson(_mapPayload(data)),
     );
   }
 
-  Future<MessageReaction> removeReaction({
+  Future<bool> removeReaction({
+    required String conversationId,
     required String messageId,
-    required String emoji,
   }) {
-    return _socketClient.emitWithAck<MessageReaction>(
+    return _socketClient.emitWithAck<bool>(
       'remove_reaction',
-      {'messageId': messageId, 'emoji': emoji},
-      (data) => _mapReactionAckData(data, messageId, emoji),
+      {
+        'conversationId': conversationId,
+        'messageId': messageId,
+      },
+      (data) {
+        final payload = _mapPayload(data);
+        return payload['removed'] == true;
+      },
     );
   }
 
-  MessageReaction _mapReactionAckData(
-    dynamic data,
-    String messageId,
-    String emoji,
-  ) {
-    final payload = Map<String, dynamic>.from(data as Map);
-    if (payload['reactions'] is List) {
-      final list = payload['reactions'] as List;
-      if (list.isNotEmpty) {
-        return MessageReaction.fromJson(
-          Map<String, dynamic>.from(list.first as Map),
-        ).copyWith(conversationId: payload['conversationId']?.toString());
-      }
-    }
-    if (payload['reactionType'] != null || payload['emoji'] != null) {
-      return MessageReaction.fromJson(payload);
-    }
-    return MessageReaction(
-      id: '',
-      messageId: payload['messageId']?.toString() ?? messageId,
-      userId: '',
-      reactionType: emoji,
-      conversationId: payload['conversationId']?.toString(),
-    );
-  }
-
-  Future<DeletedMessageEvent> deleteMessage(String messageId) {
-    return _socketClient.emitWithAck<DeletedMessageEvent>(
-      'delete_message',
-      {'messageId': messageId},
-      (data) =>
-          DeletedMessageEvent.fromJson(Map<String, dynamic>.from(data as Map)),
-    );
-  }
-
-  Future<DeliveredReceipt> markAsDelivered(String messageId) {
+  Future<DeliveredReceipt> markAsDelivered({
+    required String conversationId,
+    required String messageId,
+  }) {
     return _socketClient.emitWithAck<DeliveredReceipt>(
-      'mark_as_delivered',
-      {'messageId': messageId},
-      (data) =>
-          DeliveredReceipt.fromJson(Map<String, dynamic>.from(data as Map)),
+      'message_delivered',
+      {
+        'conversationId': conversationId,
+        'messageId': messageId,
+      },
+      (data) => DeliveredReceipt.fromJson(_mapPayload(data)),
     );
   }
 
-  Future<ReadReceipt> markAsRead(String messageId) {
+  Future<ReadReceipt> markAsRead({
+    required String conversationId,
+    required String messageId,
+  }) {
     return _socketClient.emitWithAck<ReadReceipt>(
-      'mark_as_read',
-      {'messageId': messageId},
-      (data) => ReadReceipt.fromJson(Map<String, dynamic>.from(data as Map)),
+      'message_read',
+      {
+        'conversationId': conversationId,
+        'messageId': messageId,
+      },
+      (data) => ReadReceipt.fromJson(_mapPayload(data)),
     );
+  }
+
+  Map<String, dynamic> _mapPayload(dynamic payload) {
+    return Map<String, dynamic>.from(payload as Map);
   }
 }

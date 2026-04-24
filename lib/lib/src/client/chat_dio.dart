@@ -63,8 +63,7 @@ Dio createChatDio(ChatServiceConfig config) {
           requestOptions: error.requestOptions,
           response: error.response,
           type: error.type,
-          error:
-              message ??
+          error: message ??
               'Request failed${statusCode != null ? ' ($statusCode)' : ''}',
         );
         handler.reject(wrapped);

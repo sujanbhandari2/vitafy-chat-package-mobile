@@ -2,86 +2,233 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 
+import 'chat_auth.dart';
+import 'chat_config.dart';
+import 'models/chat_message.dart';
+
 class ChatApi {
-  ChatApi(this._dio);
+  ChatApi(this._dio, this._config);
 
   final Dio _dio;
+  final ChatServiceConfig _config;
 
-  Options _authOptions(String token) {
-    return Options(headers: {'Authorization': 'Bearer $token'});
-  }
-
-  Future<List<Map<String, dynamic>>> getConversations(String token) async {
+  Future<Map<String, dynamic>> getTenantScope(ChatAuth auth) async {
     final response = await _dio.get(
-      '/conversations',
-      options: _authOptions(token),
+      _chatUri('tenant'),
+      options: _authOptions(auth),
     );
-    final data =
-        (response.data as Map<String, dynamic>)['data'] as List<dynamic>;
-    return data.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+    return _asMap(_unwrapData(response.data));
   }
 
-  Future<List<Map<String, dynamic>>> getUsers(String token) async {
-    final response = await _dio.get('/users', options: _authOptions(token));
-    final data =
-        (response.data as Map<String, dynamic>)['data'] as List<dynamic>;
-    return data.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+  Future<Map<String, dynamic>> registerOrGetUser(
+    ChatAuth auth, {
+    required String providerId,
+    required String providerUserId,
+    required String email,
+    String? name,
+  }) async {
+    final response = await _dio.post(
+      _chatUri('users'),
+      options: _authOptions(auth),
+      data: {
+        'providerId': providerId,
+        'providerUserId': providerUserId,
+        'email': email,
+        if (name != null && name.trim().isNotEmpty) 'name': name,
+      },
+    );
+
+    return _asMap(_unwrapData(response.data));
   }
 
-  Future<List<Map<String, dynamic>>> getMessages(
-    String token,
+  Future<List<Map<String, dynamic>>> getConversations(
+    ChatAuth auth, {
+    String? forUserId,
+  }) async {
+    final response = await _dio.get(
+      _chatUri('conversations'),
+      options: _authOptions(auth),
+      queryParameters: {
+        if (forUserId != null && forUserId.trim().isNotEmpty)
+          'forUserId': forUserId,
+      },
+    );
+    return _asMapList(_unwrapData(response.data));
+  }
+
+  Future<List<Map<String, dynamic>>> getUsers(ChatAuth auth) async {
+    final response = await _dio.get(
+      _chatUri('users'),
+      options: _authOptions(auth),
+    );
+    return _asMapList(_unwrapData(response.data));
+  }
+
+  Future<Map<String, dynamic>> getMessagesPage(
+    ChatAuth auth,
     String conversationId, {
     int page = 1,
     int pageSize = 50,
   }) async {
     final response = await _dio.get(
-      '/conversations/$conversationId/messages',
-      options: _authOptions(token),
+      _chatUri('conversations/$conversationId/messages'),
+      options: _authOptions(auth),
       queryParameters: {'page': page, 'pageSize': pageSize},
     );
 
-    final data =
-        (response.data as Map<String, dynamic>)['data'] as List<dynamic>;
-    return data.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+    return _asMap(_unwrapData(response.data));
   }
 
   Future<Map<String, dynamic>> createConversation(
-    String token,
-    List<String> participantIds,
-  ) async {
+    ChatAuth auth, {
+    required String type,
+    String? creatorUserId,
+    List<String>? participantIds,
+  }) async {
     final response = await _dio.post(
-      '/conversations',
-      options: _authOptions(token),
-      data: {'participantIds': participantIds},
+      _chatUri('conversations'),
+      options: _authOptions(auth),
+      data: {
+        'type': type,
+        if (creatorUserId != null && creatorUserId.trim().isNotEmpty)
+          'creatorUserId': creatorUserId,
+        if (participantIds != null) 'participantIds': participantIds,
+      },
     );
 
-    return Map<String, dynamic>.from(response.data as Map);
+    return _asMap(_unwrapData(response.data));
   }
 
-  Future<Map<String, dynamic>> createDirectConversation(
-    String token,
-    String userId,
-  ) async {
+  Future<Map<String, dynamic>> addParticipant(
+    ChatAuth auth, {
+    required String conversationId,
+    required String userId,
+    String? actorUserId,
+  }) async {
     final response = await _dio.post(
-      '/conversations/direct',
-      options: _authOptions(token),
-      data: {'userId': userId},
+      _chatUri('conversations/$conversationId/participants'),
+      options: _authOptions(auth),
+      data: {
+        'userId': userId,
+        if (actorUserId != null && actorUserId.trim().isNotEmpty)
+          'actorUserId': actorUserId,
+      },
     );
 
-    return Map<String, dynamic>.from(response.data as Map);
+    return _asMap(_unwrapData(response.data));
   }
 
-  Future<String> uploadFile(String token, File file) async {
-    final formData = FormData.fromMap({
-      'file': await MultipartFile.fromFile(file.path),
-    });
+  Future<List<ChatAttachment>> uploadFiles(
+    ChatAuth auth,
+    List<File> files,
+  ) async {
+    if (files.isEmpty) {
+      return const [];
+    }
+
+    final payload = <String, dynamic>{};
+    if (files.length == 1) {
+      payload['file'] = await MultipartFile.fromFile(files.first.path);
+    } else {
+      payload['files'] = await Future.wait(
+        files.map((file) => MultipartFile.fromFile(file.path)),
+      );
+    }
 
     final response = await _dio.post(
-      '/upload',
-      data: formData,
-      options: _authOptions(token),
+      _normalizePath(_config.uploadPath),
+      options: _authOptions(
+        auth,
+        includeDefaultHeaders: false,
+        contentType: 'multipart/form-data',
+      ),
+      data: FormData.fromMap(payload),
     );
 
-    return (response.data as Map<String, dynamic>)['url'] as String;
+    final data = _asMap(_unwrapData(response.data));
+    final attachments = data['attachments'] as List<dynamic>? ?? <dynamic>[];
+    return attachments
+        .map(
+          (item) =>
+              ChatAttachment.fromJson(Map<String, dynamic>.from(item as Map)),
+        )
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> postMessage(
+    ChatAuth auth, {
+    required String conversationId,
+    required String senderId,
+    required MessageType type,
+    String content = '',
+    List<ChatAttachment> attachments = const [],
+    String? replyToMessageId,
+  }) async {
+    final response = await _dio.post(
+      _chatUri('conversations/$conversationId/messages'),
+      options: _authOptions(auth),
+      data: {
+        'senderId': senderId,
+        'type': type.apiValue,
+        'content': content,
+        if (attachments.isNotEmpty)
+          'attachments':
+              attachments.map((attachment) => attachment.toJson()).toList(),
+        if (replyToMessageId != null && replyToMessageId.trim().isNotEmpty)
+          'replyToMessageId': replyToMessageId,
+      },
+    );
+
+    return _asMap(_unwrapData(response.data));
+  }
+
+  Options _authOptions(
+    ChatAuth auth, {
+    bool includeDefaultHeaders = true,
+    String? contentType,
+  }) {
+    return Options(
+      headers: auth.toApiHeaders(
+        includeDefaultHeaders ? _config.defaultHeaders : const {},
+      ),
+      contentType: contentType,
+    );
+  }
+
+  String _chatUri(String suffix) {
+    final base = _normalizePath(_config.chatApiPath);
+    final child = suffix.startsWith('/') ? suffix.substring(1) : suffix;
+    return '$base/$child';
+  }
+
+  String _normalizePath(String path) {
+    if (path.isEmpty) {
+      return '';
+    }
+    var normalized = path.trim();
+    if (!normalized.startsWith('/')) {
+      normalized = '/$normalized';
+    }
+    if (normalized.endsWith('/')) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    return normalized;
+  }
+
+  dynamic _unwrapData(dynamic raw) {
+    if (raw is Map<String, dynamic> && raw.containsKey('data')) {
+      return raw['data'];
+    }
+    return raw;
+  }
+
+  Map<String, dynamic> _asMap(dynamic value) {
+    return Map<String, dynamic>.from(value as Map);
+  }
+
+  List<Map<String, dynamic>> _asMapList(dynamic value) {
+    return (value as List<dynamic>)
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
   }
 }
