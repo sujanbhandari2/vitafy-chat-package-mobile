@@ -225,9 +225,11 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
         builder: (routeContext) => MessengerTheme(
           data: themeData,
           child: Scaffold(
-            body: _buildThread(
-              isMobile: true,
-              onBack: () => Navigator.of(routeContext).maybePop(),
+            body: SafeArea(
+              child: _buildThread(
+                isMobile: true,
+                onBack: () => Navigator.of(routeContext).maybePop(),
+              ),
             ),
           ),
         ),
