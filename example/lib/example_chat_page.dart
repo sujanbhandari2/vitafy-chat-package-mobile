@@ -369,6 +369,14 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     }
 
     final previousConversationId = _selectedConversationId;
+    setState(() {
+      _selectedConversationId = conversationId;
+      _unreadByConversation.remove(conversationId);
+      _statusText = 'Loading conversation $conversationId...';
+      // Avoid showing stale thread content while fetching the new conversation.
+      _messagesByConversation[conversationId] = const [];
+    });
+
     if (previousConversationId != null &&
         previousConversationId != conversationId) {
       try {
@@ -383,12 +391,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         );
       }
     }
-
-    setState(() {
-      _selectedConversationId = conversationId;
-      _unreadByConversation.remove(conversationId);
-      _statusText = 'Loading conversation $conversationId...';
-    });
 
     try {
       await _loadMessages(conversationId);
@@ -1007,6 +1009,16 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     );
   }
 
+  MessengerUser _mapParticipantUser(ConversationParticipantUser user) {
+    return MessengerUser(
+      id: user.id,
+      username: user.username,
+      roleLabel: user.role.label,
+      isOnline: user.isOnline,
+      avatarUrl: user.avatarUrl,
+    );
+  }
+
   MessengerConversation _mapConversation(Conversation conversation) {
     final title = _conversationTitle(conversation);
     final messages = _messagesByConversation[conversation.id] ?? const [];
@@ -1028,6 +1040,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       unreadCount: _unreadByConversation[conversation.id] ?? 0,
       avatarUrl: others.length == 1 ? others.first.user.avatarUrl : null,
       isOnline: others.any((participant) => participant.user.isOnline),
+      peerUsers:
+          others.map((p) => _mapParticipantUser(p.user)).toList(growable: false),
     );
   }
 
@@ -1392,6 +1406,21 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                   onMarkSeen: _markSeen,
                   canDeleteMessage: _canDeleteMessage,
                   searchVisibility: MessengerSearchVisibility.always,
+                  searchInputTextStyle: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  searchHintTextStyle: const TextStyle(
+                    color: Color(0xFF94A3B8),
+                    fontSize: 13.5,
+                  ),
+                  searchFieldBackgroundColor: const Color(0xFFF8FAFC),
+                  searchFieldContentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                  ),
+                  searchIconColor: const Color(0xFF64748B),
+                  searchFieldBorderRadius: 12,
                   emptyConversationsMessage:
                       'No conversations yet. Use the people list to create one through the package flow.',
                   emptyUsersMessage:
@@ -1399,6 +1428,29 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                   remoteTypingUsers: _remoteTypingUsersForShell(),
                   onTypingStart: _onTypingStart,
                   onTypingStop: _onTypingStop,
+                  enableReactions: true,
+                  composerInputTextStyle: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  composerHintTextStyle: const TextStyle(
+                    color: Color(0xFF94A3B8),
+                    fontSize: 13.5,
+                    fontStyle: FontStyle.italic,
+                  ),
+                  composerFieldBackgroundColor: const Color(0xFFF8FAFC),
+                  composerFieldContentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 11,
+                  ),
+                  userListPadding: const EdgeInsets.symmetric(vertical: 4),
+                  userListItemSpacing: 8,
+                  userListItemStyle: const MessengerUserListItemStyle(
+                    margin: EdgeInsets.symmetric(horizontal: 2),
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    borderRadius: 14,
+                  ),
                 ),
               ),
             ),

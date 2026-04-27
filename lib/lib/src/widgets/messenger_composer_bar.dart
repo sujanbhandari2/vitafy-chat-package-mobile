@@ -19,6 +19,10 @@ class MessengerComposerBar extends StatefulWidget {
     this.onPickDocument,
     this.onPickVideo,
     this.hintText = 'Type your message...',
+    this.inputTextStyle,
+    this.hintTextStyle,
+    this.fieldBackgroundColor,
+    this.fieldContentPadding,
     this.attachmentSheetTitle = 'Attachments',
     this.attachmentOptions,
     this.typingConversationId,
@@ -39,6 +43,10 @@ class MessengerComposerBar extends StatefulWidget {
   final VoidCallback? onPickDocument;
   final VoidCallback? onPickVideo;
   final String hintText;
+  final TextStyle? inputTextStyle;
+  final TextStyle? hintTextStyle;
+  final Color? fieldBackgroundColor;
+  final EdgeInsetsGeometry? fieldContentPadding;
   final String attachmentSheetTitle;
   final List<MessengerAttachmentOption>? attachmentOptions;
 
@@ -284,7 +292,7 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
               Expanded(
                 child: Container(
                   decoration: BoxDecoration(
-                    color: theme.composerFieldBackground,
+                    color: widget.fieldBackgroundColor ?? theme.composerFieldBackground,
                     borderRadius: BorderRadius.circular(18),
                   ),
                   child: Row(
@@ -295,6 +303,7 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
                           textField: true,
                           child: TextField(
                             controller: widget.controller,
+                            style: widget.inputTextStyle,
                             textInputAction: TextInputAction.send,
                             onSubmitted: (_) {
                               if (canSend) {
@@ -305,13 +314,17 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
                             maxLines: 4,
                             decoration: InputDecoration(
                               hintText: widget.hintText,
-                              hintStyle: TextStyle(color: theme.mutedText),
+                              hintStyle:
+                                  widget.hintTextStyle ??
+                                  TextStyle(color: theme.mutedText),
                               border: InputBorder.none,
                               isDense: true,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
-                              ),
+                              contentPadding:
+                                  widget.fieldContentPadding ??
+                                  const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 10,
+                                  ),
                             ),
                           ),
                         ),

@@ -7,7 +7,54 @@ import '../models/messenger_search_visibility.dart';
 import '../models/messenger_user.dart';
 import '../theme/messenger_theme.dart';
 import 'messenger_avatar.dart';
-import 'messenger_conversation_tile.dart';
+
+class MessengerUserListItemStyle {
+  const MessengerUserListItemStyle({
+    this.margin = EdgeInsets.zero,
+    this.padding = const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+    this.backgroundColor,
+    this.selectedBackgroundColor,
+    this.border,
+    this.selectedBorder,
+    this.borderRadius = 12,
+    this.boxShadow,
+    this.titleStyle,
+    this.subtitleStyle,
+    this.trailingIconColor,
+    this.unreadDotColor,
+  });
+
+  final EdgeInsetsGeometry margin;
+  final EdgeInsetsGeometry padding;
+  final Color? backgroundColor;
+  final Color? selectedBackgroundColor;
+  final BorderSide? border;
+  final BorderSide? selectedBorder;
+  final double borderRadius;
+  final List<BoxShadow>? boxShadow;
+  final TextStyle? titleStyle;
+  final TextStyle? subtitleStyle;
+  final Color? trailingIconColor;
+  final Color? unreadDotColor;
+}
+
+class MessengerUserListItemData {
+  const MessengerUserListItemData({
+    required this.user,
+    required this.isSelected,
+    required this.hasUnread,
+    required this.isOpening,
+    required this.messagePreview,
+    required this.onTap,
+  });
+
+  final MessengerUser user;
+  final bool isSelected;
+  final bool hasUnread;
+  final bool isOpening;
+  final String? messagePreview;
+  final VoidCallback onTap;
+}
 
 class MessengerConversationList extends StatefulWidget {
   const MessengerConversationList({
@@ -30,6 +77,24 @@ class MessengerConversationList extends StatefulWidget {
     this.emptyConversationsBuilder,
     this.showStartChatFab = true,
     this.isMobile = false,
+    this.showHeaderEditButton = true,
+    this.showHeaderTitle = true,
+    this.showHeaderComposeButton = true,
+    this.startNewChatEmptyBuilder,
+    this.fabBackgroundColor,
+    this.fabForegroundColor,
+    this.fabIcon,
+    this.fabHeroTag,
+    this.userListPadding,
+    this.userListItemSpacing = 6,
+    this.userListItemStyle = const MessengerUserListItemStyle(),
+    this.userListItemBuilder,
+    this.searchInputTextStyle,
+    this.searchHintTextStyle,
+    this.searchFieldBackgroundColor,
+    this.searchFieldContentPadding,
+    this.searchIconColor,
+    this.searchFieldBorderRadius,
   });
 
   final String currentUserName;
@@ -50,10 +115,43 @@ class MessengerConversationList extends StatefulWidget {
   final WidgetBuilder? emptyConversationsBuilder;
   final bool showStartChatFab;
   final bool isMobile;
+  final bool showHeaderEditButton;
+  final bool showHeaderTitle;
+  final bool showHeaderComposeButton;
+  final WidgetBuilder? startNewChatEmptyBuilder;
+  final Color? fabBackgroundColor;
+  final Color? fabForegroundColor;
+  final IconData? fabIcon;
+  final Object? fabHeroTag;
+  final EdgeInsetsGeometry? userListPadding;
+  final double userListItemSpacing;
+  final MessengerUserListItemStyle userListItemStyle;
+  final Widget Function(BuildContext context, MessengerUserListItemData data)?
+      userListItemBuilder;
+  final TextStyle? searchInputTextStyle;
+  final TextStyle? searchHintTextStyle;
+  final Color? searchFieldBackgroundColor;
+  final EdgeInsetsGeometry? searchFieldContentPadding;
+  final Color? searchIconColor;
+  final double? searchFieldBorderRadius;
 
   @override
   State<MessengerConversationList> createState() =>
       _MessengerConversationListState();
+}
+
+class _PeerListEntry {
+  const _PeerListEntry({
+    required this.user,
+    required this.messagePreview,
+    required this.hasUnread,
+    required this.isInSelectedConversation,
+  });
+
+  final MessengerUser user;
+  final String messagePreview;
+  final bool hasUnread;
+  final bool isInSelectedConversation;
 }
 
 class _MessengerConversationListState extends State<MessengerConversationList> {
@@ -80,104 +178,313 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     setState(() => _query = _searchController.text.trim());
   }
 
+  MessengerConversation? _conversationForId(String? id) {
+    if (id == null) {
+      return null;
+    }
+    for (final c in widget.conversations) {
+      if (c.id == id) {
+        return c;
+      }
+    }
+    return null;
+  }
+
+  bool get _hasPeerUsers =>
+      widget.conversations.any((conversation) => conversation.peerUsers.isNotEmpty);
+
+  int _uniquePeerCount() {
+    if (!_hasPeerUsers) {
+      return widget.users.length;
+    }
+    final ids = <String>{};
+    for (final c in widget.conversations) {
+      for (final u in c.peerUsers) {
+        ids.add(u.id);
+      }
+    }
+    return ids.length;
+  }
+
+  List<_PeerListEntry> _orderedPeerEntries() {
+    if (!_hasPeerUsers) {
+      return _legacyUserEntries();
+    }
+
+    final previewByUser = <String, String>{};
+    final unreadByUser = <String, int>{};
+    for (final c in widget.conversations) {
+      for (final u in c.peerUsers) {
+        previewByUser.putIfAbsent(u.id, () => c.subtitle);
+        final prev = unreadByUser[u.id] ?? 0;
+        if (c.unreadCount > prev) {
+          unreadByUser[u.id] = c.unreadCount;
+        }
+      }
+    }
+
+    final seen = <String>{};
+    final orderedUsers = <MessengerUser>[];
+
+    void addPeers(Iterable<MessengerUser> peers) {
+      for (final u in peers) {
+        if (seen.add(u.id)) {
+          orderedUsers.add(u);
+        }
+      }
+    }
+
+    final selected = _conversationForId(widget.selectedConversationId);
+    if (selected != null) {
+      addPeers(selected.peerUsers);
+    }
+    for (final c in widget.conversations) {
+      if (c.id == widget.selectedConversationId) {
+        continue;
+      }
+      addPeers(c.peerUsers);
+    }
+
+    return orderedUsers
+        .map(
+          (u) => _PeerListEntry(
+            user: u,
+            messagePreview: previewByUser[u.id] ?? '',
+            hasUnread: (unreadByUser[u.id] ?? 0) > 0,
+            isInSelectedConversation: selected != null &&
+                selected.peerUsers.any((p) => p.id == u.id),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  List<_PeerListEntry> _legacyUserEntries() {
+    final users = [...widget.users]..sort((left, right) {
+      if (left.isOnline != right.isOnline) {
+        return left.isOnline ? -1 : 1;
+      }
+      return left.username.toLowerCase().compareTo(right.username.toLowerCase());
+    });
+
+    final selected = _conversationForId(widget.selectedConversationId);
+    if (selected != null) {
+      users.sort((left, right) {
+        final leftRank = _legacySelectedConversationRank(selected, left);
+        final rightRank = _legacySelectedConversationRank(selected, right);
+        if (leftRank != rightRank) {
+          return leftRank.compareTo(rightRank);
+        }
+        return 0;
+      });
+    }
+
+    return users
+        .map(
+          (user) => _PeerListEntry(
+            user: user,
+            messagePreview: _legacyPreviewForUser(user),
+            hasUnread: _legacyHasUnreadForUser(user),
+            isInSelectedConversation: selected != null &&
+                _legacySelectedConversationRank(selected, user) == 0,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  int _legacySelectedConversationRank(
+    MessengerConversation selected,
+    MessengerUser user,
+  ) {
+    final username = user.username.toLowerCase();
+    final title = selected.title.toLowerCase();
+    final subtitle = selected.subtitle.toLowerCase();
+    final display = _displayName(user.username).toLowerCase();
+    final isMatch = title.contains(username) ||
+        title.contains(display) ||
+        subtitle.contains(username) ||
+        subtitle.contains(display);
+    return isMatch ? 0 : 1;
+  }
+
+  String _legacyPreviewForUser(MessengerUser user) {
+    final username = user.username.toLowerCase();
+    final display = _displayName(user.username).toLowerCase();
+    for (final conversation in widget.conversations) {
+      final title = conversation.title.toLowerCase();
+      final subtitle = conversation.subtitle.toLowerCase();
+      if (title.contains(username) ||
+          title.contains(display) ||
+          subtitle.contains(username) ||
+          subtitle.contains(display)) {
+        return conversation.subtitle;
+      }
+    }
+    return '';
+  }
+
+  bool _legacyHasUnreadForUser(MessengerUser user) {
+    final username = user.username.toLowerCase();
+    final display = _displayName(user.username).toLowerCase();
+    for (final conversation in widget.conversations) {
+      if (conversation.unreadCount == 0) {
+        continue;
+      }
+      final title = conversation.title.toLowerCase();
+      final subtitle = conversation.subtitle.toLowerCase();
+      if (title.contains(username) ||
+          title.contains(display) ||
+          subtitle.contains(username) ||
+          subtitle.contains(display)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  List<_PeerListEntry> _filterPeerEntries(List<_PeerListEntry> entries) {
+    if (_query.isEmpty) {
+      return entries;
+    }
+    final queryLower = _query.toLowerCase();
+    return entries
+        .where(
+          (e) =>
+              e.user.username.toLowerCase().contains(queryLower) ||
+              e.user.roleLabel.toLowerCase().contains(queryLower) ||
+              e.messagePreview.toLowerCase().contains(queryLower),
+        )
+        .toList(growable: false);
+  }
+
+  Widget _buildMainUserListItem(BuildContext context, _PeerListEntry entry) {
+    final data = MessengerUserListItemData(
+      user: entry.user,
+      isSelected: entry.isInSelectedConversation,
+      hasUnread: entry.hasUnread,
+      isOpening: widget.openingDirectUserId == entry.user.id,
+      messagePreview: entry.messagePreview.isEmpty ? null : entry.messagePreview,
+      onTap: () {
+        widget.onOpenDirectChat(entry.user);
+      },
+    );
+
+    final builder = widget.userListItemBuilder;
+    if (builder != null) {
+      return builder(context, data);
+    }
+
+    return _DirectUserTile(
+      user: data.user,
+      isOpening: data.isOpening,
+      onTap: data.onTap,
+      showChatButton: false,
+      isSelected: data.isSelected,
+      messagePreview: data.messagePreview,
+      hasUnread: data.hasUnread,
+      style: widget.userListItemStyle,
+    );
+  }
+
+  Widget? _buildHeaderRow(BuildContext context) {
+    final showAny = widget.showHeaderEditButton ||
+        widget.showHeaderTitle ||
+        widget.showHeaderComposeButton;
+    if (!showAny) {
+      return null;
+    }
+    final theme = MessengerTheme.of(context);
+    return Row(
+      children: [
+        Expanded(
+          flex: 1,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: widget.showHeaderEditButton
+                ? TextButton(
+                    onPressed: widget.onRefresh,
+                    child: Text(
+                      'Edit',
+                      style: TextStyle(
+                        color: theme.primary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ),
+        if (widget.showHeaderTitle)
+          const Expanded(
+            flex: 2,
+            child: Text(
+              'Chats',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 17,
+              ),
+            ),
+          )
+        else
+          const Spacer(flex: 2),
+        Expanded(
+          flex: 1,
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: widget.showHeaderComposeButton
+                ? IconButton(
+                    onPressed: () => _openDirectPicker(context),
+                    icon: Icon(Icons.edit_square, color: theme.primary),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
+    final searchBg = widget.searchFieldBackgroundColor ?? theme.searchBackground;
+    final searchIconColor = widget.searchIconColor ?? theme.mutedText;
+    final searchHintStyle =
+        widget.searchHintTextStyle ?? TextStyle(color: theme.mutedText);
+    final searchContentPadding = widget.searchFieldContentPadding;
+    final searchRadius = widget.searchFieldBorderRadius ?? 12;
     final showSearch = _shouldShowSearch();
-    final filteredConversations = _filterConversations(widget.conversations);
+    final ordered = _orderedPeerEntries();
+    final filteredEntries = _filterPeerEntries(ordered);
+    final headerRow = _buildHeaderRow(context);
 
     final listContent = Column(
       children: [
         const SizedBox(height: 2),
-        Row(
-          children: [
-            TextButton(
-              onPressed: widget.onRefresh,
-              child: Text(
-                'Edit',
-                style: TextStyle(
-                  color: theme.primary,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            const Expanded(
-              child: Text(
-                'Chats',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17),
-              ),
-            ),
-            IconButton(
-              onPressed: () => _openDirectPicker(context),
-              icon: Icon(Icons.edit_square, color: theme.primary),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        // Container(
-        //   padding: const EdgeInsets.all(3),
-        //   decoration: BoxDecoration(
-        //     color: const Color(0xFFEDEDED),
-        //     borderRadius: BorderRadius.circular(999),
-        //   ),
-        //   child: Row(
-        //     children: [
-        //       Expanded(
-        //         child: Container(
-        //           height: 30,
-        //           alignment: Alignment.center,
-        //           decoration: BoxDecoration(
-        //             color: theme.surface,
-        //             borderRadius: BorderRadius.circular(999),
-        //           ),
-        //           child: Text(
-        //             'Contacts',
-        //             style: TextStyle(
-        //               color: theme.subtleText,
-        //               fontSize: 12,
-        //               fontWeight: FontWeight.w600,
-        //             ),
-        //           ),
-        //         ),
-        //       ),
-        //       const Expanded(
-        //         child: SizedBox(
-        //           height: 30,
-        //           child: Center(
-        //             child: Text(
-        //               'Everyone',
-        //               style: TextStyle(
-        //                 color: Color(0xFF111827),
-        //                 fontSize: 12,
-        //                 fontWeight: FontWeight.w700,
-        //               ),
-        //             ),
-        //           ),
-        //         ),
-        //       ),
-        //     ],
-        //   ),
-        // ),
+        if (headerRow != null) ...[
+          headerRow,
+          const SizedBox(height: 6),
+        ],
         const SizedBox(height: 10),
         if (showSearch) ...[
           Container(
             height: 38,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
+            padding: searchContentPadding ??
+                const EdgeInsets.symmetric(horizontal: 10),
             decoration: BoxDecoration(
-              color: theme.searchBackground,
-              borderRadius: BorderRadius.circular(12),
+              color: searchBg,
+              borderRadius: BorderRadius.circular(searchRadius),
             ),
             child: Row(
               children: [
-                Icon(Icons.search, color: theme.mutedText, size: 18),
+                Icon(Icons.search, color: searchIconColor, size: 18),
                 const SizedBox(width: 6),
                 Expanded(
                   child: TextField(
                     controller: _searchController,
+                    style: widget.searchInputTextStyle,
                     decoration: InputDecoration(
                       hintText: widget.searchHintText,
-                      hintStyle: TextStyle(color: theme.mutedText),
+                      hintStyle: searchHintStyle,
                       border: InputBorder.none,
                       isDense: true,
                     ),
@@ -186,7 +493,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
                 if (_query.isNotEmpty)
                   GestureDetector(
                     onTap: () => _searchController.clear(),
-                    child: Icon(Icons.close_rounded, color: theme.mutedText),
+                    child: Icon(Icons.close_rounded, color: searchIconColor),
                   ),
               ],
             ),
@@ -194,55 +501,19 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
           const SizedBox(height: 8),
         ],
         Expanded(
-          child: filteredConversations.isEmpty
-              ? _buildEmptyConversations(context)
+          child: filteredEntries.isEmpty
+              ? _buildEmptyPeerList(context)
               : ListView.separated(
-                  itemCount: filteredConversations.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 6),
+                  padding: widget.userListPadding,
+                  itemCount: filteredEntries.length,
+                  separatorBuilder: (_, __) =>
+                      SizedBox(height: widget.userListItemSpacing),
                   itemBuilder: (context, index) {
-                    final conversation = filteredConversations[index];
-
-                    return MessengerConversationTile(
-                      conversation: conversation,
-                      isSelected:
-                          conversation.id == widget.selectedConversationId,
-                      onTap: () => widget.onSelectConversation(conversation.id),
-                    );
+                    final entry = filteredEntries[index];
+                    return _buildMainUserListItem(context, entry);
                   },
                 ),
         ),
-        if (widget.isMobile)
-          _MobileBottomBar(
-            currentUserName: widget.currentUserName,
-            onLogout: widget.onLogout,
-          )
-        else ...[
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              MessengerAvatar(
-                label: _initials(widget.currentUserName),
-                compact: true,
-                size: 30,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  _displayName(widget.currentUserName),
-                  style: TextStyle(
-                    color: theme.subtleText,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 12.5,
-                  ),
-                ),
-              ),
-              TextButton(
-                onPressed: widget.onLogout,
-                child: const Text('Logout'),
-              ),
-            ],
-          ),
-        ],
       ],
     );
 
@@ -264,6 +535,12 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
       return content;
     }
 
+    final fabBg = widget.fabBackgroundColor ?? theme.primary;
+    final fabFg = widget.fabForegroundColor ?? Colors.white;
+    final fabIcon = widget.fabIcon ?? Icons.add_rounded;
+    final heroTag =
+        widget.fabHeroTag ?? (widget.isMobile ? 'startChatMobile' : 'startChatDesktop');
+
     return Stack(
       children: [
         content,
@@ -271,10 +548,10 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
           right: widget.isMobile ? 16 : 20,
           bottom: widget.isMobile ? 24 : 18,
           child: FloatingActionButton(
-            heroTag: widget.isMobile ? 'startChatMobile' : 'startChatDesktop',
+            heroTag: heroTag,
             onPressed: () => _openDirectPicker(context),
-            backgroundColor: theme.primary,
-            child: const Icon(Icons.add_rounded, color: Colors.white),
+            backgroundColor: fabBg,
+            child: Icon(fabIcon, color: fabFg),
           ),
         ),
       ],
@@ -282,6 +559,14 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
   }
 
   Future<void> _openDirectPicker(BuildContext context) async {
+    final theme = MessengerTheme.of(context);
+    final searchBg = widget.searchFieldBackgroundColor ?? theme.searchBackground;
+    final searchIconColor = widget.searchIconColor ?? theme.mutedText;
+    final searchHintStyle =
+        widget.searchHintTextStyle ?? TextStyle(color: theme.mutedText);
+    final searchContentPadding = widget.searchFieldContentPadding;
+    final searchRadius = widget.searchFieldBorderRadius ?? 12;
+
     final sortedUsers = [...widget.users]..sort((a, b) {
         if (a.isOnline == b.isOnline) {
           return a.username.toLowerCase().compareTo(b.username.toLowerCase());
@@ -323,30 +608,30 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
                   const SizedBox(height: 10),
                   Container(
                     height: 38,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    padding: searchContentPadding ??
+                        const EdgeInsets.symmetric(horizontal: 10),
                     decoration: BoxDecoration(
-                      color: MessengerTheme.of(context).searchBackground,
-                      borderRadius: BorderRadius.circular(12),
+                      color: searchBg,
+                      borderRadius: BorderRadius.circular(searchRadius),
                     ),
                     child: Row(
                       children: [
                         Icon(
                           Icons.search,
-                          color: MessengerTheme.of(context).mutedText,
+                          color: searchIconColor,
                           size: 18,
                         ),
                         const SizedBox(width: 6),
                         Expanded(
                           child: TextField(
                             controller: searchController,
+                            style: widget.searchInputTextStyle,
                             onChanged: (value) => setState(() {
                               query = value.trim().toLowerCase();
                             }),
                             decoration: InputDecoration(
                               hintText: widget.searchHintText,
-                              hintStyle: TextStyle(
-                                color: MessengerTheme.of(context).mutedText,
-                              ),
+                              hintStyle: searchHintStyle,
                               border: InputBorder.none,
                               isDense: true,
                             ),
@@ -360,7 +645,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
                             },
                             child: Icon(
                               Icons.close_rounded,
-                              color: MessengerTheme.of(context).mutedText,
+                              color: searchIconColor,
                             ),
                           ),
                       ],
@@ -389,6 +674,10 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
                             Navigator.of(sheetContext).pop();
                             widget.onOpenDirectChat(user);
                           },
+                          showChatButton: true,
+                          isSelected: false,
+                          messagePreview: null,
+                          hasUnread: false,
                         ),
                       ),
                     ),
@@ -408,41 +697,46 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
       case MessengerSearchVisibility.never:
         return false;
       case MessengerSearchVisibility.auto:
-        return widget.users.length > widget.searchThreshold;
+        return _uniquePeerCount() > widget.searchThreshold;
     }
   }
 
-  List<MessengerConversation> _filterConversations(
-    List<MessengerConversation> conversations,
-  ) {
-    if (_query.isEmpty) {
-      return conversations;
+  Widget _buildEmptyPeerList(BuildContext context) {
+    if (widget.startNewChatEmptyBuilder != null) {
+      return widget.startNewChatEmptyBuilder!(context);
     }
-    final queryLower = _query.toLowerCase();
-    return conversations
-        .where(
-          (conversation) =>
-              conversation.title.toLowerCase().contains(queryLower) ||
-              conversation.subtitle.toLowerCase().contains(queryLower),
-        )
-        .toList(growable: false);
-  }
-
-  Widget _buildEmptyConversations(BuildContext context) {
     if (widget.emptyConversationsBuilder != null) {
       return widget.emptyConversationsBuilder!(context);
     }
+    final theme = MessengerTheme.of(context);
     return Semantics(
       container: true,
-      label: 'No conversations',
+      label: 'Start new chat',
       child: Center(
-        child: Text(
-          widget.emptyConversationsMessage,
-          style: TextStyle(
-            color: MessengerTheme.of(context).subtleText,
-            fontWeight: FontWeight.w600,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                widget.emptyConversationsMessage,
+                style: TextStyle(
+                  color: theme.subtleText,
+                  fontWeight: FontWeight.w600,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Tap + to start a new chat.',
+                style: TextStyle(
+                  color: theme.mutedText,
+                  fontSize: 13,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
           ),
-          textAlign: TextAlign.center,
         ),
       ),
     );
@@ -454,31 +748,82 @@ class _DirectUserTile extends StatelessWidget {
     required this.user,
     required this.isOpening,
     required this.onTap,
+    required this.showChatButton,
+    required this.isSelected,
+    required this.hasUnread,
+    this.messagePreview,
+    this.style = const MessengerUserListItemStyle(),
   });
 
   final MessengerUser user;
   final bool isOpening;
   final VoidCallback onTap;
+  final bool showChatButton;
+  final bool isSelected;
+  final bool hasUnread;
+  final String? messagePreview;
+  final MessengerUserListItemStyle style;
 
   @override
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
-    return Container(
+    final preview = messagePreview;
+    final subtitle = preview != null && preview.isNotEmpty
+        ? preview
+        : '${user.roleLabel}${user.roleLabel.isNotEmpty ? ' • ' : ''}${user.isOnline ? 'Online' : 'Offline'}';
+    final titleStyle = const TextStyle(
+      fontWeight: FontWeight.w700,
+      fontSize: 13.5,
+    ).merge(style.titleStyle);
+    final subtitleStyle = TextStyle(
+      color: theme.subtleText,
+      fontSize: 11.5,
+    ).merge(style.subtitleStyle);
+    final defaultBorder = BorderSide(color: theme.border);
+    final defaultSelectedBorder =
+        BorderSide(color: theme.primary.withValues(alpha: 0.35));
+    final tile = Container(
+      margin: style.margin,
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: theme.border),
+        color: isSelected
+            ? (style.selectedBackgroundColor ??
+                theme.primary.withValues(alpha: 0.12))
+            : (style.backgroundColor ?? const Color(0xFFF8FAFC)),
+        borderRadius: BorderRadius.circular(style.borderRadius),
+        border: Border.fromBorderSide(
+          isSelected ? (style.selectedBorder ?? defaultSelectedBorder) : (style.border ?? defaultBorder),
+        ),
+        boxShadow: style.boxShadow,
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      padding: style.padding,
       child: Row(
         children: [
-          MessengerAvatar(
-            label: _initials(user.username),
-            imageUrl: user.avatarUrl,
-            compact: true,
-            size: 34,
-            showOnlineIndicator: true,
-            isOnline: user.isOnline,
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              MessengerAvatar(
+                label: _initials(user.username),
+                imageUrl: user.avatarUrl,
+                compact: true,
+                size: 34,
+                showOnlineIndicator: true,
+                isOnline: user.isOnline,
+              ),
+              if (hasUnread)
+                Positioned(
+                  right: -1,
+                  bottom: -1,
+                  child: Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: style.unreadDotColor ?? theme.primary,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -487,82 +832,52 @@ class _DirectUserTile extends StatelessWidget {
               children: [
                 Text(
                   _displayName(user.username),
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13.5,
-                  ),
+                  style: titleStyle,
                   overflow: TextOverflow.ellipsis,
                 ),
                 Text(
-                  '${user.roleLabel}${user.roleLabel.isNotEmpty ? ' • ' : ''}${user.isOnline ? 'Online' : 'Offline'}',
-                  style: TextStyle(
-                    color: theme.subtleText,
-                    fontSize: 11.5,
-                  ),
+                  subtitle,
+                  style: subtitleStyle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
           ),
-          FilledButton(
-            onPressed: isOpening ? null : onTap,
-            style: FilledButton.styleFrom(
-              backgroundColor: theme.primary,
-              foregroundColor: Colors.white,
-              visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
-              textStyle: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
+          if (showChatButton)
+            FilledButton(
+              onPressed: isOpening ? null : onTap,
+              style: FilledButton.styleFrom(
+                backgroundColor: theme.primary,
+                foregroundColor: Colors.white,
+                visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
+                textStyle: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
+              child: Text(isOpening ? '...' : 'Chat'),
+            )
+          else
+            Icon(
+              Icons.chevron_right_rounded,
+              color: style.trailingIconColor ?? theme.mutedText,
+              size: 22,
             ),
-            child: Text(isOpening ? '...' : 'Chat'),
-          ),
         ],
       ),
     );
-  }
-}
 
-class _MobileBottomBar extends StatelessWidget {
-  const _MobileBottomBar({
-    required this.currentUserName,
-    required this.onLogout,
-  });
+    if (showChatButton) {
+      return tile;
+    }
 
-  final String currentUserName;
-  final VoidCallback onLogout;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = MessengerTheme.of(context);
-    return Container(
-      margin: const EdgeInsets.only(top: 6),
-      padding: const EdgeInsets.only(top: 6),
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: theme.border)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Icon(Icons.chat_bubble, color: theme.primary, size: 22),
-          ),
-          Expanded(
-            child:
-                Icon(Icons.groups_outlined, color: theme.mutedText, size: 23),
-          ),
-          Expanded(
-            child: MessengerAvatar(
-              label: _initials(currentUserName),
-              compact: true,
-              size: 24,
-            ),
-          ),
-          Expanded(
-            child: IconButton(
-              onPressed: onLogout,
-              icon: Icon(Icons.logout_rounded, color: theme.mutedText),
-            ),
-          ),
-        ],
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: isOpening ? null : onTap,
+        borderRadius: BorderRadius.circular(style.borderRadius),
+        child: tile,
       ),
     );
   }

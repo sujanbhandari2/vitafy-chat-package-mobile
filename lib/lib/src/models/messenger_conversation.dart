@@ -1,3 +1,5 @@
+import 'messenger_user.dart';
+
 class MessengerConversation {
   const MessengerConversation({
     required this.id,
@@ -9,6 +11,7 @@ class MessengerConversation {
     this.unreadCount = 0,
     this.avatarUrl,
     this.isOnline,
+    this.peerUsers = const [],
   });
 
   final String id;
@@ -20,4 +23,5 @@ class MessengerConversation {
   final int unreadCount;
   final String? avatarUrl;
   final bool? isOnline;
+  final List<MessengerUser> peerUsers;
 }

@@ -27,6 +27,10 @@ class MessengerChatThread extends StatelessWidget {
     this.onPickDocument,
     this.onPickVideo,
     this.composerHintText = 'Type your message...',
+    this.composerInputTextStyle,
+    this.composerHintTextStyle,
+    this.composerFieldBackgroundColor,
+    this.composerFieldContentPadding,
     this.attachmentSheetTitle = 'Attachments',
     this.attachmentOptions,
     this.onBack,
@@ -62,6 +66,10 @@ class MessengerChatThread extends StatelessWidget {
   final VoidCallback? onPickDocument;
   final VoidCallback? onPickVideo;
   final String composerHintText;
+  final TextStyle? composerInputTextStyle;
+  final TextStyle? composerHintTextStyle;
+  final Color? composerFieldBackgroundColor;
+  final EdgeInsetsGeometry? composerFieldContentPadding;
   final String attachmentSheetTitle;
   final List<MessengerAttachmentOption>? attachmentOptions;
   final VoidCallback? onBack;
@@ -193,6 +201,10 @@ class MessengerChatThread extends StatelessWidget {
             onPickVideo: onPickVideo,
             onPickDocument: onPickDocument,
             hintText: composerHintText,
+            inputTextStyle: composerInputTextStyle,
+            hintTextStyle: composerHintTextStyle,
+            fieldBackgroundColor: composerFieldBackgroundColor,
+            fieldContentPadding: composerFieldContentPadding,
             attachmentSheetTitle: attachmentSheetTitle,
             attachmentOptions: attachmentOptions,
             typingConversationId: conversation?.id,
