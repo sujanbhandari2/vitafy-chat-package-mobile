@@ -50,134 +50,134 @@ class MessengerMessageBubble extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
-        mainAxisAlignment:
-            isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          if (!isMine) ...[
-            MessengerAvatar(
-              label: _initials(message.senderLabel),
-              imageUrl: message.senderAvatarUrl,
-              size: 26,
-              compact: true,
-            ),
-            const SizedBox(width: 6),
-          ],
-          Flexible(
-            child: GestureDetector(
-              onLongPress: () => _showActions(context),
-              child: Column(
-                crossAxisAlignment:
-                    isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    constraints: BoxConstraints(
-                      maxWidth: _maxBubbleWidth(context),
-                    ),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: bubbleColor,
-                      borderRadius: BorderRadius.circular(18),
-                      border: isMine ? Border.all(color: theme.border) : null,
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        _MessageContent(
-                          message: message,
-                          textColor: textColor,
-                          mutedColor: timeColor,
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              DateFormat('h:mm a').format(message.createdAt),
-                              style: TextStyle(
-                                color: timeColor,
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            if (isMine) ...[
-                              const SizedBox(width: 4),
-                              _DeliveryTick(status: message.deliveryStatus),
-                            ],
-                          ],
-                        ),
-                        if (message.isUploading ||
-                            message.uploadProgress != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: LinearProgressIndicator(
-                              minHeight: 3,
-                              value: message.uploadProgress,
-                              backgroundColor: timeColor.withValues(alpha: 0.2),
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                timeColor,
-                              ),
-                            ),
+          mainAxisAlignment:
+              isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (!isMine) ...[
+              MessengerAvatar(
+                label: _initials(message.senderLabel),
+                imageUrl: message.senderAvatarUrl,
+                size: 26,
+                compact: true,
+              ),
+              const SizedBox(width: 6),
+            ],
+            Flexible(
+              child: GestureDetector(
+                onLongPress: () => _showActions(context),
+                child: Column(
+                  crossAxisAlignment: isMine
+                      ? CrossAxisAlignment.end
+                      : CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      constraints: BoxConstraints(
+                        maxWidth: _maxBubbleWidth(context),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: bubbleColor,
+                        borderRadius: BorderRadius.circular(18),
+                        border: isMine ? Border.all(color: theme.border) : null,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          _MessageContent(
+                            message: message,
+                            textColor: textColor,
+                            mutedColor: timeColor,
                           ),
-                      ],
+                          const SizedBox(height: 4),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                DateFormat('h:mm a').format(message.createdAt),
+                                style: TextStyle(
+                                  color: timeColor,
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              if (isMine) ...[
+                                const SizedBox(width: 4),
+                                _DeliveryTick(status: message.deliveryStatus),
+                              ],
+                            ],
+                          ),
+                          if (message.isUploading ||
+                              message.uploadProgress != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: LinearProgressIndicator(
+                                minHeight: 3,
+                                value: message.uploadProgress,
+                                backgroundColor:
+                                    timeColor.withValues(alpha: 0.2),
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  timeColor,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
-                  ),
-                  if (message.reactions.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 4,
-                      children: message.reactions
-                          .map(
-                            (reaction) {
-                              final canRemove = onRemoveReaction != null &&
-                                  currentUserId != null &&
-                                  reaction.userId == currentUserId;
-                              final chip = Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 1,
+                    if (message.reactions.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 4,
+                        children: message.reactions.map(
+                          (reaction) {
+                            final canRemove = onRemoveReaction != null &&
+                                currentUserId != null &&
+                                reaction.userId == currentUserId;
+                            final chip = Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 1,
+                              ),
+                              decoration: BoxDecoration(
+                                color: theme.reactionBackground,
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                  color: theme.reactionBorder,
                                 ),
-                                decoration: BoxDecoration(
-                                  color: theme.reactionBackground,
-                                  borderRadius: BorderRadius.circular(999),
-                                  border: Border.all(
-                                    color: theme.reactionBorder,
-                                  ),
-                                ),
-                                child: Text(
+                              ),
+                              child: Text(
+                                reaction.reactionType,
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            );
+                            if (!canRemove) {
+                              return chip;
+                            }
+                            return Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: () => onRemoveReaction!(
+                                  message.id,
                                   reaction.reactionType,
-                                  style: const TextStyle(fontSize: 12),
                                 ),
-                              );
-                              if (!canRemove) {
-                                return chip;
-                              }
-                              return Material(
-                                color: Colors.transparent,
-                                child: InkWell(
-                                  onTap: () => onRemoveReaction!(
-                                    message.id,
-                                    reaction.reactionType,
-                                  ),
-                                  borderRadius: BorderRadius.circular(999),
-                                  child: chip,
-                                ),
-                              );
-                            },
-                          )
-                          .toList(),
-                    ),
+                                borderRadius: BorderRadius.circular(999),
+                                child: chip,
+                              ),
+                            );
+                          },
+                        ).toList(),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
-          ),
-        ],
-      ),
+          ],
+        ),
       ),
     );
   }
@@ -300,44 +300,99 @@ class _MessageContent extends StatelessWidget {
       );
     }
 
-    if (message.type == MessengerMessageType.image) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Image.network(
-          message.content,
-          width: 220,
-          height: 220,
-          fit: BoxFit.cover,
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) {
-              return child;
-            }
-            final expected = loadingProgress.expectedTotalBytes;
-            final loaded = loadingProgress.cumulativeBytesLoaded;
-            final value =
-                expected == null ? null : loaded / expected.toDouble();
-            return Container(
-              width: 220,
-              height: 220,
-              alignment: Alignment.center,
-              color: mutedColor.withValues(alpha: 0.15),
-              child: CircularProgressIndicator(
-                value: value,
-                strokeWidth: 2,
-                color: mutedColor,
-              ),
-            );
-          },
-          errorBuilder: (_, __, ___) => const SizedBox(
-            width: 220,
-            height: 100,
-            child: Center(child: Text('Unable to load image')),
-          ),
+    if (message.isUploading) {
+      return Text(
+        'Uploading...',
+        style: TextStyle(
+          fontSize: 14,
+          color: textColor.withValues(alpha: 0.9),
+          fontWeight: FontWeight.w600,
         ),
       );
     }
 
+    if (message.type == MessengerMessageType.image) {
+      final uri = Uri.tryParse(message.content);
+      final isNetwork =
+          uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: isNetwork
+            ? Image.network(
+                message.content,
+                width: 220,
+                height: 220,
+                fit: BoxFit.cover,
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) {
+                    return child;
+                  }
+                  final expected = loadingProgress.expectedTotalBytes;
+                  final loaded = loadingProgress.cumulativeBytesLoaded;
+                  final value =
+                      expected == null ? null : loaded / expected.toDouble();
+                  return Container(
+                    width: 220,
+                    height: 220,
+                    alignment: Alignment.center,
+                    color: mutedColor.withValues(alpha: 0.15),
+                    child: CircularProgressIndicator(
+                      value: value,
+                      strokeWidth: 2,
+                      color: mutedColor,
+                    ),
+                  );
+                },
+                errorBuilder: (_, __, ___) => const SizedBox(
+                  width: 220,
+                  height: 100,
+                  child: Center(child: Text('Unable to load image')),
+                ),
+              )
+            : Image.file(
+                File(message.content),
+                width: 220,
+                height: 220,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox(
+                  width: 220,
+                  height: 100,
+                  child: Center(child: Text('Unable to load image')),
+                ),
+              ),
+      );
+    }
+
+    if (message.type == MessengerMessageType.video) {
+      return _MediaAssetTile(
+        icon: Icons.videocam_rounded,
+        label: _labelForContent(message.content, fallback: 'Video'),
+        textColor: textColor,
+        mutedColor: mutedColor,
+      );
+    }
+
+    if (message.type == MessengerMessageType.file) {
+      return _MediaAssetTile(
+        icon: Icons.insert_drive_file_rounded,
+        label: _labelForContent(message.content, fallback: 'File'),
+        textColor: textColor,
+        mutedColor: mutedColor,
+      );
+    }
+
     if (message.type == MessengerMessageType.voice) {
+      final uri = Uri.tryParse(message.content);
+      final isNetwork =
+          uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
+      if (!isNetwork) {
+        return _MediaAssetTile(
+          icon: Icons.graphic_eq_rounded,
+          label: _labelForContent(message.content, fallback: 'Voice message'),
+          textColor: textColor,
+          mutedColor: mutedColor,
+        );
+      }
       return MessengerVoicePlayer(
         url: message.content,
         iconColor: textColor,
@@ -351,6 +406,66 @@ class _MessageContent extends StatelessWidget {
       style: TextStyle(fontSize: 14.5, color: textColor, height: 1.28),
     );
   }
+}
+
+class _MediaAssetTile extends StatelessWidget {
+  const _MediaAssetTile({
+    required this.icon,
+    required this.label,
+    required this.textColor,
+    required this.mutedColor,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color textColor;
+  final Color mutedColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 160),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        color: mutedColor.withValues(alpha: 0.14),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18, color: textColor),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                color: textColor.withValues(alpha: 0.92),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _labelForContent(String content, {required String fallback}) {
+  final trimmed = content.trim();
+  if (trimmed.isEmpty) {
+    return fallback;
+  }
+  final uri = Uri.tryParse(trimmed);
+  if (uri == null) {
+    return fallback;
+  }
+  if (uri.pathSegments.isNotEmpty) {
+    return uri.pathSegments.last;
+  }
+  return fallback;
 }
 
 class MessengerVoicePlayer extends StatefulWidget {

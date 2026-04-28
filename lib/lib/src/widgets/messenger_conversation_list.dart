@@ -206,14 +206,36 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     return ids.length;
   }
 
+  DateTime _activityAt(MessengerConversation conversation) {
+    return conversation.effectiveActivityAt;
+  }
+
+  int _compareConversationsByActivity(
+    MessengerConversation left,
+    MessengerConversation right,
+  ) {
+    final activityCompare = _activityAt(right).compareTo(_activityAt(left));
+    if (activityCompare != 0) {
+      return activityCompare;
+    }
+    return left.id.compareTo(right.id);
+  }
+
+  List<MessengerConversation> _conversationsByActivity() {
+    final ordered = [...widget.conversations];
+    ordered.sort(_compareConversationsByActivity);
+    return ordered;
+  }
+
   List<_PeerListEntry> _orderedPeerEntries() {
     if (!_hasPeerUsers) {
       return _legacyUserEntries();
     }
 
+    final orderedConversations = _conversationsByActivity();
     final previewByUser = <String, String>{};
     final unreadByUser = <String, int>{};
-    for (final c in widget.conversations) {
+    for (final c in orderedConversations) {
       for (final u in c.peerUsers) {
         previewByUser.putIfAbsent(u.id, () => c.subtitle);
         final prev = unreadByUser[u.id] ?? 0;
@@ -235,13 +257,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     }
 
     final selected = _conversationForId(widget.selectedConversationId);
-    if (selected != null) {
-      addPeers(selected.peerUsers);
-    }
-    for (final c in widget.conversations) {
-      if (c.id == widget.selectedConversationId) {
-        continue;
-      }
+    for (final c in orderedConversations) {
       addPeers(c.peerUsers);
     }
 
@@ -259,24 +275,36 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
   }
 
   List<_PeerListEntry> _legacyUserEntries() {
-    final users = [...widget.users]..sort((left, right) {
+    final users = [...widget.users];
+    final selected = _conversationForId(widget.selectedConversationId);
+    final orderedConversations = _conversationsByActivity();
+    final matchedConversationByUser = <String, MessengerConversation?>{};
+
+    MessengerConversation? matchForUser(MessengerUser user) {
+      return matchedConversationByUser.putIfAbsent(
+        user.id,
+        () => _legacyConversationForUser(user, orderedConversations),
+      );
+    }
+
+    users.sort((left, right) {
+      final leftConversation = matchForUser(left);
+      final rightConversation = matchForUser(right);
+      if (leftConversation != null && rightConversation != null) {
+        final compare =
+            _compareConversationsByActivity(leftConversation, rightConversation);
+        if (compare != 0) {
+          return compare;
+        }
+      } else if (leftConversation != null || rightConversation != null) {
+        return leftConversation != null ? -1 : 1;
+      }
+
       if (left.isOnline != right.isOnline) {
         return left.isOnline ? -1 : 1;
       }
       return left.username.toLowerCase().compareTo(right.username.toLowerCase());
     });
-
-    final selected = _conversationForId(widget.selectedConversationId);
-    if (selected != null) {
-      users.sort((left, right) {
-        final leftRank = _legacySelectedConversationRank(selected, left);
-        final rightRank = _legacySelectedConversationRank(selected, right);
-        if (leftRank != rightRank) {
-          return leftRank.compareTo(rightRank);
-        }
-        return 0;
-      });
-    }
 
     return users
         .map(
@@ -285,37 +313,41 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
             messagePreview: _legacyPreviewForUser(user),
             hasUnread: _legacyHasUnreadForUser(user),
             isInSelectedConversation: selected != null &&
-                _legacySelectedConversationRank(selected, user) == 0,
+                _legacyConversationMatchesUser(selected, user),
           ),
         )
         .toList(growable: false);
   }
 
-  int _legacySelectedConversationRank(
-    MessengerConversation selected,
+  bool _legacyConversationMatchesUser(
+    MessengerConversation conversation,
     MessengerUser user,
   ) {
     final username = user.username.toLowerCase();
-    final title = selected.title.toLowerCase();
-    final subtitle = selected.subtitle.toLowerCase();
+    final title = conversation.title.toLowerCase();
+    final subtitle = conversation.subtitle.toLowerCase();
     final display = _displayName(user.username).toLowerCase();
-    final isMatch = title.contains(username) ||
+    return title.contains(username) ||
         title.contains(display) ||
         subtitle.contains(username) ||
         subtitle.contains(display);
-    return isMatch ? 0 : 1;
+  }
+
+  MessengerConversation? _legacyConversationForUser(
+    MessengerUser user,
+    List<MessengerConversation> orderedConversations,
+  ) {
+    for (final conversation in orderedConversations) {
+      if (_legacyConversationMatchesUser(conversation, user)) {
+        return conversation;
+      }
+    }
+    return null;
   }
 
   String _legacyPreviewForUser(MessengerUser user) {
-    final username = user.username.toLowerCase();
-    final display = _displayName(user.username).toLowerCase();
-    for (final conversation in widget.conversations) {
-      final title = conversation.title.toLowerCase();
-      final subtitle = conversation.subtitle.toLowerCase();
-      if (title.contains(username) ||
-          title.contains(display) ||
-          subtitle.contains(username) ||
-          subtitle.contains(display)) {
+    for (final conversation in _conversationsByActivity()) {
+      if (_legacyConversationMatchesUser(conversation, user)) {
         return conversation.subtitle;
       }
     }
@@ -323,18 +355,11 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
   }
 
   bool _legacyHasUnreadForUser(MessengerUser user) {
-    final username = user.username.toLowerCase();
-    final display = _displayName(user.username).toLowerCase();
-    for (final conversation in widget.conversations) {
+    for (final conversation in _conversationsByActivity()) {
       if (conversation.unreadCount == 0) {
         continue;
       }
-      final title = conversation.title.toLowerCase();
-      final subtitle = conversation.subtitle.toLowerCase();
-      if (title.contains(username) ||
-          title.contains(display) ||
-          subtitle.contains(username) ||
-          subtitle.contains(display)) {
+      if (_legacyConversationMatchesUser(conversation, user)) {
         return true;
       }
     }

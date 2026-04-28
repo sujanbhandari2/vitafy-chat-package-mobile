@@ -12,3 +12,4 @@ export 'src/widgets/messenger_composer_bar.dart';
 export 'src/widgets/messenger_conversation_list.dart';
 export 'src/widgets/messenger_conversation_tile.dart';
 export 'src/widgets/messenger_message_bubble.dart';
+export 'src/widgets/messenger_media_send_orchestrator.dart';

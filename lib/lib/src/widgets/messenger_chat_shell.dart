@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../client/chat_auth.dart';
+import '../client/chat_client.dart';
+import '../client/models/chat_message.dart';
 import '../models/messenger_conversation.dart';
 import '../models/messenger_message.dart';
 import '../models/messenger_user.dart';
@@ -11,6 +14,7 @@ import '../models/messenger_typing.dart';
 import '../theme/messenger_theme.dart';
 import 'messenger_chat_thread.dart';
 import 'messenger_conversation_list.dart';
+import 'messenger_media_send_orchestrator.dart';
 
 class MessengerChatShell extends StatefulWidget {
   const MessengerChatShell({
@@ -85,6 +89,15 @@ class MessengerChatShell extends StatefulWidget {
     this.userListItemSpacing = 6,
     this.userListItemStyle = const MessengerUserListItemStyle(),
     this.userListItemBuilder,
+    this.enablePackageMediaSending = false,
+    this.mediaChatClient,
+    this.mediaChatAuth,
+    this.mediaSenderId,
+    this.mediaPicker,
+    this.onMediaSendStart,
+    this.onMediaSendProgress,
+    this.onMediaSendError,
+    this.onMediaMessageSent,
   });
 
   final String currentUserId;
@@ -159,6 +172,16 @@ class MessengerChatShell extends StatefulWidget {
   final MessengerUserListItemStyle userListItemStyle;
   final Widget Function(BuildContext context, MessengerUserListItemData data)?
       userListItemBuilder;
+  final bool enablePackageMediaSending;
+  final ChatClient? mediaChatClient;
+  final ChatAuth? mediaChatAuth;
+  final String? mediaSenderId;
+  final MessengerMediaPicker? mediaPicker;
+  final ValueChanged<MessengerChatMessage>? onMediaSendStart;
+  final void Function(String pendingMessageId, double progress)?
+      onMediaSendProgress;
+  final void Function(String pendingMessageId, Object error)? onMediaSendError;
+  final ValueChanged<MessengerChatMessage>? onMediaMessageSent;
 
   @override
   State<MessengerChatShell> createState() => _MessengerChatShellState();
@@ -166,6 +189,8 @@ class MessengerChatShell extends StatefulWidget {
 
 class _MessengerChatShellState extends State<MessengerChatShell> {
   String _openingDirectUserId = '';
+  final Map<String, List<MessengerChatMessage>> _localMessagesByConversation =
+      <String, List<MessengerChatMessage>>{};
 
   Widget _buildThread({
     required bool isMobile,
@@ -181,19 +206,60 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       isMobile: isMobile,
       onBack: onBack,
       conversation: selectedConversation,
-      messages: widget.messages,
+      messages: _messagesForConversation(widget.selectedConversationId),
       currentUserId: widget.currentUserId,
       composerController: widget.composerController,
       messagesScrollController: widget.messagesScrollController,
       isSending: widget.isSending,
       isRecording: widget.isRecording,
       onSend: widget.onSend,
-      onPickImage: widget.onPickImage,
-      onPickAudio: widget.onPickAudio,
+      onPickImage: () {
+        unawaited(
+          _handleMediaPick(
+            kind: MessengerMediaKind.image,
+            fallback: widget.onPickImage,
+          ),
+        );
+      },
+      onPickAudio: () {
+        unawaited(
+          _handleMediaPick(
+            kind: MessengerMediaKind.voice,
+            fallback: widget.onPickAudio,
+          ),
+        );
+      },
       onToggleRecording: widget.onToggleRecording,
-      onPickCamera: widget.onPickCamera,
-      onPickVideo: widget.onPickVideo,
-      onPickDocument: widget.onPickDocument,
+      onPickCamera: widget.onPickCamera == null
+          ? null
+          : () {
+              unawaited(
+                _handleMediaPick(
+                  kind: MessengerMediaKind.camera,
+                  fallback: widget.onPickCamera!,
+                ),
+              );
+            },
+      onPickVideo: widget.onPickVideo == null
+          ? null
+          : () {
+              unawaited(
+                _handleMediaPick(
+                  kind: MessengerMediaKind.video,
+                  fallback: widget.onPickVideo!,
+                ),
+              );
+            },
+      onPickDocument: widget.onPickDocument == null
+          ? null
+          : () {
+              unawaited(
+                _handleMediaPick(
+                  kind: MessengerMediaKind.file,
+                  fallback: widget.onPickDocument!,
+                ),
+              );
+            },
       composerHintText: widget.composerHintText,
       composerInputTextStyle: widget.composerInputTextStyle,
       composerHintTextStyle: widget.composerHintTextStyle,
@@ -235,6 +301,233 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
         ),
       ),
     );
+  }
+
+  List<MessengerChatMessage> _messagesForConversation(String? conversationId) {
+    if (conversationId == null) {
+      return widget.messages;
+    }
+    final local = _localMessagesByConversation[conversationId] ?? const [];
+    if (local.isEmpty) {
+      return widget.messages;
+    }
+    final hostIds = widget.messages.map((item) => item.id).toSet();
+    final merged = <MessengerChatMessage>[
+      ...widget.messages,
+      ...local.where((item) => !hostIds.contains(item.id)),
+    ];
+    merged.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return merged;
+  }
+
+  MessengerMediaSendOrchestrator? _buildOrchestrator() {
+    if (!widget.enablePackageMediaSending) {
+      return null;
+    }
+    final client = widget.mediaChatClient;
+    final auth = widget.mediaChatAuth;
+    final senderId = widget.mediaSenderId;
+    if (client == null || auth == null || senderId == null || senderId.isEmpty) {
+      return null;
+    }
+    return MessengerMediaSendOrchestrator(
+      client: client,
+      auth: auth,
+      senderId: senderId,
+      picker: widget.mediaPicker,
+    );
+  }
+
+  Future<void> _handleMediaPick({
+    required MessengerMediaKind kind,
+    required VoidCallback fallback,
+  }) async {
+    final orchestrator = _buildOrchestrator();
+    final conversationId = widget.selectedConversationId;
+    if (orchestrator == null || conversationId == null || conversationId.isEmpty) {
+      fallback();
+      return;
+    }
+    MessengerPickedMedia? picked;
+    try {
+      picked = await orchestrator.pickMedia(kind);
+    } catch (error) {
+      widget.onMediaSendError?.call('picker-${kind.name}', error);
+      fallback();
+      return;
+    }
+    if (picked == null) {
+      return;
+    }
+    final pending = MessengerChatMessage(
+      id: _tempMessageId(kind),
+      senderId: widget.currentUserId,
+      senderLabel: widget.currentUserName,
+      type: _toUiType(picked.messageType),
+      content: picked.file.path,
+      createdAt: DateTime.now(),
+      isUploading: true,
+      uploadProgress: 0,
+    );
+    _upsertLocalMessage(conversationId, pending);
+    widget.onMediaSendStart?.call(pending);
+    try {
+      final sent = await orchestrator.uploadAndSend(
+        conversationId: conversationId,
+        media: picked,
+        onUploadProgress: (progress) {
+          _updateUploadProgress(conversationId, pending.id, progress);
+          widget.onMediaSendProgress?.call(pending.id, progress);
+        },
+      );
+      _removeLocalMessage(conversationId, pending.id);
+      final sentUi = _toUiMessage(sent);
+      _upsertLocalMessage(conversationId, sentUi);
+      widget.onMediaMessageSent?.call(sentUi);
+    } catch (error) {
+      _updateUploadFailure(conversationId, pending.id);
+      widget.onMediaSendError?.call(pending.id, error);
+    }
+  }
+
+  void _upsertLocalMessage(String conversationId, MessengerChatMessage message) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      final list = List<MessengerChatMessage>.from(
+        _localMessagesByConversation[conversationId] ?? const [],
+      );
+      final index = list.indexWhere((item) => item.id == message.id);
+      if (index == -1) {
+        list.add(message);
+      } else {
+        list[index] = message;
+      }
+      _localMessagesByConversation[conversationId] = list;
+    });
+  }
+
+  void _removeLocalMessage(String conversationId, String messageId) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      final current = _localMessagesByConversation[conversationId];
+      if (current == null || current.isEmpty) {
+        return;
+      }
+      final next = current.where((item) => item.id != messageId).toList();
+      if (next.isEmpty) {
+        _localMessagesByConversation.remove(conversationId);
+      } else {
+        _localMessagesByConversation[conversationId] = next;
+      }
+    });
+  }
+
+  void _updateUploadProgress(
+    String conversationId,
+    String messageId,
+    double progress,
+  ) {
+    final current = _localMessagesByConversation[conversationId];
+    if (current == null || current.isEmpty || !mounted) {
+      return;
+    }
+    final next = current
+        .map(
+          (item) => item.id == messageId
+              ? MessengerChatMessage(
+                  id: item.id,
+                  senderId: item.senderId,
+                  senderLabel: item.senderLabel,
+                  type: item.type,
+                  content: item.content,
+                  createdAt: item.createdAt,
+                  isDeleted: item.isDeleted,
+                  deliveryStatus: item.deliveryStatus,
+                  reactions: item.reactions,
+                  isUploading: true,
+                  uploadProgress: progress,
+                  senderAvatarUrl: item.senderAvatarUrl,
+                )
+              : item,
+        )
+        .toList();
+    setState(() {
+      _localMessagesByConversation[conversationId] = next;
+    });
+  }
+
+  void _updateUploadFailure(String conversationId, String messageId) {
+    final current = _localMessagesByConversation[conversationId];
+    if (current == null || current.isEmpty || !mounted) {
+      return;
+    }
+    final next = current
+        .map(
+          (item) => item.id == messageId
+              ? MessengerChatMessage(
+                  id: item.id,
+                  senderId: item.senderId,
+                  senderLabel: item.senderLabel,
+                  type: item.type,
+                  content: item.content,
+                  createdAt: item.createdAt,
+                  isDeleted: item.isDeleted,
+                  deliveryStatus: item.deliveryStatus,
+                  reactions: item.reactions,
+                  isUploading: false,
+                  uploadProgress: null,
+                  senderAvatarUrl: item.senderAvatarUrl,
+                )
+              : item,
+        )
+        .toList();
+    setState(() {
+      _localMessagesByConversation[conversationId] = next;
+    });
+  }
+
+  String _tempMessageId(MessengerMediaKind kind) {
+    return 'pending-${kind.name}-${DateTime.now().microsecondsSinceEpoch}';
+  }
+
+  MessengerChatMessage _toUiMessage(ChatMessage message) {
+    final content = message.attachments.isNotEmpty
+        ? message.attachments.first.url
+        : message.content;
+    return MessengerChatMessage(
+      id: message.id,
+      senderId: message.senderId,
+      senderLabel: message.senderId == widget.currentUserId
+          ? widget.currentUserName
+          : (message.sender?.name ?? message.senderId),
+      type: _toUiType(message.type),
+      content: content,
+      createdAt: message.createdAt,
+      deliveryStatus: message.senderId == widget.currentUserId
+          ? MessengerDeliveryStatus.sent
+          : MessengerDeliveryStatus.none,
+    );
+  }
+
+  MessengerMessageType _toUiType(MessageType type) {
+    switch (type) {
+      case MessageType.image:
+        return MessengerMessageType.image;
+      case MessageType.voice:
+        return MessengerMessageType.voice;
+      case MessageType.video:
+        return MessengerMessageType.video;
+      case MessageType.file:
+        return MessengerMessageType.file;
+      case MessageType.text:
+      case MessageType.link:
+      case MessageType.other:
+        return MessengerMessageType.text;
+    }
   }
 
   @override

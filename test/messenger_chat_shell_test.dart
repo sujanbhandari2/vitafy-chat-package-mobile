@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
+import 'package:health_messenger_ui/lib/src/client/chat_auth.dart';
+import 'package:health_messenger_ui/lib/src/client/chat_client.dart';
+import 'package:health_messenger_ui/lib/src/client/chat_config.dart';
 
 void main() {
   testWidgets('MessengerChatShell shows empty conversations placeholder',
@@ -306,4 +309,92 @@ void main() {
     expect(list.searchIconColor, iconColor);
     expect(list.searchFieldBorderRadius, borderRadius);
   });
+
+  testWidgets('media picker plugin error falls back without crashing',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    const user = MessengerUser(id: 'u1', username: 'alice_jones');
+    final conversation = MessengerConversation(
+      id: 'c1',
+      title: 'Alice Jones',
+      subtitle: 'Hello',
+      avatarLabel: 'A',
+      createdAt: DateTime.utc(2026),
+      peerUsers: const [user],
+    );
+
+    var fallbackCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerChatShell(
+              currentUserId: 'me',
+              currentUserName: 'Me',
+              conversations: [conversation],
+              users: const [user],
+              selectedConversationId: 'c1',
+              messages: const [],
+              composerController: composer,
+              messagesScrollController: scroll,
+              isSending: false,
+              isRecording: false,
+              onRefresh: () {},
+              onLogout: () {},
+              onSelectConversation: (_) async {},
+              onOpenDirectChat: (_) async {},
+              onSend: () {},
+              onPickImage: () {
+                fallbackCalls++;
+              },
+              onPickAudio: () {},
+              onToggleRecording: () {},
+              desktopBreakpoint: 200,
+              enablePackageMediaSending: true,
+              mediaChatClient: _NoopMediaClient(),
+              mediaChatAuth: const ChatAuth(apiKey: 'k'),
+              mediaSenderId: 'me',
+              mediaPicker: const _ThrowingMediaPicker(),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final composerBar =
+        tester.widget<MessengerComposerBar>(find.byType(MessengerComposerBar));
+    composerBar.onPickImage();
+    await tester.pump();
+
+    expect(fallbackCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
+}
+
+class _ThrowingMediaPicker implements MessengerMediaPicker {
+  const _ThrowingMediaPicker();
+
+  @override
+  Future<MessengerPickedMedia?> pick(MessengerMediaKind kind) async {
+    throw const MessengerMediaPickerUnavailableException('missing plugin');
+  }
+}
+
+class _NoopMediaClient extends ChatClient {
+  _NoopMediaClient()
+      : super(
+          config: const ChatServiceConfig(
+            apiBaseUrl: 'https://example.com',
+            socketUrl: 'https://example.com',
+          ),
+        );
 }

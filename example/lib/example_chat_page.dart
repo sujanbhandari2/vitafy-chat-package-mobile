@@ -1026,6 +1026,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     final subtitle = latestMessage == null
         ? '${conversation.type} conversation'
         : _messagePreview(latestMessage);
+    final latestMessageAt = latestMessage?.createdAt;
+    final lastActivityAt =
+        latestMessageAt != null && latestMessageAt.isAfter(conversation.updatedAt)
+            ? latestMessageAt
+            : conversation.updatedAt;
     final others = conversation.participants
         .where((participant) => participant.user.id != _currentUser?.id)
         .toList();
@@ -1035,7 +1040,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       title: title,
       subtitle: subtitle,
       avatarLabel: _initials(title),
-      createdAt: conversation.updatedAt,
+      createdAt: conversation.createdAt,
+      lastActivityAt: lastActivityAt,
       isGlobal: conversation.isGlobal,
       unreadCount: _unreadByConversation[conversation.id] ?? 0,
       avatarUrl: others.length == 1 ? others.first.user.avatarUrl : null,
@@ -1091,9 +1097,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         return MessengerMessageType.image;
       case MessageType.voice:
         return MessengerMessageType.voice;
-      case MessageType.text:
       case MessageType.video:
+        return MessengerMessageType.video;
       case MessageType.file:
+        return MessengerMessageType.file;
+      case MessageType.text:
       case MessageType.link:
       case MessageType.other:
         return MessengerMessageType.text;
@@ -1293,6 +1301,17 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       body: SafeArea(
         child: Column(
           children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Text(
+                'Tenant: ${_tenantScope?.tenantId ?? 'pending'}  |  $_statusText',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF475569),
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+            ),
             // Container(
             //   width: double.infinity,
             //   padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
@@ -1380,26 +1399,35 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                   onSelectConversation: _selectConversation,
                   onOpenDirectChat: _openDirectChat,
                   onSend: () => unawaited(_sendMessage()),
-                  onPickImage: () => _showSnack(
-                    'Use client.uploadFiles(...) in your real app integration.',
-                  ),
-                  onPickAudio: () => _showSnack(
-                    'Voice/file upload goes through client.uploadFiles(...) and sendRestMessage(...).',
-                  ),
+                  onPickImage: () {},
+                  onPickAudio: () {},
                   onToggleRecording: () {
                     setState(() {
                       _isRecording = !_isRecording;
                     });
                   },
-                  onPickCamera: () => _showSnack(
-                    'Camera capture should upload first, then post the message.',
-                  ),
-                  onPickDocument: () => _showSnack(
-                    'Document attachments use the package REST upload flow.',
-                  ),
-                  onPickVideo: () => _showSnack(
-                    'Video attachments use the package REST upload flow.',
-                  ),
+                  onPickCamera: () {},
+                  onPickDocument: () {},
+                  onPickVideo: () {},
+                  enablePackageMediaSending: true,
+                  mediaChatClient: _client,
+                  mediaChatAuth: _sessionAuth,
+                  mediaSenderId: _currentUser?.id,
+                  onMediaSendProgress: (messageId, progress) {
+                    setState(() {
+                      _statusText =
+                          'Uploading media ${(progress * 100).toStringAsFixed(0)}%';
+                    });
+                  },
+                  onMediaSendError: (_, error) {
+                    _showSnack('Media send failed: $error');
+                  },
+                  onMediaMessageSent: (_) {
+                    setState(() {
+                      _statusText = 'Media sent through package flow.';
+                    });
+                    _scrollToBottom();
+                  },
                   onReact: _reactToMessage,
                   onRemoveReaction: _removeReactionFromMessage,
                   onDelete: null,
@@ -1455,23 +1483,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _statusChip(String label, String value) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFE2F2EE),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        '$label: $value',
-        style: const TextStyle(
-          fontWeight: FontWeight.w700,
-          color: Color(0xFF0F4C43),
         ),
       ),
     );

@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 
 void main() {
-  testWidgets('peer list orders selected conversation peers first',
+  testWidgets('peer list orders by latest activity, not selected conversation',
       (tester) async {
     const alice = MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
     const bob = MessengerUser(id: 'b', username: 'bob_smith', roleLabel: '');
@@ -11,6 +11,7 @@ void main() {
     MessengerConversation conv(
       String id,
       List<MessengerUser> peers,
+      DateTime activityAt,
     ) {
       return MessengerConversation(
         id: id,
@@ -18,6 +19,7 @@ void main() {
         subtitle: 'Last from $id',
         avatarLabel: 'X',
         createdAt: DateTime.utc(2026, 1, 1),
+        lastActivityAt: activityAt,
         peerUsers: peers,
       );
     }
@@ -32,7 +34,10 @@ void main() {
               width: 400,
               child: MessengerConversationList(
                 currentUserName: 'me',
-                conversations: [conv('c1', [alice]), conv('c2', [bob])],
+                conversations: [
+                  conv('c1', [alice], DateTime.utc(2026, 1, 10)),
+                  conv('c2', [bob], DateTime.utc(2026, 1, 5)),
+                ],
                 users: const [alice, bob],
                 selectedConversationId: 'c2',
                 openingDirectUserId: '',
@@ -54,9 +59,81 @@ void main() {
     expect(find.text('Bob Smith'), findsOneWidget);
     expect(find.text('Alice Jones'), findsOneWidget);
     expect(
-      tester.getTopLeft(find.text('Bob Smith')).dy,
-      lessThan(tester.getTopLeft(find.text('Alice Jones')).dy),
+      tester.getTopLeft(find.text('Alice Jones')).dy,
+      lessThan(tester.getTopLeft(find.text('Bob Smith')).dy),
     );
+  });
+
+  testWidgets('tapping non-top row opens that exact user', (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
+    const bob = MessengerUser(id: 'b', username: 'bob_smith', roleLabel: '');
+    const cara = MessengerUser(id: 'c', username: 'cara_doe', roleLabel: '');
+    String? openedUserId;
+
+    MessengerConversation conv(
+      String id,
+      List<MessengerUser> peers,
+      DateTime activityAt,
+    ) {
+      return MessengerConversation(
+        id: id,
+        title: id,
+        subtitle: 'Last from $id',
+        avatarLabel: 'X',
+        createdAt: DateTime.utc(2026, 1, 1),
+        lastActivityAt: activityAt,
+        peerUsers: peers,
+      );
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 640,
+              width: 400,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: [
+                  conv('c1', [alice], DateTime.utc(2026, 1, 10)),
+                  conv('c2', [bob], DateTime.utc(2026, 1, 9)),
+                  conv('c3', [cara], DateTime.utc(2026, 1, 8)),
+                ],
+                users: const [alice, bob, cara],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () {},
+                onLogout: () {},
+                onOpenDirectChat: (user) async {
+                  openedUserId = user.id;
+                },
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getTopLeft(find.text('Alice Jones')).dy,
+      lessThan(tester.getTopLeft(find.text('Bob Smith')).dy),
+    );
+    expect(
+      tester.getTopLeft(find.text('Bob Smith')).dy,
+      lessThan(tester.getTopLeft(find.text('Cara Doe')).dy),
+    );
+
+    await tester.tap(find.text('Cara Doe'));
+    await tester.pumpAndSettle();
+
+    expect(openedUserId, 'c');
   });
 
   testWidgets('empty peer list shows default start-new-chat hint',
