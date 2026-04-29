@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:health_messenger_ui/lib/health_messenger_client.dart';
+import 'package:health_messenger_ui/lib/health_messenger_push.dart';
 import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 
 import 'example_models.dart';
@@ -125,6 +127,41 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     }
   }
 
+  /// When built with `--dart-define=ENABLE_FCM_EXAMPLE=true`, wires Firebase
+  /// foreground handling and native push config (requires platform Firebase files).
+  Future<void> _initFcmExampleIfEnabled(ChatSession session) async {
+    const enableFcmExample =
+        bool.fromEnvironment('ENABLE_FCM_EXAMPLE', defaultValue: false);
+    if (!enableFcmExample || !mounted) {
+      return;
+    }
+    final sessionAuth = session.sessionAuth;
+    if (sessionAuth == null) {
+      return;
+    }
+    try {
+      await Firebase.initializeApp();
+      final push = HealthMessengerPush.instance;
+      await push.startListening();
+      await push.syncNativePushConfig(
+        config: session.client.config,
+        auth: sessionAuth,
+      );
+      final binding = MessengerPushFirebaseBinding(
+        gate: const MessengerPushGate(),
+      );
+      await binding.attachForeground(
+        chatClient: session.client,
+        chatAuth: sessionAuth,
+      );
+      unawaited(push.drainNativeAckQueue());
+      _appendLog('FCM example wired (ENABLE_FCM_EXAMPLE=true)');
+    } catch (e, st) {
+      _appendLog('FCM example init failed', data: {'error': e.toString()});
+      debugPrintStack(stackTrace: st);
+    }
+  }
+
   Future<void> _bootstrapPackageFlow() async {
     final initialData = widget.initialData;
     final apiBaseUrl = initialData.apiBaseUrl.trim();
@@ -235,6 +272,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
           'chatUserId': registeredUser.id,
         },
       );
+      await _initFcmExampleIfEnabled(session);
     } catch (error, stackTrace) {
       _appendLog(
         'Bootstrap failed',

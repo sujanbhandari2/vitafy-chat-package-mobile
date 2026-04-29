@@ -703,7 +703,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
         sentUi,
       );
     } catch (error) {
-      _removeLocalMessage(targetConversationId, pending.id);
+      _updateUploadFailure(targetConversationId, pending.id);
       widget.onMediaSendError?.call(pending.id, error);
     } finally {
       if (mounted) {

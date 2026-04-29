@@ -256,4 +256,28 @@ class FakeChatRepository implements ChatRepository {
       'conversationId': conversationId,
     });
   }
+
+  @override
+  Future<DeliveredReceipt> markAsDeliveredRest(
+    ChatAuth auth, {
+    required String conversationId,
+    required String messageId,
+  }) {
+    return markAsDelivered(
+      conversationId: conversationId,
+      messageId: messageId,
+    );
+  }
+
+  @override
+  Future<ReadReceipt> markAsReadRest(
+    ChatAuth auth, {
+    required String conversationId,
+    required String messageId,
+  }) {
+    return markAsRead(
+      conversationId: conversationId,
+      messageId: messageId,
+    );
+  }
 }

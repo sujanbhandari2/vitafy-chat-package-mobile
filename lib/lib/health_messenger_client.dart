@@ -16,3 +16,4 @@ export 'src/client/models/app_role.dart';
 export 'src/client/models/chat_message.dart';
 export 'src/client/models/conversation.dart';
 export 'src/client/models/tenant_user.dart';
+export 'src/push/push_models.dart' show MessengerDeliveredAckPreference;

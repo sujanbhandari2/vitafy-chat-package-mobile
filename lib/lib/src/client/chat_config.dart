@@ -20,6 +20,10 @@ class ChatServiceConfig {
     this.defaultHeaders = const {'Content-Type': 'application/json'},
     this.apiLogger,
     this.socketLogger,
+    this.deliveredReceiptRestPath =
+        'conversations/{conversationId}/messages/{messageId}/delivered',
+    this.readReceiptRestPath =
+        'conversations/{conversationId}/messages/{messageId}/read',
   });
 
   final String apiBaseUrl;
@@ -41,6 +45,25 @@ class ChatServiceConfig {
   final ChatLogger? apiLogger;
   final ChatLogger? socketLogger;
 
+  /// Path segment relative to [chatApiPath] for POST delivered receipt (REST).
+  /// Supports `{conversationId}` and `{messageId}` placeholders.
+  final String deliveredReceiptRestPath;
+
+  /// Path segment relative to [chatApiPath] for POST read receipt (REST).
+  final String readReceiptRestPath;
+
+  String resolveDeliveredReceiptPath(String conversationId, String messageId) {
+    return deliveredReceiptRestPath
+        .replaceAll('{conversationId}', conversationId)
+        .replaceAll('{messageId}', messageId);
+  }
+
+  String resolveReadReceiptPath(String conversationId, String messageId) {
+    return readReceiptRestPath
+        .replaceAll('{conversationId}', conversationId)
+        .replaceAll('{messageId}', messageId);
+  }
+
   ChatServiceConfig copyWith({
     String? apiBaseUrl,
     String? socketUrl,
@@ -60,6 +83,8 @@ class ChatServiceConfig {
     Map<String, String>? defaultHeaders,
     ChatLogger? apiLogger,
     ChatLogger? socketLogger,
+    String? deliveredReceiptRestPath,
+    String? readReceiptRestPath,
   }) {
     return ChatServiceConfig(
       apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
@@ -82,6 +107,9 @@ class ChatServiceConfig {
       defaultHeaders: defaultHeaders ?? this.defaultHeaders,
       apiLogger: apiLogger ?? this.apiLogger,
       socketLogger: socketLogger ?? this.socketLogger,
+      deliveredReceiptRestPath:
+          deliveredReceiptRestPath ?? this.deliveredReceiptRestPath,
+      readReceiptRestPath: readReceiptRestPath ?? this.readReceiptRestPath,
     );
   }
 }

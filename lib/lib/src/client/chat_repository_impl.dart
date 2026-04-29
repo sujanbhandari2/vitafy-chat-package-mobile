@@ -243,4 +243,32 @@ class BackendChatRepositoryImpl implements ChatRepository {
       messageId: messageId,
     );
   }
+
+  @override
+  Future<DeliveredReceipt> markAsDeliveredRest(
+    ChatAuth auth, {
+    required String conversationId,
+    required String messageId,
+  }) async {
+    final payload = await _chatApi.markMessageDeliveredRest(
+      auth,
+      conversationId: conversationId,
+      messageId: messageId,
+    );
+    return DeliveredReceipt.fromJson(payload);
+  }
+
+  @override
+  Future<ReadReceipt> markAsReadRest(
+    ChatAuth auth, {
+    required String conversationId,
+    required String messageId,
+  }) async {
+    final payload = await _chatApi.markMessageReadRest(
+      auth,
+      conversationId: conversationId,
+      messageId: messageId,
+    );
+    return ReadReceipt.fromJson(payload);
+  }
 }

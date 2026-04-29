@@ -18,6 +18,8 @@ dependencies:
   file_picker: ^10.3.2
   image_picker: ^1.2.0
   record: ^6.2.0
+  firebase_core: ^3.8.1
+  firebase_messaging: ^15.1.5
 
 dev_dependencies:
   flutter_test:
@@ -26,3 +28,10 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  plugin:
+    platforms:
+      android:
+        package: com.example.health_messenger_ui
+        pluginClass: HealthMessengerUiPlugin
+      ios:
+        pluginClass: HealthMessengerUiPlugin
