@@ -108,7 +108,8 @@ void main() {
     expect(find.text('Chats'), findsOneWidget);
   });
 
-  testWidgets('mobile thread opens only after explicit user tap', (tester) async {
+  testWidgets('mobile thread opens only after explicit user tap',
+      (tester) async {
     final composer = TextEditingController();
     final scroll = ScrollController();
     addTearDown(() {
@@ -164,6 +165,128 @@ void main() {
     await tester.tap(find.byIcon(Icons.arrow_back_ios_new_rounded));
     await tester.pumpAndSettle();
     expect(find.text('Chats'), findsOneWidget);
+  });
+
+  testWidgets('desktop thread shows loading state instead of empty text',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    const user = MessengerUser(id: 'u1', username: 'alice_jones');
+    final conversation = MessengerConversation(
+      id: 'c1',
+      title: 'Alice Jones',
+      subtitle: 'Hello',
+      avatarLabel: 'A',
+      createdAt: DateTime.utc(2026),
+      peerUsers: const [user],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerChatShell(
+              currentUserId: 'me',
+              currentUserName: 'Me',
+              conversations: [conversation],
+              users: const [user],
+              selectedConversationId: 'c1',
+              messages: const [],
+              composerController: composer,
+              messagesScrollController: scroll,
+              isSending: false,
+              isRecording: false,
+              isConversationLoading: true,
+              loadingConversationId: 'c1',
+              desktopBreakpoint: 200,
+              onRefresh: () {},
+              onLogout: () {},
+              onSelectConversation: (_) async {},
+              onOpenDirectChat: (_) async {},
+              onSend: () {},
+              onPickImage: () {},
+              onPickAudio: () {},
+              onToggleRecording: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    expect(find.text('Loading messages...'), findsOneWidget);
+    expect(find.text('No messages yet.'), findsNothing);
+  });
+
+  testWidgets('loading conversation does not render stale thread message',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    const user = MessengerUser(id: 'u1', username: 'alice_jones');
+    final conversation = MessengerConversation(
+      id: 'c1',
+      title: 'Alice Jones',
+      subtitle: 'Hello',
+      avatarLabel: 'A',
+      createdAt: DateTime.utc(2026),
+      peerUsers: const [user],
+    );
+    final staleMessage = MessengerChatMessage(
+      id: 'm1',
+      senderId: 'u1',
+      senderLabel: 'Alice',
+      type: MessengerMessageType.text,
+      content: 'old-thread-message',
+      createdAt: DateTime.utc(2026, 1, 1),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerChatShell(
+              currentUserId: 'me',
+              currentUserName: 'Me',
+              conversations: [conversation],
+              users: const [user],
+              selectedConversationId: 'c1',
+              messages: [staleMessage],
+              composerController: composer,
+              messagesScrollController: scroll,
+              isSending: false,
+              isRecording: false,
+              isConversationLoading: true,
+              loadingConversationId: 'c1',
+              desktopBreakpoint: 200,
+              onRefresh: () {},
+              onLogout: () {},
+              onSelectConversation: (_) async {},
+              onOpenDirectChat: (_) async {},
+              onSend: () {},
+              onPickImage: () {},
+              onPickAudio: () {},
+              onToggleRecording: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    expect(find.text('old-thread-message'), findsNothing);
+    expect(find.text('Loading messages...'), findsOneWidget);
   });
 
   testWidgets('shell composer style params reach composer bar', (tester) async {
@@ -240,7 +363,8 @@ void main() {
     expect(composerBar.fieldContentPadding, fieldPadding);
   });
 
-  testWidgets('shell search style params reach conversation list', (tester) async {
+  testWidgets('shell search style params reach conversation list',
+      (tester) async {
     final composer = TextEditingController();
     final scroll = ScrollController();
     addTearDown(() {

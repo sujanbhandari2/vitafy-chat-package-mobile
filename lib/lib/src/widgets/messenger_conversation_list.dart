@@ -190,8 +190,8 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     return null;
   }
 
-  bool get _hasPeerUsers =>
-      widget.conversations.any((conversation) => conversation.peerUsers.isNotEmpty);
+  bool get _hasPeerUsers => widget.conversations
+      .any((conversation) => conversation.peerUsers.isNotEmpty);
 
   int _uniquePeerCount() {
     if (!_hasPeerUsers) {
@@ -267,8 +267,8 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
             user: u,
             messagePreview: previewByUser[u.id] ?? '',
             hasUnread: (unreadByUser[u.id] ?? 0) > 0,
-            isInSelectedConversation: selected != null &&
-                selected.peerUsers.any((p) => p.id == u.id),
+            isInSelectedConversation:
+                selected != null && selected.peerUsers.any((p) => p.id == u.id),
           ),
         )
         .toList(growable: false);
@@ -291,8 +291,8 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
       final leftConversation = matchForUser(left);
       final rightConversation = matchForUser(right);
       if (leftConversation != null && rightConversation != null) {
-        final compare =
-            _compareConversationsByActivity(leftConversation, rightConversation);
+        final compare = _compareConversationsByActivity(
+            leftConversation, rightConversation);
         if (compare != 0) {
           return compare;
         }
@@ -303,7 +303,9 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
       if (left.isOnline != right.isOnline) {
         return left.isOnline ? -1 : 1;
       }
-      return left.username.toLowerCase().compareTo(right.username.toLowerCase());
+      return left.username
+          .toLowerCase()
+          .compareTo(right.username.toLowerCase());
     });
 
     return users
@@ -384,10 +386,11 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
   Widget _buildMainUserListItem(BuildContext context, _PeerListEntry entry) {
     final data = MessengerUserListItemData(
       user: entry.user,
-      isSelected: entry.isInSelectedConversation,
+      isSelected: false,
       hasUnread: entry.hasUnread,
       isOpening: widget.openingDirectUserId == entry.user.id,
-      messagePreview: entry.messagePreview.isEmpty ? null : entry.messagePreview,
+      messagePreview:
+          entry.messagePreview.isEmpty ? null : entry.messagePreview,
       onTap: () {
         widget.onOpenDirectChat(entry.user);
       },
@@ -471,7 +474,8 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
   @override
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
-    final searchBg = widget.searchFieldBackgroundColor ?? theme.searchBackground;
+    final searchBg =
+        widget.searchFieldBackgroundColor ?? theme.searchBackground;
     final searchIconColor = widget.searchIconColor ?? theme.mutedText;
     final searchHintStyle =
         widget.searchHintTextStyle ?? TextStyle(color: theme.mutedText);
@@ -563,8 +567,8 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     final fabBg = widget.fabBackgroundColor ?? theme.primary;
     final fabFg = widget.fabForegroundColor ?? Colors.white;
     final fabIcon = widget.fabIcon ?? Icons.add_rounded;
-    final heroTag =
-        widget.fabHeroTag ?? (widget.isMobile ? 'startChatMobile' : 'startChatDesktop');
+    final heroTag = widget.fabHeroTag ??
+        (widget.isMobile ? 'startChatMobile' : 'startChatDesktop');
 
     return Stack(
       children: [
@@ -585,7 +589,8 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
 
   Future<void> _openDirectPicker(BuildContext context) async {
     final theme = MessengerTheme.of(context);
-    final searchBg = widget.searchFieldBackgroundColor ?? theme.searchBackground;
+    final searchBg =
+        widget.searchFieldBackgroundColor ?? theme.searchBackground;
     final searchIconColor = widget.searchIconColor ?? theme.mutedText;
     final searchHintStyle =
         widget.searchHintTextStyle ?? TextStyle(color: theme.mutedText);
@@ -599,118 +604,25 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
         return a.isOnline ? -1 : 1;
       });
 
-    String query = '';
-    final searchController = TextEditingController();
-
     await showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (sheetContext, setState) {
-          final filteredUsers = query.isEmpty
-              ? sortedUsers
-              : sortedUsers
-                  .where(
-                    (user) =>
-                        user.username.toLowerCase().contains(query) ||
-                        user.roleLabel.toLowerCase().contains(query),
-                  )
-                  .toList(growable: false);
-
-          return SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Start New Chat',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    height: 38,
-                    padding: searchContentPadding ??
-                        const EdgeInsets.symmetric(horizontal: 10),
-                    decoration: BoxDecoration(
-                      color: searchBg,
-                      borderRadius: BorderRadius.circular(searchRadius),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.search,
-                          color: searchIconColor,
-                          size: 18,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: TextField(
-                            controller: searchController,
-                            style: widget.searchInputTextStyle,
-                            onChanged: (value) => setState(() {
-                              query = value.trim().toLowerCase();
-                            }),
-                            decoration: InputDecoration(
-                              hintText: widget.searchHintText,
-                              hintStyle: searchHintStyle,
-                              border: InputBorder.none,
-                              isDense: true,
-                            ),
-                          ),
-                        ),
-                        if (query.isNotEmpty)
-                          GestureDetector(
-                            onTap: () {
-                              searchController.clear();
-                              setState(() => query = '');
-                            },
-                            child: Icon(
-                              Icons.close_rounded,
-                              color: searchIconColor,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  if (filteredUsers.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      child: widget.emptyUsersBuilder?.call(sheetContext) ??
-                          Text(
-                            widget.emptyUsersMessage,
-                            style: TextStyle(
-                              color: MessengerTheme.of(context).subtleText,
-                            ),
-                          ),
-                    )
-                  else
-                    ...filteredUsers.map(
-                      (user) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: _DirectUserTile(
-                          user: user,
-                          isOpening: widget.openingDirectUserId == user.id,
-                          onTap: () {
-                            Navigator.of(sheetContext).pop();
-                            widget.onOpenDirectChat(user);
-                          },
-                          showChatButton: true,
-                          isSelected: false,
-                          messagePreview: null,
-                          hasUnread: false,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          );
-        },
+      builder: (sheetContext) => _StartNewChatBottomSheet(
+        sortedUsers: sortedUsers,
+        searchBackgroundColor: searchBg,
+        searchIconColor: searchIconColor,
+        searchHintStyle: searchHintStyle,
+        searchContentPadding: searchContentPadding,
+        searchBorderRadius: searchRadius,
+        searchInputTextStyle: widget.searchInputTextStyle,
+        searchHintText: widget.searchHintText,
+        emptyUsersBuilder: widget.emptyUsersBuilder,
+        emptyUsersMessage: widget.emptyUsersMessage,
+        openingDirectUserId: widget.openingDirectUserId,
+        onOpenDirectChat: widget.onOpenDirectChat,
       ),
     );
   }
@@ -768,6 +680,182 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
   }
 }
 
+class _StartNewChatBottomSheet extends StatefulWidget {
+  const _StartNewChatBottomSheet({
+    required this.sortedUsers,
+    required this.searchBackgroundColor,
+    required this.searchIconColor,
+    required this.searchHintStyle,
+    required this.searchContentPadding,
+    required this.searchBorderRadius,
+    required this.searchInputTextStyle,
+    required this.searchHintText,
+    required this.emptyUsersBuilder,
+    required this.emptyUsersMessage,
+    required this.openingDirectUserId,
+    required this.onOpenDirectChat,
+  });
+
+  final List<MessengerUser> sortedUsers;
+  final Color searchBackgroundColor;
+  final Color searchIconColor;
+  final TextStyle searchHintStyle;
+  final EdgeInsetsGeometry? searchContentPadding;
+  final double searchBorderRadius;
+  final TextStyle? searchInputTextStyle;
+  final String searchHintText;
+  final WidgetBuilder? emptyUsersBuilder;
+  final String emptyUsersMessage;
+  final String openingDirectUserId;
+  final FutureOr<void> Function(MessengerUser user) onOpenDirectChat;
+
+  @override
+  State<_StartNewChatBottomSheet> createState() =>
+      _StartNewChatBottomSheetState();
+}
+
+class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
+  late final TextEditingController _searchController;
+  String _query = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filteredUsers = _query.isEmpty
+        ? widget.sortedUsers
+        : widget.sortedUsers
+            .where(
+              (user) =>
+                  user.username.toLowerCase().contains(_query) ||
+                  user.roleLabel.toLowerCase().contains(_query),
+            )
+            .toList(growable: false);
+
+    final viewInsets = MediaQuery.viewInsetsOf(context);
+    final screenH = MediaQuery.sizeOf(context).height;
+    final maxSheetHeight = screenH * 0.88;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: viewInsets.bottom),
+      child: SafeArea(
+        top: false,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: maxSheetHeight),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Start New Chat',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 10),
+                Container(
+                  height: 38,
+                  padding: widget.searchContentPadding ??
+                      const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: widget.searchBackgroundColor,
+                    borderRadius:
+                        BorderRadius.circular(widget.searchBorderRadius),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.search,
+                        color: widget.searchIconColor,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: TextField(
+                          controller: _searchController,
+                          style: widget.searchInputTextStyle,
+                          onChanged: (value) => setState(() {
+                            _query = value.trim().toLowerCase();
+                          }),
+                          decoration: InputDecoration(
+                            hintText: widget.searchHintText,
+                            hintStyle: widget.searchHintStyle,
+                            border: InputBorder.none,
+                            isDense: true,
+                          ),
+                        ),
+                      ),
+                      if (_query.isNotEmpty)
+                        GestureDetector(
+                          onTap: () {
+                            _searchController.clear();
+                            setState(() => _query = '');
+                          },
+                          child: Icon(
+                            Icons.close_rounded,
+                            color: widget.searchIconColor,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: filteredUsers.isEmpty
+                      ? Align(
+                          alignment: Alignment.topCenter,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            child: widget.emptyUsersBuilder?.call(context) ??
+                                Text(
+                                  widget.emptyUsersMessage,
+                                  style: TextStyle(
+                                    color:
+                                        MessengerTheme.of(context).subtleText,
+                                  ),
+                                ),
+                          ),
+                        )
+                      : ListView.separated(
+                          padding: EdgeInsets.zero,
+                          itemCount: filteredUsers.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 8),
+                          itemBuilder: (context, index) {
+                            final user = filteredUsers[index];
+                            return _DirectUserTile(
+                              user: user,
+                              isOpening: widget.openingDirectUserId == user.id,
+                              onTap: () {
+                                Navigator.of(context).pop();
+                                widget.onOpenDirectChat(user);
+                              },
+                              showChatButton: true,
+                              isSelected: false,
+                              messagePreview: null,
+                              hasUnread: false,
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _DirectUserTile extends StatelessWidget {
   const _DirectUserTile({
     required this.user,
@@ -816,7 +904,9 @@ class _DirectUserTile extends StatelessWidget {
             : (style.backgroundColor ?? const Color(0xFFF8FAFC)),
         borderRadius: BorderRadius.circular(style.borderRadius),
         border: Border.fromBorderSide(
-          isSelected ? (style.selectedBorder ?? defaultSelectedBorder) : (style.border ?? defaultBorder),
+          isSelected
+              ? (style.selectedBorder ?? defaultSelectedBorder)
+              : (style.border ?? defaultBorder),
         ),
         boxShadow: style.boxShadow,
       ),
@@ -875,7 +965,8 @@ class _DirectUserTile extends StatelessWidget {
               style: FilledButton.styleFrom(
                 backgroundColor: theme.primary,
                 foregroundColor: Colors.white,
-                visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
+                visualDensity:
+                    const VisualDensity(horizontal: -4, vertical: -4),
                 textStyle: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,

@@ -166,7 +166,6 @@ class ChatApi {
         options: _authOptions(
           auth,
           includeDefaultHeaders: false,
-          contentType: 'multipart/form-data',
         ),
         data: FormData.fromMap(payload),
         cancelToken: cancelToken,

@@ -9,6 +9,10 @@ import 'messenger_composer_bar.dart';
 import 'messenger_message_bubble.dart';
 import '../theme/messenger_theme.dart';
 
+/// Extra scroll extent so the last messages, reaction UI, and uploads stay
+/// visibly above the composer and above the on-screen keyboard.
+const double _kThreadListBottomScrollPadding = 88;
+
 class MessengerChatThread extends StatelessWidget {
   const MessengerChatThread({
     super.key,
@@ -22,6 +26,9 @@ class MessengerChatThread extends StatelessWidget {
     required this.onSend,
     required this.onPickImage,
     required this.onPickAudio,
+    required this.onStartRecording,
+    required this.onFinishRecording,
+    required this.onCancelRecording,
     required this.onToggleRecording,
     this.onPickCamera,
     this.onPickDocument,
@@ -45,10 +52,16 @@ class MessengerChatThread extends StatelessWidget {
     this.isMobile = false,
     this.emptyMessagesMessage = 'No messages yet.',
     this.emptyMessagesBuilder,
+    this.isConversationLoading = false,
+    this.loadingMessagesBuilder,
+    this.contentTransitionDuration = const Duration(milliseconds: 180),
     this.remoteTypingUsers = const [],
     this.typingIndicatorPrefix = '',
     this.onTypingStart,
     this.onTypingStop,
+    this.hasPendingAttachment = false,
+    this.pendingAttachmentLabel,
+    this.onClearPendingAttachment,
   });
 
   final MessengerConversation? conversation;
@@ -61,6 +74,9 @@ class MessengerChatThread extends StatelessWidget {
   final VoidCallback onSend;
   final VoidCallback onPickImage;
   final VoidCallback onPickAudio;
+  final VoidCallback onStartRecording;
+  final VoidCallback onFinishRecording;
+  final VoidCallback onCancelRecording;
   final VoidCallback onToggleRecording;
   final VoidCallback? onPickCamera;
   final VoidCallback? onPickDocument;
@@ -85,10 +101,16 @@ class MessengerChatThread extends StatelessWidget {
   final bool isMobile;
   final String emptyMessagesMessage;
   final WidgetBuilder? emptyMessagesBuilder;
+  final bool isConversationLoading;
+  final WidgetBuilder? loadingMessagesBuilder;
+  final Duration contentTransitionDuration;
   final List<MessengerTypingUser> remoteTypingUsers;
   final String typingIndicatorPrefix;
   final Future<void> Function(String conversationId)? onTypingStart;
   final Future<void> Function(String conversationId)? onTypingStop;
+  final bool hasPendingAttachment;
+  final String? pendingAttachmentLabel;
+  final VoidCallback? onClearPendingAttachment;
 
   @override
   Widget build(BuildContext context) {
@@ -100,6 +122,156 @@ class MessengerChatThread extends StatelessWidget {
         ? ''
         : _formatRemoteTypingLine(visibleTyping, typingIndicatorPrefix);
 
+    Widget buildMessageList() {
+      final bottomPad = _kThreadListBottomScrollPadding +
+          MediaQuery.viewInsetsOf(context).bottom;
+      return ListView.builder(
+        key: ValueKey('threadMessages-${conversation?.id ?? 'none'}'),
+        controller: messagesScrollController,
+        clipBehavior: Clip.none,
+        padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + bottomPad),
+        itemCount: messages.length,
+        itemBuilder: (context, index) {
+          final message = messages[index];
+          final mine = message.senderId == currentUserId;
+          final showDate = showDateSeparators &&
+              (index == 0 ||
+                  !_isSameDay(
+                    messages[index - 1].createdAt,
+                    message.createdAt,
+                  ));
+
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (showDate) _DateSeparator(date: message.createdAt),
+              MessengerMessageBubble(
+                message: message,
+                isMine: mine,
+                currentUserId: currentUserId,
+                canDelete: canDeleteMessage?.call(message) ?? mine,
+                onReact: onReact == null
+                    ? null
+                    : (reaction) => onReact!(message.id, reaction),
+                onRemoveReaction: onRemoveReaction == null
+                    ? null
+                    : (messageId, reactionType) =>
+                        onRemoveReaction!(messageId, reactionType),
+                onDelete: onDelete == null ? null : () => onDelete!(message.id),
+                onMarkSeen:
+                    onMarkSeen == null ? null : () => onMarkSeen!(message.id),
+                enableReactions: enableReactions,
+                reactionOptions: reactionOptions,
+              ),
+            ],
+          );
+        },
+      );
+    }
+
+    Widget buildEmptyMessages() {
+      return Semantics(
+        key: const ValueKey('threadEmpty'),
+        container: true,
+        label: 'No messages in conversation',
+        child: emptyMessagesBuilder != null
+            ? emptyMessagesBuilder!(context)
+            : Center(
+                child: Text(
+                  emptyMessagesMessage,
+                  style: TextStyle(
+                    color: theme.subtleText,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+      );
+    }
+
+    Widget buildLoadingState() {
+      final builder = loadingMessagesBuilder;
+      if (builder != null) {
+        return KeyedSubtree(
+          key: const ValueKey('threadLoadingCustom'),
+          child: builder(context),
+        );
+      }
+      if (messages.isNotEmpty) {
+        return Stack(
+          key: const ValueKey('threadLoadingOverlay'),
+          children: [
+            buildMessageList(),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Container(
+                  color: theme.surface.withValues(alpha: 0.55),
+                ),
+              ),
+            ),
+            Align(
+              alignment: Alignment.topCenter,
+              child: Container(
+                margin: const EdgeInsets.only(top: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: theme.surface,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: theme.border),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Updating messages...',
+                      style: TextStyle(
+                        color: theme.subtleText,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      }
+
+      return const _ThreadLoadingPlaceholder(key: ValueKey('threadLoading'));
+    }
+
+    Widget threadBody;
+    if (conversation == null) {
+      threadBody = Semantics(
+        key: const ValueKey('threadNoneSelected'),
+        container: true,
+        label: 'No conversation selected',
+        child: const Center(
+          child: Text(
+            'Select a conversation.',
+            style: TextStyle(
+              color: Color(0xFF64748B),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      );
+    } else if (isConversationLoading) {
+      threadBody = buildLoadingState();
+    } else if (messages.isEmpty) {
+      threadBody = buildEmptyMessages();
+    } else {
+      threadBody = buildMessageList();
+    }
+
     final stage = Column(
       children: [
         _ThreadHeader(
@@ -109,81 +281,14 @@ class MessengerChatThread extends StatelessWidget {
         ),
         Expanded(
           child: Container(
+            clipBehavior: Clip.none,
             color: isMobile ? theme.threadBackgroundMobile : theme.background,
-            child: conversation == null
-                ? Semantics(
-                    container: true,
-                    label: 'No conversation selected',
-                    child: const Center(
-                      child: Text(
-                        'Select a conversation.',
-                        style: TextStyle(
-                          color: Color(0xFF64748B),
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  )
-                : messages.isEmpty
-                    ? Semantics(
-                        container: true,
-                        label: 'No messages in conversation',
-                        child: emptyMessagesBuilder != null
-                            ? emptyMessagesBuilder!(context)
-                            : Center(
-                                child: Text(
-                                  emptyMessagesMessage,
-                                  style: TextStyle(
-                                    color: theme.subtleText,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
-                      )
-                    : ListView.builder(
-                    controller: messagesScrollController,
-                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-                    itemCount: messages.length,
-                    itemBuilder: (context, index) {
-                      final message = messages[index];
-                      final mine = message.senderId == currentUserId;
-                      final showDate = showDateSeparators &&
-                          (index == 0 ||
-                              !_isSameDay(
-                                messages[index - 1].createdAt,
-                                message.createdAt,
-                              ));
-
-                      return Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (showDate) _DateSeparator(date: message.createdAt),
-                          MessengerMessageBubble(
-                            message: message,
-                            isMine: mine,
-                            currentUserId: currentUserId,
-                            canDelete: canDeleteMessage?.call(message) ?? mine,
-                            onReact: onReact == null
-                                ? null
-                                : (reaction) => onReact!(message.id, reaction),
-                            onRemoveReaction: onRemoveReaction == null
-                                ? null
-                                : (messageId, reactionType) =>
-                                    onRemoveReaction!(messageId, reactionType),
-                            onDelete: onDelete == null
-                                ? null
-                                : () => onDelete!(message.id),
-                            onMarkSeen: onMarkSeen == null
-                                ? null
-                                : () => onMarkSeen!(message.id),
-                            enableReactions: enableReactions,
-                            reactionOptions: reactionOptions,
-                          ),
-                        ],
-                      );
-                    },
-                  ),
+            child: AnimatedSwitcher(
+              duration: contentTransitionDuration,
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              child: threadBody,
+            ),
           ),
         ),
         if (conversation != null && typingLine.isNotEmpty)
@@ -196,6 +301,9 @@ class MessengerChatThread extends StatelessWidget {
             onSend: onSend,
             onPickImage: onPickImage,
             onPickAudio: onPickAudio,
+            onStartRecording: onStartRecording,
+            onFinishRecording: onFinishRecording,
+            onCancelRecording: onCancelRecording,
             onToggleRecording: onToggleRecording,
             onPickCamera: onPickCamera,
             onPickVideo: onPickVideo,
@@ -210,6 +318,9 @@ class MessengerChatThread extends StatelessWidget {
             typingConversationId: conversation?.id,
             onTypingStart: onTypingStart,
             onTypingStop: onTypingStop,
+            hasPendingAttachment: hasPendingAttachment,
+            pendingAttachmentLabel: pendingAttachmentLabel,
+            onClearPendingAttachment: onClearPendingAttachment,
           ),
       ],
     );
@@ -243,8 +354,7 @@ String _formatRemoteTypingLine(
   } else if (names.length == 2) {
     core = '${names[0]} and ${names[1]} are typing';
   } else {
-    core =
-        '${names[0]}, ${names[1]} and ${names.length - 2} others are typing';
+    core = '${names[0]}, ${names[1]} and ${names.length - 2} others are typing';
   }
   final p = prefix.trim();
   if (p.isEmpty) {
@@ -404,7 +514,6 @@ class _ThreadHeader extends StatelessWidget {
                           fontSize: 16,
                         ),
                       ),
-
                     ],
                   ),
                 ),
@@ -467,6 +576,41 @@ class _DateSeparator extends StatelessWidget {
       return '';
     }
     return months[month - 1];
+  }
+}
+
+class _ThreadLoadingPlaceholder extends StatelessWidget {
+  const _ThreadLoadingPlaceholder({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      label: 'Loading conversation',
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2.4),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Loading messages...',
+                style: TextStyle(
+                  color: MessengerTheme.of(context).subtleText,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
