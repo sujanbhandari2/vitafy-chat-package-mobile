@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:health_messenger_ui/lib/health_messenger_client.dart';
 import 'package:health_messenger_ui/lib/health_messenger_push.dart';
@@ -47,6 +48,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   bool _isRecording = false;
   String? _loadingConversationId;
   Timer? _slowConversationHintTimer;
+
+  StreamSubscription<MessengerPushEvent>? _pushEventsSubscription;
+  MessengerPushFirebaseBinding? _pushFirebaseBinding;
+  bool _pushIntegrationReady = false;
 
   @override
   void initState() {
@@ -109,6 +114,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         _isSocketConnected = true;
         _statusText = 'Socket reconnected.';
       });
+      unawaited(_resyncNativePushConfig());
       return true;
     } catch (error, stackTrace) {
       _appendLog(
@@ -127,38 +133,164 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     }
   }
 
-  /// When built with `--dart-define=ENABLE_FCM_EXAMPLE=true`, wires Firebase
-  /// foreground handling and native push config (requires platform Firebase files).
-  Future<void> _initFcmExampleIfEnabled(ChatSession session) async {
-    const enableFcmExample =
-        bool.fromEnvironment('ENABLE_FCM_EXAMPLE', defaultValue: false);
-    if (!enableFcmExample || !mounted) {
+  /// Wires [HealthMessengerPush], native delivered-ACK snapshot, and foreground
+  /// [FirebaseMessaging] when Firebase is configured. Fails soft (logs only)
+  /// when `google-services.json` / `GoogleService-Info.plist` are missing.
+  Future<void> _setupPushAfterBootstrap(ChatSession session) async {
+    if (!mounted) {
       return;
     }
+    await _teardownPushIntegration(updateUi: false);
     final sessionAuth = session.sessionAuth;
     if (sessionAuth == null) {
       return;
     }
     try {
-      await Firebase.initializeApp();
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp();
+      }
+      final settings = await FirebaseMessaging.instance.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+      _appendLog(
+        'FCM permission',
+        data: {'authorizationStatus': '${settings.authorizationStatus}'},
+      );
+
       final push = HealthMessengerPush.instance;
       await push.startListening();
+      await _pushEventsSubscription?.cancel();
+      _pushEventsSubscription = push.events.listen(_onMessengerPushEvent);
+
       await push.syncNativePushConfig(
         config: session.client.config,
         auth: sessionAuth,
       );
+
+      await _pushFirebaseBinding?.detach();
       final binding = MessengerPushFirebaseBinding(
         gate: const MessengerPushGate(),
       );
+      binding.onFcmToken = (token) async {
+        final preview =
+            token.length > 24 ? '${token.substring(0, 24)}…' : token;
+        _appendLog('FCM device token', data: {'preview': preview});
+      };
       await binding.attachForeground(
         chatClient: session.client,
         chatAuth: sessionAuth,
       );
+      _pushFirebaseBinding = binding;
+
       unawaited(push.drainNativeAckQueue());
-      _appendLog('FCM example wired (ENABLE_FCM_EXAMPLE=true)');
+
+      if (mounted) {
+        setState(() => _pushIntegrationReady = true);
+      }
+      _appendLog('Push bridge ready (native sync + foreground listener)');
     } catch (e, st) {
-      _appendLog('FCM example init failed', data: {'error': e.toString()});
+      if (mounted) {
+        setState(() => _pushIntegrationReady = false);
+      } else {
+        _pushIntegrationReady = false;
+      }
+      _appendLog(
+        'Push bridge not active (add Firebase config to enable)',
+        data: {'error': e.toString()},
+      );
       debugPrintStack(stackTrace: st);
+    }
+  }
+
+  void _onMessengerPushEvent(MessengerPushEvent event) {
+    if (!mounted) {
+      return;
+    }
+    switch (event.kind) {
+      case MessengerPushEventKind.incomingChatMessage:
+        _appendLog(
+          'Native push (chat)',
+          data: {
+            'conversationId': event.conversationId,
+            'messageId': event.messageId,
+            'nativeAckSucceeded': event.nativeAckSucceeded,
+          },
+        );
+        final convId = event.conversationId;
+        final msgId = event.messageId;
+        if (convId != null &&
+            msgId != null &&
+            convId.isNotEmpty &&
+            msgId.isNotEmpty) {
+          unawaited(_refreshConversationAfterRemoteHint(convId));
+        }
+        break;
+      case MessengerPushEventKind.fcmTokenRefresh:
+        _appendLog(
+          'FCM token refresh (native)',
+          data: {'token': event.token},
+        );
+        break;
+      case MessengerPushEventKind.unknown:
+        _appendLog('Push event', data: event.raw);
+        break;
+    }
+  }
+
+  Future<void> _refreshConversationAfterRemoteHint(String conversationId) async {
+    final client = _client;
+    final auth = _apiAuth;
+    if (client == null || auth == null) {
+      return;
+    }
+    try {
+      final page = await client.getMessages(auth, conversationId);
+      final items = [...page.items]
+        ..sort((left, right) => left.createdAt.compareTo(right.createdAt));
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _messagesByConversation[conversationId] = items;
+      });
+      _appendLog(
+        'Messages refreshed after push',
+        data: {'conversationId': conversationId},
+      );
+    } catch (e) {
+      _appendLog(
+        'Refresh after push failed',
+        data: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _resyncNativePushConfig() async {
+    final session = _session;
+    final auth = _sessionAuth;
+    if (session == null || auth == null || !_pushIntegrationReady) {
+      return;
+    }
+    try {
+      await HealthMessengerPush.instance.syncNativePushConfig(
+        config: session.client.config,
+        auth: auth,
+      );
+      unawaited(HealthMessengerPush.instance.drainNativeAckQueue());
+    } catch (_) {}
+  }
+
+  Future<void> _teardownPushIntegration({bool updateUi = true}) async {
+    await _pushEventsSubscription?.cancel();
+    _pushEventsSubscription = null;
+    await _pushFirebaseBinding?.detach();
+    _pushFirebaseBinding = null;
+    await HealthMessengerPush.instance.stopListening();
+    _pushIntegrationReady = false;
+    if (updateUi && mounted) {
+      setState(() {});
     }
   }
 
@@ -272,7 +404,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
           'chatUserId': registeredUser.id,
         },
       );
-      await _initFcmExampleIfEnabled(session);
+      await _setupPushAfterBootstrap(session);
     } catch (error, stackTrace) {
       _appendLog(
         'Bootstrap failed',
@@ -455,6 +587,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                 'Opened conversation $conversationId (REST-only, socket disconnected).';
           });
         }
+        _scrollToBottom();
         return;
       }
 
@@ -468,6 +601,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         _loadingConversationId = null;
         _statusText = 'Joined conversation $conversationId.';
       });
+      _scrollToBottom();
       unawaited(_markVisibleMessagesAsRead(conversationId));
     } catch (error, stackTrace) {
       _appendLog(
@@ -728,6 +862,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }
 
   Future<void> _disposeActiveClient() async {
+    await _teardownPushIntegration(updateUi: false);
     await _socketSubscription?.cancel();
     _socketSubscription = null;
     final session = _session;
@@ -765,6 +900,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
           _isSocketConnected = true;
           _statusText = 'Socket connected.';
         });
+        unawaited(_resyncNativePushConfig());
         break;
       case ChatSocketEventType.disconnected:
         setState(() {
@@ -1441,7 +1577,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               child: Text(
-                'Tenant: ${_tenantScope?.tenantId ?? 'pending'}  |  $_statusText',
+                'Tenant: ${_tenantScope?.tenantId ?? 'pending'}  |  '
+                'Push: ${_pushIntegrationReady ? 'on' : 'off'}  |  '
+                '$_statusText',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: const Color(0xFF475569),
                       fontWeight: FontWeight.w600,

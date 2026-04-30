@@ -126,7 +126,6 @@ class MessengerChatThread extends StatelessWidget {
       final bottomPad = _kThreadListBottomScrollPadding +
           MediaQuery.viewInsetsOf(context).bottom;
       return ListView.builder(
-        key: ValueKey('threadMessages-${conversation?.id ?? 'none'}'),
         controller: messagesScrollController,
         clipBehavior: Clip.none,
         padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + bottomPad),
@@ -189,65 +188,57 @@ class MessengerChatThread extends StatelessWidget {
       );
     }
 
-    Widget buildLoadingState() {
+    Widget buildLoadingOverlayOnly() {
       final builder = loadingMessagesBuilder;
       if (builder != null) {
-        return KeyedSubtree(
-          key: const ValueKey('threadLoadingCustom'),
-          child: builder(context),
-        );
+        return Positioned.fill(child: builder(context));
       }
-      if (messages.isNotEmpty) {
-        return Stack(
-          key: const ValueKey('threadLoadingOverlay'),
-          children: [
-            buildMessageList(),
-            Positioned.fill(
-              child: IgnorePointer(
-                child: Container(
-                  color: theme.surface.withValues(alpha: 0.55),
-                ),
-              ),
-            ),
-            Align(
-              alignment: Alignment.topCenter,
-              child: Container(
-                margin: const EdgeInsets.only(top: 12),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: theme.surface,
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: theme.border),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Updating messages...',
-                      style: TextStyle(
-                        color: theme.subtleText,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        );
-      }
-
-      return const _ThreadLoadingPlaceholder(key: ValueKey('threadLoading'));
+      return Positioned.fill(
+        child: IgnorePointer(
+          child: Container(
+            color: theme.surface.withValues(alpha: 0.55),
+          ),
+        ),
+      );
     }
 
+    Widget buildLoadingBanner() {
+      return Align(
+        alignment: Alignment.topCenter,
+        child: Container(
+          margin: const EdgeInsets.only(top: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: theme.surface,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: theme.border),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Updating messages...',
+                style: TextStyle(
+                  color: theme.subtleText,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    /// Keeps one [ListView] subtree whenever [messages] is non-empty so opening
+    /// a thread (loading → loaded) does not recreate the scroll view (which
+    /// reset scroll to the top).
     Widget threadBody;
     if (conversation == null) {
       threadBody = Semantics(
@@ -264,12 +255,35 @@ class MessengerChatThread extends StatelessWidget {
           ),
         ),
       );
-    } else if (isConversationLoading) {
-      threadBody = buildLoadingState();
     } else if (messages.isEmpty) {
-      threadBody = buildEmptyMessages();
+      if (isConversationLoading) {
+        final builder = loadingMessagesBuilder;
+        threadBody = builder != null
+            ? KeyedSubtree(
+                key: const ValueKey('threadLoadingCustom'),
+                child: builder(context),
+              )
+            : const _ThreadLoadingPlaceholder(key: ValueKey('threadLoading'));
+      } else {
+        threadBody = buildEmptyMessages();
+      }
     } else {
-      threadBody = buildMessageList();
+      // ListView must be [Positioned.fill] inside [Stack] so it gets a bounded
+      // height; a loose non-positioned child can overflow and paint over the
+      // thread header / app chrome. [Clip.hardEdge] keeps scroll paint in bounds.
+      threadBody = Stack(
+        key: ValueKey('threadMessages-${conversation?.id ?? 'none'}'),
+        clipBehavior: Clip.hardEdge,
+        children: [
+          Positioned.fill(
+            child: buildMessageList(),
+          ),
+          if (isConversationLoading) ...[
+            buildLoadingOverlayOnly(),
+            buildLoadingBanner(),
+          ],
+        ],
+      );
     }
 
     final stage = Column(
@@ -280,14 +294,15 @@ class MessengerChatThread extends StatelessWidget {
           onBack: onBack,
         ),
         Expanded(
-          child: Container(
-            clipBehavior: Clip.none,
-            color: isMobile ? theme.threadBackgroundMobile : theme.background,
-            child: AnimatedSwitcher(
-              duration: contentTransitionDuration,
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeInCubic,
-              child: threadBody,
+          child: ClipRect(
+            child: ColoredBox(
+              color: isMobile ? theme.threadBackgroundMobile : theme.background,
+              child: AnimatedSwitcher(
+                duration: contentTransitionDuration,
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                child: threadBody,
+              ),
             ),
           ),
         ),

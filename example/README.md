@@ -1,36 +1,32 @@
 # health_messenger_ui_example
 
-Demonstrates the chat UI package and optional **message FCM** wiring.
+Demonstrates the chat UI package and **message FCM / push bridge** wired in the example app.
 
-## Message push (FCM)
+## Firebase setup
 
-1. Add Firebase to the host app: `google-services.json` under `android/app/`, and `GoogleService-Info.plist` in the Xcode Runner target. The Android Gradle plugin is applied **only** when `android/app/google-services.json` exists.
-2. Build the example with FCM hooks enabled:
+1. Add **`android/app/google-services.json`** (Android) and **`GoogleService-Info.plist`** to the Xcode Runner target (iOS).
+2. The Android Gradle **Google Services** plugin applies only when `google-services.json` is present (see `android/app/build.gradle.kts`).
+3. **iOS**: enable **Push Notifications** and **Background Modes → Remote notifications** in Xcode. `Runner/AppDelegate` forwards background payloads to `HealthMessengerUiPlugin`.
 
-   ```bash
-   flutter run --dart-define=ENABLE_FCM_EXAMPLE=true
-   ```
+## What the example does
 
-3. After login, the example calls `HealthMessengerPush.syncNativePushConfig` so **native** Android/iOS code can POST delivered receipts while the app is backgrounded (using the same REST path template as `ChatServiceConfig.deliveredReceiptRestPath`).
-4. **iOS**: `Runner/AppDelegate` forwards `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)` to `HealthMessengerUiPlugin.handleRemoteNotification`. Enable **Push Notifications** and **Background Modes → Remote notifications** in Xcode.
+- **`main.dart`** calls `WidgetsFlutterBinding.ensureInitialized()` and tries `Firebase.initializeApp()` so Firebase is ready before the first frame when config files exist.
+- After a successful chat **bootstrap**, `ExampleChatPage` runs **`_setupPushAfterBootstrap`**:
+  - Requests notification permission (`FirebaseMessaging.instance.requestPermission`).
+  - **`HealthMessengerPush`**: native `syncPushConfig` (REST delivered ACK snapshot) + `EventChannel` listener.
+  - **`MessengerPushFirebaseBinding`**: foreground `onMessage` → `markAsDeliveredPrefer` (REST then socket).
+  - Logs FCM token preview and native push events; refreshes the affected conversation’s messages when a chat push arrives.
+- The header line shows **`Push: on`** when the bridge initialized, **`Push: off`** otherwise (e.g. missing Firebase files).
 
-### FCM `data` payload (chat only)
+## FCM `data` payload (chat only)
 
-Use a string `type` field (default gate: `type` = `CHAT_MESSAGE`) plus:
+Use a string `type` field (default: `type` = `CHAT_MESSAGE`) plus:
 
 - `messageId` (or `message_id`)
 - `conversationId` (or `conversation_id`)
 
-Optional: `tenantId`, `senderId`.
+Optional: `tenantId`, `senderId`. Native code ignores non-matching `type` values.
 
-Native code ignores payloads that do not match the gate so non-chat notifications are not ACK’d as chat messages.
+## REST receipt paths
 
-### Dart API
-
-Import `package:health_messenger_ui/lib/health_messenger_push.dart` for:
-
-- `HealthMessengerPush` — MethodChannel sync + `EventChannel` stream
-- `parseMessengerPushPayload` / `flattenPushDataMap`
-- `MessengerPushFirebaseBinding` — foreground `FirebaseMessaging.onMessage` → `ChatClient.markAsDeliveredPrefer`
-
-REST receipt endpoints default to paths under `chatApiPath`; override with `ChatServiceConfig.deliveredReceiptRestPath` / `readReceiptRestPath` if your backend differs.
+Defaults match `ChatServiceConfig.deliveredReceiptRestPath` / `readReceiptRestPath`. Change them when constructing `ChatServiceConfig` in `_bootstrapPackageFlow` if your API differs.
