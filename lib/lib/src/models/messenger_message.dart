@@ -1,4 +1,4 @@
-enum MessengerMessageType { text, image, voice }
+enum MessengerMessageType { text, image, voice, video, file }
 
 enum MessengerDeliveryStatus { none, sent, delivered, seen }
 

@@ -42,3 +42,7 @@ android {
 flutter {
     source = "../.."
 }
+
+if (file("google-services.json").exists()) {
+    pluginManager.apply("com.google.gms.google-services")
+}

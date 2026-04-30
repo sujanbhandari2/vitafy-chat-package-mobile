@@ -1,7 +1,10 @@
 import 'dart:async';
 
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:health_messenger_ui/lib/health_messenger_client.dart';
+import 'package:health_messenger_ui/lib/health_messenger_push.dart';
 import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 
 import 'example_models.dart';
@@ -43,6 +46,12 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   bool _isRefreshing = false;
   bool _isSending = false;
   bool _isRecording = false;
+  String? _loadingConversationId;
+  Timer? _slowConversationHintTimer;
+
+  StreamSubscription<MessengerPushEvent>? _pushEventsSubscription;
+  MessengerPushFirebaseBinding? _pushFirebaseBinding;
+  bool _pushIntegrationReady = false;
 
   @override
   void initState() {
@@ -52,6 +61,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
   @override
   void dispose() {
+    _slowConversationHintTimer?.cancel();
     _composerController.dispose();
     _messagesScrollController.dispose();
     unawaited(_disposeActiveClient());
@@ -104,6 +114,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         _isSocketConnected = true;
         _statusText = 'Socket reconnected.';
       });
+      unawaited(_resyncNativePushConfig());
       return true;
     } catch (error, stackTrace) {
       _appendLog(
@@ -119,6 +130,167 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       });
       _showSnack('Socket is not connected. Check socket URL and try again.');
       return false;
+    }
+  }
+
+  /// Wires [HealthMessengerPush], native delivered-ACK snapshot, and foreground
+  /// [FirebaseMessaging] when Firebase is configured. Fails soft (logs only)
+  /// when `google-services.json` / `GoogleService-Info.plist` are missing.
+  Future<void> _setupPushAfterBootstrap(ChatSession session) async {
+    if (!mounted) {
+      return;
+    }
+    await _teardownPushIntegration(updateUi: false);
+    final sessionAuth = session.sessionAuth;
+    if (sessionAuth == null) {
+      return;
+    }
+    try {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp();
+      }
+      final settings = await FirebaseMessaging.instance.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+      _appendLog(
+        'FCM permission',
+        data: {'authorizationStatus': '${settings.authorizationStatus}'},
+      );
+
+      final push = HealthMessengerPush.instance;
+      await push.startListening();
+      await _pushEventsSubscription?.cancel();
+      _pushEventsSubscription = push.events.listen(_onMessengerPushEvent);
+
+      await push.syncNativePushConfig(
+        config: session.client.config,
+        auth: sessionAuth,
+      );
+
+      await _pushFirebaseBinding?.detach();
+      final binding = MessengerPushFirebaseBinding(
+        gate: const MessengerPushGate(),
+      );
+      binding.onFcmToken = (token) async {
+        final preview =
+            token.length > 24 ? '${token.substring(0, 24)}…' : token;
+        _appendLog('FCM device token', data: {'preview': preview});
+      };
+      await binding.attachForeground(
+        chatClient: session.client,
+        chatAuth: sessionAuth,
+      );
+      _pushFirebaseBinding = binding;
+
+      unawaited(push.drainNativeAckQueue());
+
+      if (mounted) {
+        setState(() => _pushIntegrationReady = true);
+      }
+      _appendLog('Push bridge ready (native sync + foreground listener)');
+    } catch (e, st) {
+      if (mounted) {
+        setState(() => _pushIntegrationReady = false);
+      } else {
+        _pushIntegrationReady = false;
+      }
+      _appendLog(
+        'Push bridge not active (add Firebase config to enable)',
+        data: {'error': e.toString()},
+      );
+      debugPrintStack(stackTrace: st);
+    }
+  }
+
+  void _onMessengerPushEvent(MessengerPushEvent event) {
+    if (!mounted) {
+      return;
+    }
+    switch (event.kind) {
+      case MessengerPushEventKind.incomingChatMessage:
+        _appendLog(
+          'Native push (chat)',
+          data: {
+            'conversationId': event.conversationId,
+            'messageId': event.messageId,
+            'nativeAckSucceeded': event.nativeAckSucceeded,
+          },
+        );
+        final convId = event.conversationId;
+        final msgId = event.messageId;
+        if (convId != null &&
+            msgId != null &&
+            convId.isNotEmpty &&
+            msgId.isNotEmpty) {
+          unawaited(_refreshConversationAfterRemoteHint(convId));
+        }
+        break;
+      case MessengerPushEventKind.fcmTokenRefresh:
+        _appendLog(
+          'FCM token refresh (native)',
+          data: {'token': event.token},
+        );
+        break;
+      case MessengerPushEventKind.unknown:
+        _appendLog('Push event', data: event.raw);
+        break;
+    }
+  }
+
+  Future<void> _refreshConversationAfterRemoteHint(String conversationId) async {
+    final client = _client;
+    final auth = _apiAuth;
+    if (client == null || auth == null) {
+      return;
+    }
+    try {
+      final page = await client.getMessages(auth, conversationId);
+      final items = [...page.items]
+        ..sort((left, right) => left.createdAt.compareTo(right.createdAt));
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _messagesByConversation[conversationId] = items;
+      });
+      _appendLog(
+        'Messages refreshed after push',
+        data: {'conversationId': conversationId},
+      );
+    } catch (e) {
+      _appendLog(
+        'Refresh after push failed',
+        data: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _resyncNativePushConfig() async {
+    final session = _session;
+    final auth = _sessionAuth;
+    if (session == null || auth == null || !_pushIntegrationReady) {
+      return;
+    }
+    try {
+      await HealthMessengerPush.instance.syncNativePushConfig(
+        config: session.client.config,
+        auth: auth,
+      );
+      unawaited(HealthMessengerPush.instance.drainNativeAckQueue());
+    } catch (_) {}
+  }
+
+  Future<void> _teardownPushIntegration({bool updateUi = true}) async {
+    await _pushEventsSubscription?.cancel();
+    _pushEventsSubscription = null;
+    await _pushFirebaseBinding?.detach();
+    _pushFirebaseBinding = null;
+    await HealthMessengerPush.instance.stopListening();
+    _pushIntegrationReady = false;
+    if (updateUi && mounted) {
+      setState(() {});
     }
   }
 
@@ -232,6 +404,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
           'chatUserId': registeredUser.id,
         },
       );
+      await _setupPushAfterBootstrap(session);
     } catch (error, stackTrace) {
       _appendLog(
         'Bootstrap failed',
@@ -369,26 +542,36 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     }
 
     final previousConversationId = _selectedConversationId;
-    if (previousConversationId != null &&
-        previousConversationId != conversationId) {
-      try {
-        await session.leaveConversation(previousConversationId);
-      } catch (error) {
-        _appendLog(
-          'Leave conversation failed',
-          data: {
-            'conversationId': previousConversationId,
-            'error': error.toString(),
-          },
-        );
-      }
-    }
-
+    _slowConversationHintTimer?.cancel();
     setState(() {
       _selectedConversationId = conversationId;
       _unreadByConversation.remove(conversationId);
+      _loadingConversationId = conversationId;
       _statusText = 'Loading conversation $conversationId...';
     });
+    _slowConversationHintTimer = Timer(const Duration(milliseconds: 650), () {
+      if (!mounted || _loadingConversationId != conversationId) {
+        return;
+      }
+      setState(() {
+        _statusText = 'Still loading conversation $conversationId...';
+      });
+    });
+
+    if (previousConversationId != null &&
+        previousConversationId != conversationId) {
+      unawaited(
+        session.leaveConversation(previousConversationId).catchError((error) {
+          _appendLog(
+            'Leave conversation failed',
+            data: {
+              'conversationId': previousConversationId,
+              'error': error.toString(),
+            },
+          );
+        }),
+      );
+    }
 
     try {
       await _loadMessages(conversationId);
@@ -404,6 +587,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                 'Opened conversation $conversationId (REST-only, socket disconnected).';
           });
         }
+        _scrollToBottom();
         return;
       }
 
@@ -414,9 +598,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       }
 
       setState(() {
+        _loadingConversationId = null;
         _statusText = 'Joined conversation $conversationId.';
       });
-      await _markVisibleMessagesAsRead(conversationId);
+      _scrollToBottom();
+      unawaited(_markVisibleMessagesAsRead(conversationId));
     } catch (error, stackTrace) {
       _appendLog(
         'Select conversation failed',
@@ -430,9 +616,17 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         return;
       }
       setState(() {
+        _loadingConversationId = null;
         _statusText = 'Could not open conversation: $error';
       });
       _showSnack('Could not open conversation.');
+    } finally {
+      _slowConversationHintTimer?.cancel();
+      if (mounted && _loadingConversationId == conversationId) {
+        setState(() {
+          _loadingConversationId = null;
+        });
+      }
     }
   }
 
@@ -668,6 +862,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }
 
   Future<void> _disposeActiveClient() async {
+    await _teardownPushIntegration(updateUi: false);
     await _socketSubscription?.cancel();
     _socketSubscription = null;
     final session = _session;
@@ -705,6 +900,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
           _isSocketConnected = true;
           _statusText = 'Socket connected.';
         });
+        unawaited(_resyncNativePushConfig());
         break;
       case ChatSocketEventType.disconnected:
         setState(() {
@@ -1007,6 +1203,16 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     );
   }
 
+  MessengerUser _mapParticipantUser(ConversationParticipantUser user) {
+    return MessengerUser(
+      id: user.id,
+      username: user.username,
+      roleLabel: user.role.label,
+      isOnline: user.isOnline,
+      avatarUrl: user.avatarUrl,
+    );
+  }
+
   MessengerConversation _mapConversation(Conversation conversation) {
     final title = _conversationTitle(conversation);
     final messages = _messagesByConversation[conversation.id] ?? const [];
@@ -1014,6 +1220,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     final subtitle = latestMessage == null
         ? '${conversation.type} conversation'
         : _messagePreview(latestMessage);
+    final latestMessageAt = latestMessage?.createdAt;
+    final lastActivityAt = latestMessageAt != null &&
+            latestMessageAt.isAfter(conversation.updatedAt)
+        ? latestMessageAt
+        : conversation.updatedAt;
     final others = conversation.participants
         .where((participant) => participant.user.id != _currentUser?.id)
         .toList();
@@ -1023,11 +1234,15 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       title: title,
       subtitle: subtitle,
       avatarLabel: _initials(title),
-      createdAt: conversation.updatedAt,
+      createdAt: conversation.createdAt,
+      lastActivityAt: lastActivityAt,
       isGlobal: conversation.isGlobal,
       unreadCount: _unreadByConversation[conversation.id] ?? 0,
       avatarUrl: others.length == 1 ? others.first.user.avatarUrl : null,
       isOnline: others.any((participant) => participant.user.isOnline),
+      peerUsers: others
+          .map((p) => _mapParticipantUser(p.user))
+          .toList(growable: false),
     );
   }
 
@@ -1037,7 +1252,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       senderId: message.senderId,
       senderLabel: _senderName(message),
       type: _mapUiMessageType(message.type),
-      content: _messagePreview(message),
+      content: _messageContentForUi(message),
       createdAt: message.createdAt,
       deliveryStatus: _deliveryStatusFor(message),
       reactions: message.reactions
@@ -1050,6 +1265,30 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
           .toList(),
       senderAvatarUrl: _avatarForUser(message.senderId),
     );
+  }
+
+  String _messageContentForUi(ChatMessage message) {
+    final content = message.content.trim();
+    final hasAttachment = message.attachments.isNotEmpty;
+    if (!hasAttachment) {
+      return content.isEmpty ? _messagePreview(message) : content;
+    }
+
+    switch (message.type) {
+      case MessageType.image:
+      case MessageType.voice:
+      case MessageType.video:
+      case MessageType.file:
+        final attachmentUrl = message.attachments.first.url.trim();
+        if (attachmentUrl.isNotEmpty) {
+          return attachmentUrl;
+        }
+        return content.isEmpty ? _messagePreview(message) : content;
+      case MessageType.text:
+      case MessageType.link:
+      case MessageType.other:
+        return content.isEmpty ? _messagePreview(message) : content;
+    }
   }
 
   String _conversationTitle(Conversation conversation) {
@@ -1077,13 +1316,68 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         return MessengerMessageType.image;
       case MessageType.voice:
         return MessengerMessageType.voice;
-      case MessageType.text:
       case MessageType.video:
+        return MessengerMessageType.video;
       case MessageType.file:
+        return MessengerMessageType.file;
+      case MessageType.text:
       case MessageType.link:
       case MessageType.other:
         return MessengerMessageType.text;
     }
+  }
+
+  MessageType _mapBackendMessageType(MessengerMessageType type) {
+    switch (type) {
+      case MessengerMessageType.image:
+        return MessageType.image;
+      case MessengerMessageType.voice:
+        return MessageType.voice;
+      case MessengerMessageType.video:
+        return MessageType.video;
+      case MessengerMessageType.file:
+        return MessageType.file;
+      case MessengerMessageType.text:
+        return MessageType.text;
+    }
+  }
+
+  ChatMessage _mapUiMessageToBackend(
+    String conversationId,
+    MessengerChatMessage message,
+  ) {
+    final backendType = _mapBackendMessageType(message.type);
+    final hasAttachment = backendType != MessageType.text;
+    return ChatMessage(
+      id: message.id,
+      conversationId: conversationId,
+      tenantId: _tenantScope?.tenantId ?? '',
+      senderId: message.senderId,
+      type: backendType,
+      content: hasAttachment ? '' : message.content,
+      attachments: hasAttachment
+          ? [
+              ChatAttachment(
+                url: message.content,
+                fileName: message.content.split('/').last,
+                kind: backendType.apiValue.toLowerCase(),
+              ),
+            ]
+          : const [],
+      replyToMessageId: null,
+      replyTo: null,
+      translatedMessage: null,
+      transcribedMessage: null,
+      deletedAt: null,
+      createdAt: message.createdAt,
+      reactions: const [],
+      deliveredReceipts: const [],
+      readReceipts: const [],
+      sender: ChatMessageSender(
+        id: message.senderId,
+        name: message.senderLabel,
+      ),
+    );
   }
 
   MessengerDeliveryStatus _deliveryStatusFor(ChatMessage message) {
@@ -1279,6 +1573,19 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       body: SafeArea(
         child: Column(
           children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Text(
+                'Tenant: ${_tenantScope?.tenantId ?? 'pending'}  |  '
+                'Push: ${_pushIntegrationReady ? 'on' : 'off'}  |  '
+                '$_statusText',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF475569),
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+            ),
             // Container(
             //   width: double.infinity,
             //   padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
@@ -1361,37 +1668,105 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                   messagesScrollController: _messagesScrollController,
                   isSending: _isSending,
                   isRecording: _isRecording,
+                  isConversationLoading:
+                      _loadingConversationId == _selectedConversationId,
+                  loadingConversationId: _loadingConversationId,
+                  loadingMessagesBuilder: (context) => const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2.4),
+                        ),
+                        SizedBox(height: 12),
+                        Text(
+                          'Loading conversation...',
+                          style: TextStyle(
+                            color: Color(0xFF64748B),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   onRefresh: () => unawaited(_refreshAll()),
                   onLogout: () => unawaited(_logoutToConfiguration()),
                   onSelectConversation: _selectConversation,
                   onOpenDirectChat: _openDirectChat,
                   onSend: () => unawaited(_sendMessage()),
-                  onPickImage: () => _showSnack(
-                    'Use client.uploadFiles(...) in your real app integration.',
-                  ),
-                  onPickAudio: () => _showSnack(
-                    'Voice/file upload goes through client.uploadFiles(...) and sendRestMessage(...).',
-                  ),
+                  onPickImage: () {},
+                  onPickAudio: () {},
                   onToggleRecording: () {
                     setState(() {
                       _isRecording = !_isRecording;
                     });
                   },
-                  onPickCamera: () => _showSnack(
-                    'Camera capture should upload first, then post the message.',
-                  ),
-                  onPickDocument: () => _showSnack(
-                    'Document attachments use the package REST upload flow.',
-                  ),
-                  onPickVideo: () => _showSnack(
-                    'Video attachments use the package REST upload flow.',
-                  ),
+                  onPickCamera: () {},
+                  onPickDocument: () {},
+                  onPickVideo: () {},
+                  enablePackageMediaSending: true,
+                  mediaChatClient: _client,
+                  mediaChatAuth: _sessionAuth,
+                  mediaSenderId: _currentUser?.id,
+                  onMediaSendStart: (_) {
+                    setState(() {
+                      _statusText = 'Uploading media...';
+                    });
+                  },
+                  onMediaSendProgress: (messageId, progress) {
+                    setState(() {
+                      _statusText =
+                          'Uploading media ${(progress * 100).toStringAsFixed(0)}%';
+                    });
+                  },
+                  onMediaSendError: (_, error) {
+                    setState(() {
+                      _statusText = 'Media send failed: $error';
+                    });
+                    _showSnack('Media send failed: $error');
+                  },
+                  onMediaMessageSent: (_) {
+                    setState(() {
+                      _statusText = 'Media sent through package flow.';
+                    });
+                    _scrollToBottom();
+                  },
+                  onMediaMessageSentForConversation: (conversationId, message) {
+                    _upsertMessage(
+                      conversationId,
+                      _mapUiMessageToBackend(conversationId, message),
+                    );
+                    setState(() {
+                      _statusText =
+                          'Media sent through package flow and list updated.';
+                    });
+                    if (_selectedConversationId == conversationId) {
+                      _scrollToBottom();
+                    }
+                  },
                   onReact: _reactToMessage,
                   onRemoveReaction: _removeReactionFromMessage,
                   onDelete: null,
                   onMarkSeen: _markSeen,
                   canDeleteMessage: _canDeleteMessage,
                   searchVisibility: MessengerSearchVisibility.always,
+                  searchInputTextStyle: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  searchHintTextStyle: const TextStyle(
+                    color: Color(0xFF94A3B8),
+                    fontSize: 13.5,
+                  ),
+                  searchFieldBackgroundColor: const Color(0xFFF8FAFC),
+                  searchFieldContentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                  ),
+                  searchIconColor: const Color(0xFF64748B),
+                  searchFieldBorderRadius: 12,
                   emptyConversationsMessage:
                       'No conversations yet. Use the people list to create one through the package flow.',
                   emptyUsersMessage:
@@ -1399,27 +1774,33 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                   remoteTypingUsers: _remoteTypingUsersForShell(),
                   onTypingStart: _onTypingStart,
                   onTypingStop: _onTypingStop,
+                  enableReactions: true,
+                  composerInputTextStyle: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  composerHintTextStyle: const TextStyle(
+                    color: Color(0xFF94A3B8),
+                    fontSize: 13.5,
+                    fontStyle: FontStyle.italic,
+                  ),
+                  composerFieldBackgroundColor: const Color(0xFFF8FAFC),
+                  composerFieldContentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 11,
+                  ),
+                  userListPadding: const EdgeInsets.symmetric(vertical: 4),
+                  userListItemSpacing: 8,
+                  userListItemStyle: const MessengerUserListItemStyle(
+                    margin: EdgeInsets.symmetric(horizontal: 2),
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    borderRadius: 14,
+                  ),
                 ),
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _statusChip(String label, String value) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFE2F2EE),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        '$label: $value',
-        style: const TextStyle(
-          fontWeight: FontWeight.w700,
-          color: Color(0xFF0F4C43),
         ),
       ),
     );

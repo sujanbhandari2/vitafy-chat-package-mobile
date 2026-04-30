@@ -88,6 +88,18 @@ abstract class ChatRepository {
     required String conversationId,
     required String messageId,
   });
+
+  Future<DeliveredReceipt> markAsDeliveredRest(
+    ChatAuth auth, {
+    required String conversationId,
+    required String messageId,
+  });
+
+  Future<ReadReceipt> markAsReadRest(
+    ChatAuth auth, {
+    required String conversationId,
+    required String messageId,
+  });
 }
 
 class ChatTenantScope {

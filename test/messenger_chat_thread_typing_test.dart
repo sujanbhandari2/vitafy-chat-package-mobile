@@ -33,6 +33,9 @@ void main() {
               onSend: () {},
               onPickImage: () {},
               onPickAudio: () {},
+              onStartRecording: () {},
+              onFinishRecording: () {},
+              onCancelRecording: () {},
               onToggleRecording: () {},
               remoteTypingUsers: const [
                 MessengerTypingUser(userId: 'u1', displayLabel: 'Alice'),
@@ -45,5 +48,55 @@ void main() {
 
     await tester.pumpAndSettle();
     expect(find.textContaining('Alice is typing'), findsOneWidget);
+  });
+
+  testWidgets('MessengerChatThread uses custom loading builder',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerChatThread(
+              conversation: MessengerConversation(
+                id: 'c1',
+                title: 'Test',
+                subtitle: 'Sub',
+                avatarLabel: 'T',
+                createdAt: DateTime.utc(2026),
+              ),
+              messages: const [],
+              isConversationLoading: true,
+              loadingMessagesBuilder: (_) => const Center(
+                child: Text('Loading custom'),
+              ),
+              currentUserId: 'me',
+              composerController: composer,
+              messagesScrollController: scroll,
+              isSending: false,
+              isRecording: false,
+              onSend: () {},
+              onPickImage: () {},
+              onPickAudio: () {},
+              onStartRecording: () {},
+              onFinishRecording: () {},
+              onCancelRecording: () {},
+              onToggleRecording: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    expect(find.text('Loading custom'), findsOneWidget);
+    expect(find.text('No messages yet.'), findsNothing);
   });
 }

@@ -10,14 +10,14 @@ class ExampleBootstrapFormData {
   });
 
   const ExampleBootstrapFormData.initial()
-      : apiBaseUrl = 'http://172.16.40.240:4040',
-        socketUrl = 'http://172.16.40.240:4040',
+      : apiBaseUrl = 'https://api-generic-chat.vitafyhealth.com',
+        socketUrl = 'https://api-generic-chat.vitafyhealth.com',
         apiKey =
-            'vfk_ak_fa7N1aeMBHogEwHg3K4JfA:EMwAFdBm0UDE3yZ9sg-AXdqV7gCe47Tnc4vvz8EWPsE',
-        providerId = 'flutter-example',
-        providerUserId = 'flutter-user-1',
-        email = 'flutter@example.com',
-        name = 'Flutter Example User';
+            'vfk_ak_Qkn3JGfrFSSG1KSeTYtAng:4DxmzYIByyd4jrSOwPqZ5zcRgZqZNiC8YxB9rwHcr3k',
+        providerId = 'flutterSujan',
+        providerUserId = 'sujan',
+        email = 'Sujan@example.com',
+        name = 'Sujan Flutter';
 
   final String apiBaseUrl;
   final String socketUrl;

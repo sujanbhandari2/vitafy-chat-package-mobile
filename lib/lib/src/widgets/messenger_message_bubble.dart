@@ -10,7 +10,7 @@ import '../models/messenger_message.dart';
 import '../theme/messenger_theme.dart';
 import 'messenger_avatar.dart';
 
-class MessengerMessageBubble extends StatelessWidget {
+class MessengerMessageBubble extends StatefulWidget {
   const MessengerMessageBubble({
     super.key,
     required this.message,
@@ -38,104 +38,185 @@ class MessengerMessageBubble extends StatelessWidget {
   final List<String> reactionOptions;
 
   @override
+  State<MessengerMessageBubble> createState() => _MessengerMessageBubbleState();
+}
+
+class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
+  bool _showInlineReactions = false;
+
+  @override
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
-    final bubbleColor = isMine ? theme.bubbleMine : theme.bubbleOther;
-    final textColor = isMine ? theme.bubbleMineText : theme.bubbleOtherText;
-    final timeColor = isMine ? theme.bubbleMineTime : theme.bubbleOtherTime;
+    final bubbleColor = widget.isMine ? theme.bubbleMine : theme.bubbleOther;
+    final textColor =
+        widget.isMine ? theme.bubbleMineText : theme.bubbleOtherText;
+    final timeColor =
+        widget.isMine ? theme.bubbleMineTime : theme.bubbleOtherTime;
+    final canShowInlineReactions =
+        widget.enableReactions && widget.onReact != null;
 
     return Semantics(
       container: true,
-      label: 'Message from ${message.senderLabel}',
+      label: 'Message from ${widget.message.senderLabel}',
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
-        mainAxisAlignment:
-            isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          if (!isMine) ...[
-            MessengerAvatar(
-              label: _initials(message.senderLabel),
-              imageUrl: message.senderAvatarUrl,
-              size: 26,
-              compact: true,
-            ),
-            const SizedBox(width: 6),
-          ],
-          Flexible(
-            child: GestureDetector(
-              onLongPress: () => _showActions(context),
-              child: Column(
-                crossAxisAlignment:
-                    isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    constraints: BoxConstraints(
-                      maxWidth: _maxBubbleWidth(context),
-                    ),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: bubbleColor,
-                      borderRadius: BorderRadius.circular(18),
-                      border: isMine ? Border.all(color: theme.border) : null,
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        _MessageContent(
-                          message: message,
-                          textColor: textColor,
-                          mutedColor: timeColor,
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              DateFormat('h:mm a').format(message.createdAt),
-                              style: TextStyle(
-                                color: timeColor,
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w500,
+          mainAxisAlignment:
+              widget.isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (!widget.isMine) ...[
+              MessengerAvatar(
+                label: _initials(widget.message.senderLabel),
+                imageUrl: widget.message.senderAvatarUrl,
+                size: 26,
+                compact: true,
+              ),
+              const SizedBox(width: 6),
+            ],
+            Flexible(
+              child: TapRegion(
+                onTapOutside: (_) {
+                  if (_showInlineReactions && mounted) {
+                    setState(() => _showInlineReactions = false);
+                  }
+                },
+                child: GestureDetector(
+                  onLongPress: () async {
+                    if (canShowInlineReactions) {
+                      if (!mounted) {
+                        return;
+                      }
+                      setState(() => _showInlineReactions = true);
+                      return;
+                    }
+                    await _showActions(context);
+                  },
+                  child: Column(
+                    crossAxisAlignment: widget.isMine
+                        ? CrossAxisAlignment.end
+                        : CrossAxisAlignment.start,
+                    children: [
+                      if (_showInlineReactions && canShowInlineReactions) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: theme.surface,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: theme.border),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              ...widget.reactionOptions.map(
+                                (reaction) => Padding(
+                                  padding: const EdgeInsets.only(right: 4),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(999),
+                                      onTap: () {
+                                        widget.onReact?.call(reaction);
+                                        if (mounted) {
+                                          setState(
+                                            () => _showInlineReactions = false,
+                                          );
+                                        }
+                                      },
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 4,
+                                          vertical: 2,
+                                        ),
+                                        child: Text(
+                                          reaction,
+                                          style: const TextStyle(fontSize: 18),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ),
-                            ),
-                            if (isMine) ...[
-                              const SizedBox(width: 4),
-                              _DeliveryTick(status: message.deliveryStatus),
                             ],
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                      ],
+                      Container(
+                        constraints: BoxConstraints(
+                          maxWidth: _maxBubbleWidth(context),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: bubbleColor,
+                          borderRadius: BorderRadius.circular(18),
+                          border: widget.isMine
+                              ? Border.all(color: theme.border)
+                              : null,
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            _MessageContent(
+                              message: widget.message,
+                              textColor: textColor,
+                              mutedColor: timeColor,
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  DateFormat('h:mm a')
+                                      .format(widget.message.createdAt),
+                                  style: TextStyle(
+                                    color: timeColor,
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                if (widget.isMine) ...[
+                                  const SizedBox(width: 4),
+                                  _DeliveryTick(
+                                    status: widget.message.deliveryStatus,
+                                  ),
+                                ],
+                              ],
+                            ),
+                            if (widget.message.isUploading ||
+                                widget.message.uploadProgress != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 6),
+                                child: LinearProgressIndicator(
+                                  minHeight: 3,
+                                  value: widget.message.uploadProgress,
+                                  backgroundColor:
+                                      timeColor.withValues(alpha: 0.2),
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    timeColor,
+                                  ),
+                                ),
+                              ),
                           ],
                         ),
-                        if (message.isUploading ||
-                            message.uploadProgress != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: LinearProgressIndicator(
-                              minHeight: 3,
-                              value: message.uploadProgress,
-                              backgroundColor: timeColor.withValues(alpha: 0.2),
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                timeColor,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  if (message.reactions.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 4,
-                      children: message.reactions
-                          .map(
+                      ),
+                      if (widget.message.reactions.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Wrap(
+                          spacing: 4,
+                          children: widget.message.reactions.map(
                             (reaction) {
-                              final canRemove = onRemoveReaction != null &&
-                                  currentUserId != null &&
-                                  reaction.userId == currentUserId;
+                              final canRemove =
+                                  widget.onRemoveReaction != null &&
+                                      widget.currentUserId != null &&
+                                      reaction.userId == widget.currentUserId;
                               final chip = Container(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 6,
@@ -159,8 +240,8 @@ class MessengerMessageBubble extends StatelessWidget {
                               return Material(
                                 color: Colors.transparent,
                                 child: InkWell(
-                                  onTap: () => onRemoveReaction!(
-                                    message.id,
+                                  onTap: () => widget.onRemoveReaction!(
+                                    widget.message.id,
                                     reaction.reactionType,
                                   ),
                                   borderRadius: BorderRadius.circular(999),
@@ -168,24 +249,22 @@ class MessengerMessageBubble extends StatelessWidget {
                                 ),
                               );
                             },
-                          )
-                          .toList(),
-                    ),
-                  ],
-                ],
+                          ).toList(),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
             ),
-          ),
-        ],
-      ),
+          ],
+        ),
       ),
     );
   }
 
   Future<void> _showActions(BuildContext context) async {
-    final hasAnyAction = (enableReactions && onReact != null) ||
-        onMarkSeen != null ||
-        onDelete != null;
+    final hasAnyAction = widget.onDelete != null && widget.canDelete;
     if (!hasAnyAction) {
       return;
     }
@@ -198,33 +277,13 @@ class MessengerMessageBubble extends StatelessWidget {
       builder: (sheetContext) => SafeArea(
         child: Wrap(
           children: [
-            if (enableReactions && onReact != null)
-              ...reactionOptions.map(
-                (reaction) => ListTile(
-                  leading: Text(reaction, style: const TextStyle(fontSize: 18)),
-                  title: Text('React with $reaction'),
-                  onTap: () {
-                    Navigator.of(sheetContext).pop();
-                    onReact?.call(reaction);
-                  },
-                ),
-              ),
-            if (!isMine && onMarkSeen != null)
-              ListTile(
-                leading: const Icon(Icons.done_all_rounded),
-                title: const Text('Mark as seen'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  onMarkSeen?.call();
-                },
-              ),
-            if (canDelete && onDelete != null)
+            if (widget.canDelete && widget.onDelete != null)
               ListTile(
                 leading: const Icon(Icons.delete_outline),
                 title: const Text('Delete message'),
                 onTap: () {
                   Navigator.of(sheetContext).pop();
-                  onDelete?.call();
+                  widget.onDelete?.call();
                 },
               ),
           ],
@@ -300,46 +359,97 @@ class _MessageContent extends StatelessWidget {
       );
     }
 
-    if (message.type == MessengerMessageType.image) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Image.network(
-          message.content,
-          width: 220,
-          height: 220,
-          fit: BoxFit.cover,
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) {
-              return child;
-            }
-            final expected = loadingProgress.expectedTotalBytes;
-            final loaded = loadingProgress.cumulativeBytesLoaded;
-            final value =
-                expected == null ? null : loaded / expected.toDouble();
-            return Container(
-              width: 220,
-              height: 220,
-              alignment: Alignment.center,
-              color: mutedColor.withValues(alpha: 0.15),
-              child: CircularProgressIndicator(
-                value: value,
-                strokeWidth: 2,
-                color: mutedColor,
-              ),
-            );
-          },
-          errorBuilder: (_, __, ___) => const SizedBox(
-            width: 220,
-            height: 100,
-            child: Center(child: Text('Unable to load image')),
-          ),
+    if (message.isUploading) {
+      return Text(
+        'Uploading...',
+        style: TextStyle(
+          fontSize: 14,
+          color: textColor.withValues(alpha: 0.9),
+          fontWeight: FontWeight.w600,
         ),
       );
     }
 
+    if (message.type == MessengerMessageType.image) {
+      final uri = Uri.tryParse(message.content);
+      final isNetwork =
+          uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
+      return GestureDetector(
+        onTap: () => _openImagePreview(context, message.content, isNetwork),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: isNetwork
+              ? Image.network(
+                  message.content,
+                  width: 220,
+                  height: 220,
+                  fit: BoxFit.cover,
+                  loadingBuilder: (context, child, loadingProgress) {
+                    if (loadingProgress == null) {
+                      return child;
+                    }
+                    final expected = loadingProgress.expectedTotalBytes;
+                    final loaded = loadingProgress.cumulativeBytesLoaded;
+                    final value =
+                        expected == null ? null : loaded / expected.toDouble();
+                    return Container(
+                      width: 220,
+                      height: 220,
+                      alignment: Alignment.center,
+                      color: mutedColor.withValues(alpha: 0.15),
+                      child: CircularProgressIndicator(
+                        value: value,
+                        strokeWidth: 2,
+                        color: mutedColor,
+                      ),
+                    );
+                  },
+                  errorBuilder: (_, __, ___) => const SizedBox(
+                    width: 220,
+                    height: 100,
+                    child: Center(child: Text('Unable to load image')),
+                  ),
+                )
+              : Image.file(
+                  File(message.content),
+                  width: 220,
+                  height: 220,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox(
+                    width: 220,
+                    height: 100,
+                    child: Center(child: Text('Unable to load image')),
+                  ),
+                ),
+        ),
+      );
+    }
+
+    if (message.type == MessengerMessageType.video) {
+      return _MediaAssetTile(
+        icon: Icons.videocam_rounded,
+        label: _labelForContent(message.content, fallback: 'Video'),
+        textColor: textColor,
+        mutedColor: mutedColor,
+      );
+    }
+
+    if (message.type == MessengerMessageType.file) {
+      return _MediaAssetTile(
+        icon: Icons.insert_drive_file_rounded,
+        label: _labelForContent(message.content, fallback: 'File'),
+        textColor: textColor,
+        mutedColor: mutedColor,
+      );
+    }
+
     if (message.type == MessengerMessageType.voice) {
+      final uri = Uri.tryParse(message.content);
+      final isNetwork =
+          uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
       return MessengerVoicePlayer(
-        url: message.content,
+        source: message.content,
+        preferDeviceFile: !isNetwork,
         iconColor: textColor,
         waveformActiveColor: textColor,
         waveformInactiveColor: textColor.withValues(alpha: 0.35),
@@ -351,18 +461,142 @@ class _MessageContent extends StatelessWidget {
       style: TextStyle(fontSize: 14.5, color: textColor, height: 1.28),
     );
   }
+
+  void _openImagePreview(
+    BuildContext context,
+    String source,
+    bool isNetwork,
+  ) {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.92),
+      builder: (dialogContext) {
+        final imageWidget = isNetwork
+            ? Image.network(
+                source,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Center(
+                  child: Text(
+                    'Unable to load image',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                ),
+              )
+            : Image.file(
+                File(source),
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Center(
+                  child: Text(
+                    'Unable to load image',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                ),
+              );
+
+        return Material(
+          type: MaterialType.transparency,
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: () => Navigator.of(dialogContext).pop(),
+                  child: Center(
+                    child: InteractiveViewer(
+                      minScale: 0.8,
+                      maxScale: 4.0,
+                      child: imageWidget,
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 16,
+                right: 16,
+                child: IconButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  icon: const Icon(Icons.close_rounded, color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MediaAssetTile extends StatelessWidget {
+  const _MediaAssetTile({
+    required this.icon,
+    required this.label,
+    required this.textColor,
+    required this.mutedColor,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color textColor;
+  final Color mutedColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 160),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        color: mutedColor.withValues(alpha: 0.14),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18, color: textColor),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                color: textColor.withValues(alpha: 0.92),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _labelForContent(String content, {required String fallback}) {
+  final trimmed = content.trim();
+  if (trimmed.isEmpty) {
+    return fallback;
+  }
+  final uri = Uri.tryParse(trimmed);
+  if (uri == null) {
+    return fallback;
+  }
+  if (uri.pathSegments.isNotEmpty) {
+    return uri.pathSegments.last;
+  }
+  return fallback;
 }
 
 class MessengerVoicePlayer extends StatefulWidget {
   const MessengerVoicePlayer({
     super.key,
-    required this.url,
+    required this.source,
+    this.preferDeviceFile = false,
     required this.iconColor,
     required this.waveformActiveColor,
     required this.waveformInactiveColor,
   });
 
-  final String url;
+  final String source;
+  final bool preferDeviceFile;
   final Color iconColor;
   final Color waveformActiveColor;
   final Color waveformInactiveColor;
@@ -576,17 +810,24 @@ class _MessengerVoicePlayerState extends State<MessengerVoicePlayer> {
       return;
     }
 
-    final remotePlayed = await _tryPlayFromUrl(widget.url);
+    if (widget.preferDeviceFile) {
+      final directLocal = await _tryPlayFromDeviceFile(widget.source);
+      if (directLocal) {
+        return;
+      }
+    }
+
+    final remotePlayed = await _tryPlayFromUrl(widget.source);
     if (remotePlayed) {
       return;
     }
 
-    final encodedPlayed = await _tryPlayFromUrl(Uri.encodeFull(widget.url));
+    final encodedPlayed = await _tryPlayFromUrl(Uri.encodeFull(widget.source));
     if (encodedPlayed) {
       return;
     }
 
-    final localPlayed = await _tryPlayFromDownloadedFile(widget.url);
+    final localPlayed = await _tryPlayFromDownloadedFile(widget.source);
     if (localPlayed) {
       return;
     }
@@ -641,6 +882,24 @@ class _MessengerVoicePlayerState extends State<MessengerVoicePlayer> {
       await file.writeAsBytes(response.bodyBytes, flush: true);
       _downloadedAudioCache[originalUrl] = file.path;
 
+      await _stopOtherPlayers();
+      await _player.stop();
+      await _player.setSourceDeviceFile(file.path);
+      await _player.resume();
+      _activePlayer = _player;
+      _clearPlaybackError();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> _tryPlayFromDeviceFile(String path) async {
+    try {
+      final file = File(path);
+      if (!await file.exists()) {
+        return false;
+      }
       await _stopOtherPlayers();
       await _player.stop();
       await _player.setSourceDeviceFile(file.path);

@@ -12,6 +12,8 @@ dependencies:
     sdk: flutter
   health_messenger_ui:
     path: ..
+  firebase_core: ^3.8.1
+  firebase_messaging: ^15.1.5
 
 dev_dependencies:
   flutter_test:

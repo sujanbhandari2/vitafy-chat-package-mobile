@@ -8,6 +8,7 @@ import 'chat_connection_state.dart';
 import 'chat_exceptions.dart';
 import 'chat_repository.dart';
 import 'chat_service.dart';
+import '../push/push_models.dart';
 import 'models/chat_message.dart';
 import 'models/conversation.dart';
 import 'models/tenant_user.dart';
@@ -228,6 +229,58 @@ class ChatClient {
       conversationId: conversationId,
       messageId: messageId,
     );
+  }
+
+  Future<DeliveredReceipt> markAsDeliveredRest(
+    ChatAuth auth, {
+    required String conversationId,
+    required String messageId,
+  }) {
+    return repository.markAsDeliveredRest(
+      auth,
+      conversationId: conversationId,
+      messageId: messageId,
+    );
+  }
+
+  Future<ReadReceipt> markAsReadRest(
+    ChatAuth auth, {
+    required String conversationId,
+    required String messageId,
+  }) {
+    return repository.markAsReadRest(
+      auth,
+      conversationId: conversationId,
+      messageId: messageId,
+    );
+  }
+
+  /// Delivered receipt: REST first (when [preference] requests it), then socket fallback.
+  Future<DeliveredReceipt> markAsDeliveredPrefer(
+    ChatAuth auth, {
+    required String conversationId,
+    required String messageId,
+    MessengerDeliveredAckPreference preference =
+        MessengerDeliveredAckPreference.restThenSocket,
+  }) async {
+    if (preference == MessengerDeliveredAckPreference.socketOnly) {
+      return repository.markAsDelivered(
+        conversationId: conversationId,
+        messageId: messageId,
+      );
+    }
+    try {
+      return await repository.markAsDeliveredRest(
+        auth,
+        conversationId: conversationId,
+        messageId: messageId,
+      );
+    } on Object {
+      return repository.markAsDelivered(
+        conversationId: conversationId,
+        messageId: messageId,
+      );
+    }
   }
 
   Future<void> dispose() => _service.dispose();

@@ -14,11 +14,18 @@ class MessengerComposerBar extends StatefulWidget {
     required this.onSend,
     required this.onPickImage,
     required this.onPickAudio,
+    this.onStartRecording,
+    this.onFinishRecording,
+    this.onCancelRecording,
     required this.onToggleRecording,
     this.onPickCamera,
     this.onPickDocument,
     this.onPickVideo,
     this.hintText = 'Type your message...',
+    this.inputTextStyle,
+    this.hintTextStyle,
+    this.fieldBackgroundColor,
+    this.fieldContentPadding,
     this.attachmentSheetTitle = 'Attachments',
     this.attachmentOptions,
     this.typingConversationId,
@@ -26,6 +33,9 @@ class MessengerComposerBar extends StatefulWidget {
     this.onTypingStop,
     this.typingStartMinInterval = const Duration(seconds: 2),
     this.typingStopIdle = const Duration(seconds: 2),
+    this.hasPendingAttachment = false,
+    this.pendingAttachmentLabel,
+    this.onClearPendingAttachment,
   });
 
   final TextEditingController controller;
@@ -34,11 +44,18 @@ class MessengerComposerBar extends StatefulWidget {
   final VoidCallback onSend;
   final VoidCallback onPickImage;
   final VoidCallback onPickAudio;
+  final VoidCallback? onStartRecording;
+  final VoidCallback? onFinishRecording;
+  final VoidCallback? onCancelRecording;
   final VoidCallback onToggleRecording;
   final VoidCallback? onPickCamera;
   final VoidCallback? onPickDocument;
   final VoidCallback? onPickVideo;
   final String hintText;
+  final TextStyle? inputTextStyle;
+  final TextStyle? hintTextStyle;
+  final Color? fieldBackgroundColor;
+  final EdgeInsetsGeometry? fieldContentPadding;
   final String attachmentSheetTitle;
   final List<MessengerAttachmentOption>? attachmentOptions;
 
@@ -47,6 +64,9 @@ class MessengerComposerBar extends StatefulWidget {
   final Future<void> Function(String conversationId)? onTypingStop;
   final Duration typingStartMinInterval;
   final Duration typingStopIdle;
+  final bool hasPendingAttachment;
+  final String? pendingAttachmentLabel;
+  final VoidCallback? onClearPendingAttachment;
 
   bool get _typingEnabled =>
       typingConversationId != null &&
@@ -60,13 +80,19 @@ class MessengerComposerBar extends StatefulWidget {
 
 class _MessengerComposerBarState extends State<MessengerComposerBar> {
   Timer? _idleStopTimer;
+  Timer? _recordingTicker;
   DateTime? _lastTypingStartSent;
+  DateTime? _recordingStartedAt;
   bool _hadNonEmptyForTyping = false;
+  Duration _recordingElapsed = Duration.zero;
 
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_handleTextChanged);
+    if (widget.isRecording) {
+      _startRecordingTicker();
+    }
   }
 
   @override
@@ -87,12 +113,18 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
       _lastTypingStartSent = null;
       _hadNonEmptyForTyping = false;
     }
+    if (!oldWidget.isRecording && widget.isRecording) {
+      _startRecordingTicker();
+    } else if (oldWidget.isRecording && !widget.isRecording) {
+      _stopRecordingTicker(reset: true);
+    }
   }
 
   @override
   void dispose() {
     widget.controller.removeListener(_handleTextChanged);
     _cancelIdleTimer();
+    _stopRecordingTicker(reset: false);
     unawaited(_emitStop());
     super.dispose();
   }
@@ -100,6 +132,36 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
   void _cancelIdleTimer() {
     _idleStopTimer?.cancel();
     _idleStopTimer = null;
+  }
+
+  void _startRecordingTicker() {
+    _recordingStartedAt = DateTime.now();
+    _recordingElapsed = Duration.zero;
+    _recordingTicker?.cancel();
+    _recordingTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || _recordingStartedAt == null) {
+        return;
+      }
+      setState(() {
+        _recordingElapsed = DateTime.now().difference(_recordingStartedAt!);
+      });
+    });
+  }
+
+  void _stopRecordingTicker({required bool reset}) {
+    _recordingTicker?.cancel();
+    _recordingTicker = null;
+    if (reset) {
+      _recordingStartedAt = null;
+      _recordingElapsed = Duration.zero;
+    }
+  }
+
+  String _formatRecordingDuration() {
+    final totalSeconds = _recordingElapsed.inSeconds;
+    final minutes = (totalSeconds ~/ 60).toString().padLeft(2, '0');
+    final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
   }
 
   Future<void> _emitStop() async {
@@ -179,7 +241,8 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
   }
 
   Future<void> _showAttachments(BuildContext context) async {
-    final items = widget.attachmentOptions ?? _defaultAttachmentOptions(context);
+    final items =
+        widget.attachmentOptions ?? _defaultAttachmentOptions(context);
     if (items.isEmpty) {
       return;
     }
@@ -277,82 +340,201 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
         animation: widget.controller,
         builder: (context, _) {
           final hasText = widget.controller.text.trim().isNotEmpty;
-          final canSend = hasText && !widget.isSending;
+          final hasQueuedAttachment = widget.hasPendingAttachment;
+          final canSend = (hasText || hasQueuedAttachment) &&
+              !widget.isSending &&
+              !widget.isRecording;
 
-          return Row(
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: theme.composerFieldBackground,
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Semantics(
-                          label: 'Message composer',
-                          textField: true,
-                          child: TextField(
-                            controller: widget.controller,
-                            textInputAction: TextInputAction.send,
-                            onSubmitted: (_) {
-                              if (canSend) {
-                                widget.onSend();
-                              }
-                            },
-                            minLines: 1,
-                            maxLines: 4,
-                            decoration: InputDecoration(
-                              hintText: widget.hintText,
-                              hintStyle: TextStyle(color: theme.mutedText),
-                              border: InputBorder.none,
-                              isDense: true,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
-                              ),
+              if (widget.isRecording)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: (widget.fieldBackgroundColor ??
+                              theme.composerFieldBackground)
+                          .withValues(alpha: 0.9),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: theme.border),
+                    ),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          onPressed: widget.isSending
+                              ? null
+                              : (widget.onCancelRecording ??
+                                  widget.onToggleRecording),
+                          icon: const Icon(
+                            Icons.delete_outline_rounded,
+                            color: Color(0xFFDC2626),
+                          ),
+                          tooltip: 'Discard recording',
+                        ),
+                        Icon(
+                          Icons.mic_rounded,
+                          color: theme.primary,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            'Recording ${_formatRecordingDuration()}',
+                            style: TextStyle(
+                              color: const Color(0xFF0F172A),
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12.5,
                             ),
                           ),
                         ),
-                      ),
-                      Container(
-                        width: 1,
-                        height: 24,
-                        color: theme.border,
-                      ),
-                      IconButton(
-                        onPressed: widget.isSending
-                            ? null
-                            : () => _showAttachments(context),
-                        icon: Icon(
-                          Icons.add_rounded,
-                          color: theme.primary,
+                        TextButton.icon(
+                          onPressed: widget.isSending
+                              ? null
+                              : (widget.onFinishRecording ??
+                                  widget.onToggleRecording),
+                          icon: const Icon(Icons.check_rounded, size: 16),
+                          label: const Text('Done'),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              IconButton(
-                onPressed: widget.onToggleRecording,
-                icon: Icon(
-                  widget.isRecording
-                      ? Icons.stop_circle_outlined
-                      : Icons.mic_none,
-                  color: widget.isRecording
-                      ? const Color(0xFFDC2626)
-                      : theme.mutedText,
+              if (hasQueuedAttachment)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: (widget.fieldBackgroundColor ??
+                              theme.composerFieldBackground)
+                          .withValues(alpha: 0.85),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: theme.border),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.attach_file_rounded,
+                            color: theme.primary, size: 18),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            widget.pendingAttachmentLabel ?? 'Attachment ready',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: const Color(0xFF0F172A),
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12.5,
+                            ),
+                          ),
+                        ),
+                        if (widget.onClearPendingAttachment != null)
+                          GestureDetector(
+                            onTap: widget.isSending
+                                ? null
+                                : widget.onClearPendingAttachment,
+                            child: Icon(
+                              Icons.close_rounded,
+                              size: 18,
+                              color: widget.isSending
+                                  ? theme.mutedText
+                                  : theme.primary,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-              _CircleButton(
-                icon: Icons.send_rounded,
-                color: canSend
-                    ? theme.primary
-                    : theme.primary.withValues(alpha: 0.35),
-                iconColor: Colors.white,
-                onTap: canSend ? widget.onSend : null,
+              Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: widget.fieldBackgroundColor ??
+                            theme.composerFieldBackground,
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Semantics(
+                              label: 'Message composer',
+                              textField: true,
+                              child: TextField(
+                                controller: widget.controller,
+                                style: widget.inputTextStyle,
+                                textInputAction: TextInputAction.send,
+                                onSubmitted: (_) {
+                                  if (canSend) {
+                                    widget.onSend();
+                                  }
+                                },
+                                minLines: 1,
+                                maxLines: 4,
+                                decoration: InputDecoration(
+                                  hintText: widget.hintText,
+                                  hintStyle: widget.hintTextStyle ??
+                                      TextStyle(color: theme.mutedText),
+                                  border: InputBorder.none,
+                                  isDense: true,
+                                  contentPadding: widget.fieldContentPadding ??
+                                      const EdgeInsets.symmetric(
+                                        horizontal: 14,
+                                        vertical: 10,
+                                      ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          Container(
+                            width: 1,
+                            height: 24,
+                            color: theme.border,
+                          ),
+                          IconButton(
+                            onPressed: widget.isSending
+                                ? null
+                                : () => _showAttachments(context),
+                            icon: Icon(
+                              Icons.add_rounded,
+                              color: theme.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  IconButton(
+                    onPressed: widget.isSending
+                        ? null
+                        : widget.isRecording
+                            ? (widget.onFinishRecording ??
+                                widget.onToggleRecording)
+                            : (widget.onStartRecording ??
+                                widget.onToggleRecording),
+                    icon: Icon(
+                      widget.isRecording
+                          ? Icons.stop_circle_outlined
+                          : Icons.mic_none,
+                      color: widget.isRecording
+                          ? const Color(0xFFDC2626)
+                          : theme.mutedText,
+                    ),
+                  ),
+                  _CircleButton(
+                    icon: Icons.send_rounded,
+                    color: canSend
+                        ? theme.primary
+                        : theme.primary.withValues(alpha: 0.35),
+                    iconColor: Colors.white,
+                    onTap: canSend ? widget.onSend : null,
+                  ),
+                ],
               ),
             ],
           );

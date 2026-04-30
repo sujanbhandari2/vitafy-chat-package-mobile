@@ -166,7 +166,6 @@ class ChatApi {
         options: _authOptions(
           auth,
           includeDefaultHeaders: false,
-          contentType: 'multipart/form-data',
         ),
         data: FormData.fromMap(payload),
         cancelToken: cancelToken,
@@ -209,6 +208,44 @@ class ChatApi {
         },
       );
 
+      return _asMap(_unwrapData(response.data));
+    });
+  }
+
+  Future<Map<String, dynamic>> markMessageDeliveredRest(
+    ChatAuth auth, {
+    required String conversationId,
+    required String messageId,
+  }) {
+    final suffix = _config.resolveDeliveredReceiptPath(
+      conversationId,
+      messageId,
+    );
+    return _guard(() async {
+      final response = await _dio.post<Map<String, dynamic>>(
+        _chatUri(suffix),
+        options: _authOptions(auth),
+        data: const <String, dynamic>{},
+      );
+      return _asMap(_unwrapData(response.data));
+    });
+  }
+
+  Future<Map<String, dynamic>> markMessageReadRest(
+    ChatAuth auth, {
+    required String conversationId,
+    required String messageId,
+  }) {
+    final suffix = _config.resolveReadReceiptPath(
+      conversationId,
+      messageId,
+    );
+    return _guard(() async {
+      final response = await _dio.post<Map<String, dynamic>>(
+        _chatUri(suffix),
+        options: _authOptions(auth),
+        data: const <String, dynamic>{},
+      );
       return _asMap(_unwrapData(response.data));
     });
   }

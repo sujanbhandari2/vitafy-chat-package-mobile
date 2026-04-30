@@ -1,8 +1,24 @@
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'example_configuration_page.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await Firebase.initializeApp();
+    if (kDebugMode) {
+      debugPrint('Firebase initialized for example app.');
+    }
+  } catch (e, st) {
+    // Missing or invalid google-services.json / GoogleService-Info.plist is OK
+    // for local runs; push setup in ExampleChatPage will no-op until configured.
+    if (kDebugMode) {
+      debugPrint('Firebase.initializeApp skipped: $e');
+      debugPrintStack(stackTrace: st);
+    }
+  }
   runApp(const MessengerExampleApp());
 }
 
@@ -12,6 +28,7 @@ class MessengerExampleApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      debugShowCheckedModeBanner: false,
       title: 'Health Messenger UI Example',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2B6E62)),

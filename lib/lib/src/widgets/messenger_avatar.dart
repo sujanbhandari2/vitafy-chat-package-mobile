@@ -20,20 +20,10 @@ class MessengerAvatar extends StatelessWidget {
   final bool showOnlineIndicator;
   final bool isOnline;
 
-  static const List<Color> _palette = [
-    Color(0xFF7C3AED),
-    Color(0xFF2563EB),
-    Color(0xFF0EA5E9),
-    Color(0xFF059669),
-    Color(0xFFEA580C),
-    Color(0xFFDB2777),
-    Color(0xFF4F46E5),
-  ];
-
   @override
   Widget build(BuildContext context) {
-    final base = _pickColor(label);
     final theme = MessengerTheme.of(context);
+    final base = theme.primary;
 
     final labelWidget = Text(
       label,
@@ -49,14 +39,7 @@ class MessengerAvatar extends StatelessWidget {
       height: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        gradient: compact
-            ? null
-            : LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [base.withValues(alpha: 0.9), base],
-              ),
-        color: compact ? base.withValues(alpha: 0.85) : null,
+        color: compact ? base.withValues(alpha: 0.9) : base,
       ),
       alignment: Alignment.center,
       child: imageUrl == null
@@ -97,8 +80,4 @@ class MessengerAvatar extends StatelessWidget {
     );
   }
 
-  Color _pickColor(String value) {
-    final sum = value.codeUnits.fold<int>(0, (prev, unit) => prev + unit);
-    return _palette[sum % _palette.length];
-  }
 }
