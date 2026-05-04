@@ -7,6 +7,7 @@ export 'src/client/chat_dio.dart';
 export 'src/client/chat_exceptions.dart';
 export 'src/client/chat_session.dart';
 export 'src/client/chat_logger.dart';
+export 'src/client/socket_pretty_logger.dart';
 export 'src/client/chat_repository.dart';
 export 'src/client/chat_repository_impl.dart';
 export 'src/client/chat_service.dart';

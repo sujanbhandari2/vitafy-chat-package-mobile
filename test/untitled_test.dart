@@ -3,13 +3,25 @@ import 'package:health_messenger_ui/lib/health_messenger_client.dart';
 
 void main() {
   group('Chat client models', () {
-    test('ChatAuth builds API headers and socket auth payload', () {
+    test('ChatAuth: API-key-only headers omit Bearer', () {
       const auth = ChatAuth(
         apiKey: 'access:secret',
         chatUserId: '42',
       );
 
-      expect(auth.toApiHeaders()['X-Api-Key'], 'access:secret');
+      final headers = auth.toApiHeaders(includeChatUserBearer: false);
+      expect(headers['X-Api-Key'], 'access:secret');
+      expect(headers.containsKey('Authorization'), isFalse);
+    });
+
+    test('ChatAuth: Bearer and socket token when accessToken set', () {
+      const auth = ChatAuth(
+        apiKey: 'access:secret',
+        chatUserId: '42',
+        accessToken: 'jwt.token.here',
+      );
+
+      expect(auth.toApiHeaders()['Authorization'], 'Bearer jwt.token.here');
       expect(
         auth.toSocketAuth(),
         {
@@ -17,8 +29,51 @@ void main() {
           'xApiKey': 'access:secret',
           'userId': '42',
           'chatUserId': '42',
+          'token': 'jwt.token.here',
+          'accessToken': 'jwt.token.here',
         },
       );
+    });
+
+    test('TenantUser.fromJson reads accessToken from POST /users payload', () {
+      final user = TenantUser.fromJson({
+        'id': '7',
+        'tenantId': '1',
+        'name': 'A',
+        'email': 'a@b.com',
+        'role': 'CLIENT',
+        'isOnline': false,
+        'createdAt': '2026-01-01T00:00:00.000Z',
+        'accessToken': 'tok',
+        'tokenType': 'Bearer',
+      });
+      expect(user.accessToken, 'tok');
+      expect(user.tokenType, 'Bearer');
+    });
+
+    test('TenantUser.displayName falls back to provider_user_id then id', () {
+      final u1 = TenantUser.fromJson({
+        'id': '42',
+        'tenant_id': '1',
+        'name': '',
+        'email': '',
+        'provider_user_id': 'ext-abc',
+        'role': 'CLIENT',
+        'is_online': false,
+        'created_at': '2026-01-01T00:00:00.000Z',
+      });
+      expect(u1.displayName, 'ext-abc');
+
+      final u2 = TenantUser.fromJson({
+        'id': '99',
+        'tenantId': '1',
+        'name': '',
+        'email': '',
+        'role': 'CLIENT',
+        'isOnline': false,
+        'createdAt': '2026-01-01T00:00:00.000Z',
+      });
+      expect(u2.displayName, 'User 99');
     });
 
     test('ChatMessage parses attachments and reply snapshots', () {

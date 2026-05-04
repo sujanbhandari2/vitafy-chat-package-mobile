@@ -25,6 +25,8 @@ class FakeChatRepository implements ChatRepository {
               role: AppRole.client,
               isOnline: false,
               createdAt: DateTime.utc(2026),
+              accessToken: 'fake-access-token',
+              tokenType: 'Bearer',
             );
 
   final ChatTenantScope _tenantScope;

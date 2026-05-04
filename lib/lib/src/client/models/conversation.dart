@@ -103,15 +103,53 @@ class ConversationParticipantUser {
 
   factory ConversationParticipantUser.fromJson(Map<String, dynamic> json) {
     final rawRole = json['role']?.toString();
+    final idStr = json['id']?.toString() ?? '';
+    final label = _participantLabelFromJson(json, idStr);
     return ConversationParticipantUser(
-      id: json['id']?.toString() ?? '',
-      username: json['name']?.toString() ?? json['username']?.toString() ?? '',
+      id: idStr,
+      username: label,
       role: rawRole == null ? AppRole.client : parseRole(rawRole),
-      email: json['email']?.toString(),
-      avatarUrl: json['avatarUrl']?.toString(),
-      status: json['status']?.toString(),
+      email: _firstNonEmpty(json, const ['email']),
+      avatarUrl: _firstNonEmpty(
+        json,
+        const ['avatarUrl', 'avatar_url'],
+      ),
+      status: _firstNonEmpty(json, const ['status']),
       isOnline:
           json['isOnline'] as bool? ?? json['is_online'] as bool? ?? false,
     );
   }
+}
+
+String _participantLabelFromJson(Map<String, dynamic> json, String idStr) {
+  final fromFields = _firstNonEmpty(json, const [
+    'name',
+    'username',
+    'displayName',
+    'display_name',
+    'email',
+    'providerUserId',
+    'provider_user_id',
+  ]);
+  if (fromFields != null) {
+    return fromFields;
+  }
+  if (idStr.trim().isNotEmpty) {
+    return 'User $idStr';
+  }
+  return 'User';
+}
+
+String? _firstNonEmpty(Map<String, dynamic> json, List<String> keys) {
+  for (final key in keys) {
+    final raw = json[key];
+    if (raw == null) {
+      continue;
+    }
+    final s = raw.toString().trim();
+    if (s.isNotEmpty) {
+      return s;
+    }
+  }
+  return null;
 }

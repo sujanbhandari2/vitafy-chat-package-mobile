@@ -259,28 +259,42 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   }) {
     final selectedConversationId =
         forceLoading && fallbackConversationId != null
-            ? fallbackConversationId
-            : (widget.selectedConversationId ?? fallbackConversationId);
-    final selectedConversation = selectedConversationId == null
-        ? null
-        : widget.conversations
-            .where((item) => item.id == selectedConversationId)
-            .firstOrNull;
+            ? fallbackConversationId.trim()
+            : (widget.selectedConversationId ?? fallbackConversationId)
+                ?.trim();
+    final selectedConversation = _conversationForShellId(
+          selectedConversationId,
+        ) ??
+        (selectedConversationId != null &&
+                selectedConversationId.trim().isNotEmpty
+            ? MessengerConversation(
+                id: selectedConversationId.trim(),
+                title: 'Chat',
+                subtitle: '',
+                avatarLabel: 'CH',
+                createdAt: DateTime.now(),
+              )
+            : null);
     final isSelectedConversationLoading = selectedConversationId != null &&
         (forceLoading ||
             (widget.isConversationLoading &&
                 (widget.loadingConversationId == null ||
-                    widget.loadingConversationId == selectedConversationId)));
-    final rawThreadMessages =
-        widget.selectedConversationId == selectedConversationId
-            ? _messagesForConversation(widget.selectedConversationId)
-            : const <MessengerChatMessage>[];
+                    _conversationIdsEqual(
+                      widget.loadingConversationId,
+                      selectedConversationId,
+                    ))));
+    final rawThreadMessages = _conversationIdsEqual(
+      widget.selectedConversationId,
+      selectedConversationId,
+    )
+        ? _messagesForConversation(widget.selectedConversationId)
+        : const <MessengerChatMessage>[];
     final threadMessages = isSelectedConversationLoading
         ? const <MessengerChatMessage>[]
         : rawThreadMessages;
     final pendingMedia = selectedConversationId == null
         ? null
-        : _pendingMediaByConversation[selectedConversationId];
+        : _pendingMediaByConversation[selectedConversationId.trim()];
     final hasPendingAttachment = pendingMedia != null;
     final isMediaSending = selectedConversationId != null &&
         _mediaSendingConversationIds.contains(selectedConversationId);
@@ -421,9 +435,12 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
                 builder: (_, __, ___) => _buildThread(
                   isMobile: true,
                   onBack: () => Navigator.of(routeContext).maybePop(),
-                  fallbackConversationId: fallbackConversationId,
+                  fallbackConversationId: fallbackConversationId?.trim(),
                   forceLoading: forceLoading &&
-                      widget.selectedConversationId != fallbackConversationId,
+                      !_conversationIdsEqual(
+                        widget.selectedConversationId,
+                        fallbackConversationId,
+                      ),
                 ),
               ),
             ),
@@ -437,7 +454,8 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     if (conversationId == null) {
       return widget.messages;
     }
-    final local = _localMessagesByConversation[conversationId] ?? const [];
+    final key = conversationId.trim();
+    final local = _localMessagesByConversation[key] ?? const [];
     if (local.isEmpty) {
       return widget.messages;
     }
@@ -877,9 +895,30 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   }
 
   String? _conversationIdForUser(String userId) {
+    final uid = userId.trim();
     for (final conversation in widget.conversations) {
-      if (conversation.peerUsers.any((peer) => peer.id == userId)) {
-        return conversation.id;
+      if (conversation.peerUsers.any((peer) => peer.id.trim() == uid)) {
+        return conversation.id.trim();
+      }
+    }
+    return null;
+  }
+
+  bool _conversationIdsEqual(String? a, String? b) {
+    if (a == null || b == null) {
+      return false;
+    }
+    return a.trim() == b.trim();
+  }
+
+  MessengerConversation? _conversationForShellId(String? id) {
+    if (id == null || id.trim().isEmpty) {
+      return null;
+    }
+    final t = id.trim();
+    for (final c in widget.conversations) {
+      if (c.id.trim() == t) {
+        return c;
       }
     }
     return null;
@@ -985,7 +1024,10 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
                 await _openThreadRoute(this.context);
                 return;
               }
-              unawaited(_runOpenDirectChat(user));
+              await _runOpenDirectChat(user);
+              if (!mounted) {
+                return;
+              }
               await _openThreadRouteInternal(
                 this.context,
                 themeData: MessengerTheme.of(this.context),
@@ -995,14 +1037,16 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
               return;
             },
             onSelectConversation: (conversationId) async {
-              unawaited(_runSelectConversation(conversationId));
+              await _runSelectConversation(conversationId);
+              if (!mounted) {
+                return;
+              }
               await _openThreadRouteInternal(
                 this.context,
                 themeData: MessengerTheme.of(this.context),
                 fallbackConversationId: conversationId,
                 forceLoading: true,
               );
-              return;
             },
             searchVisibility: widget.searchVisibility,
             searchThreshold: widget.searchThreshold,
@@ -1037,15 +1081,5 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     }
 
     return MessengerTheme(data: widget.theme!, child: shell);
-  }
-}
-
-extension _FirstOrNull<E> on Iterable<E> {
-  E? get firstOrNull {
-    if (isEmpty) {
-      return null;
-    }
-
-    return first;
   }
 }

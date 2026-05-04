@@ -68,7 +68,7 @@ void main() {
     const alice = MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
     const bob = MessengerUser(id: 'b', username: 'bob_smith', roleLabel: '');
     const cara = MessengerUser(id: 'c', username: 'cara_doe', roleLabel: '');
-    String? openedUserId;
+    String? openedConversationId;
 
     MessengerConversation conv(
       String id,
@@ -106,10 +106,10 @@ void main() {
                 openingDirectUserId: '',
                 onRefresh: () {},
                 onLogout: () {},
-                onOpenDirectChat: (user) async {
-                  openedUserId = user.id;
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (id) async {
+                  openedConversationId = id;
                 },
-                onSelectConversation: (_) async {},
                 searchVisibility: MessengerSearchVisibility.never,
                 showStartChatFab: false,
               ),
@@ -133,7 +133,7 @@ void main() {
     await tester.tap(find.text('Cara Doe'));
     await tester.pumpAndSettle();
 
-    expect(openedUserId, 'c');
+    expect(openedConversationId, 'c3');
   });
 
   testWidgets('empty peer list shows default start-new-chat hint',

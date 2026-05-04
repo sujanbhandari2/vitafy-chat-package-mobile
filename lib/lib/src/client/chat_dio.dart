@@ -144,8 +144,12 @@ class _ChatLoggingInterceptor extends Interceptor {
 
 Map<String, Object?> _sanitizeHeaders(Map<String, dynamic> headers) {
   return headers.map((key, value) {
-    if (key.toLowerCase() == 'x-api-key' && value is String) {
+    final lower = key.toLowerCase();
+    if (lower == 'x-api-key' && value is String) {
       return MapEntry(key, redactApiKey(value));
+    }
+    if (lower == 'authorization' && value is String) {
+      return MapEntry(key, redactAuthorizationHeader(value));
     }
     return MapEntry(key, value);
   });

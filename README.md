@@ -27,22 +27,27 @@ final client = ChatClient(
   ),
 );
 
-const auth = ChatAuth(
-  apiKey: '<accessKey>:<secretKey>',
-  chatUserId: '<chatUserId>',
-);
+const apiAuth = ChatAuth(apiKey: '<accessKey>:<secretKey>');
 
 final me = await client.registerOrGetUser(
-  auth,
+  apiAuth,
   providerId: 'mobile-app',
   providerUserId: 'user-123',
   email: 'user@example.com',
   name: 'Jane Doe',
 );
 
-await client.connect(auth);
-final conversations = await client.getConversations(auth, forUserId: me.id);
-final messagesPage = await client.getMessages(auth, conversations.first.id);
+final sessionAuth = ChatAuth(
+  apiKey: apiAuth.apiKey,
+  chatUserId: me.id,
+  accessToken: me.accessToken!,
+);
+
+await client.connect(sessionAuth);
+final conversations =
+    await client.getConversations(sessionAuth, forUserId: me.id);
+final messagesPage =
+    await client.getMessages(sessionAuth, conversations.first.id);
 
 await client.joinConversation(conversations.first.id);
 await client.sendMessage(
@@ -63,8 +68,13 @@ import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 // Use the widgets in your UI tree. See the /example app for a full integration.
 ```
 
+## Parity with the Vitafy web widget
+
+For REST + Socket.IO field-by-field alignment with **`vitafy-generic-chat-frontend`**, use the checklist **`vitafy-genric-chat-backend/docs/WIDGET_CLIENT_PARITY.md`** next to this repo when present. **Verification:** run the web widget and your Flutter app against the same API key; compare DevTools **Network** (`POST .../conversations` body) and the socket handshake **`auth`** object with this package’s `socketLogger` output.
+
 ## Notes
 - Default REST routes target `/api/v1/chat` and uploads target `/api/upload/file`.
-- Socket auth sends both `auth.apiKey` and `X-Api-Key`, plus `auth.userId/chatUserId` when provided.
+- Most chat REST routes require **`X-Api-Key`** and **`Authorization: Bearer`** using the **`accessToken`** returned by **`POST /api/v1/chat/users`**; **`GET .../tenant`**, **`POST .../users`**, and **`POST /api/upload/file`** are API-key-only. A full socket session sends the same JWT in **`auth.token` / `auth.accessToken`** (and optionally the `Authorization` header) whenever **`auth.userId`** / **`auth.chatUserId`** is set—prefer **`ChatSession.bootstrap`** so the client wires this automatically.
+- Socket auth sends **`auth.apiKey`** / **`xApiKey`** and **`X-Api-Key`**, plus **`auth.userId`/`chatUserId`** and **`auth.token`/`accessToken`** when you have a chat-user JWT.
 - `apiLogger` and `socketLogger` are optional named parameters intended for development-time transport debugging.
 - For a full working example, open the `example` app in this package.

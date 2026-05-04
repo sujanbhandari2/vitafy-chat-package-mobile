@@ -6,6 +6,7 @@ import 'chat_auth.dart';
 import 'chat_client.dart';
 import 'chat_config.dart';
 import 'chat_connection_state.dart';
+import 'chat_exceptions.dart';
 import 'chat_repository.dart';
 import 'models/tenant_user.dart';
 
@@ -53,14 +54,19 @@ class ChatSession {
     }
   }
 
-  /// Registers the chat user, then attempts socket connect. REST steps succeed
-  /// even when [connect] fails; check [ChatSessionBootstrapResult.socketConnected].
+  /// Registers the chat user, then connects the socket.
+  ///
+  /// REST steps succeed before the socket runs. When [awaitSocketConnect] is
+  /// `false`, the socket handshake runs in the background; use
+  /// [ChatClient.connectionState] / socket events for readiness and treat
+  /// [ChatSessionBootstrapResult.socketConnectPending] as true.
   Future<ChatSessionBootstrapResult> bootstrap({
     required ChatAuth apiAuth,
     required String providerId,
     required String providerUserId,
     required String email,
     String? name,
+    bool awaitSocketConnect = true,
   }) async {
     _tenantScope = await _client.getTenantScope(apiAuth);
     _currentUser = await _client.registerOrGetUser(
@@ -70,23 +76,49 @@ class ChatSession {
       email: email,
       name: name,
     );
+    final accessToken = (_currentUser!.accessToken ?? '').trim();
+    if (accessToken.isEmpty) {
+      throw const ChatUnexpectedResponseException(
+        message:
+            'POST /chat/users did not return accessToken; cannot authenticate chat REST or socket.',
+      );
+    }
+    final chatUserId = _currentUser!.id.trim();
+    if (chatUserId.isEmpty || !RegExp(r'^\d+$').hasMatch(chatUserId)) {
+      throw ChatUnexpectedResponseException(
+        message:
+            'POST /chat/users did not return a numeric ChatUser id; got "${_currentUser!.id}". '
+            'Socket auth.auth.userId must match JWT claim chatUserId (see WIDGET_CLIENT_PARITY.md).',
+      );
+    }
     _sessionAuth = ChatAuth(
       apiKey: apiAuth.apiKey,
-      chatUserId: _currentUser!.id,
+      chatUserId: chatUserId,
+      accessToken: accessToken,
     );
 
     var socketConnected = false;
     Object? connectError;
-    try {
-      await _client.connect(_sessionAuth!);
-      socketConnected = true;
-    } catch (e) {
-      connectError = e;
+    var socketConnectPending = false;
+
+    if (awaitSocketConnect) {
+      try {
+        await _client.connect(_sessionAuth!);
+        socketConnected = true;
+      } catch (e) {
+        connectError = e;
+      }
+    } else {
+      socketConnectPending = true;
+      unawaited(
+        _client.connect(_sessionAuth!).onError((_, __) {}),
+      );
     }
 
     return ChatSessionBootstrapResult(
       socketConnected: socketConnected,
       connectError: connectError,
+      socketConnectPending: socketConnectPending,
     );
   }
 
@@ -120,8 +152,17 @@ class ChatSessionBootstrapResult {
   const ChatSessionBootstrapResult({
     required this.socketConnected,
     this.connectError,
+    this.socketConnectPending = false,
   });
 
+  /// Whether the socket was connected when [ChatSession.bootstrap] returned.
   final bool socketConnected;
+
+  /// Set when [ChatSession.bootstrap] was asked to await the handshake; then
+  /// holds the error from [ChatClient.connect], if any.
   final Object? connectError;
+
+  /// True when the socket connect was started but not awaited (see
+  /// [ChatSession.bootstrap] `awaitSocketConnect: false`).
+  final bool socketConnectPending;
 }

@@ -2,12 +2,22 @@ import 'dart:async';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:health_messenger_ui/lib/health_messenger_client.dart';
 import 'package:health_messenger_ui/lib/health_messenger_push.dart';
 import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 
 import 'example_models.dart';
+
+bool _hasExampleBootstrapConfig(ExampleBootstrapFormData data) {
+  return data.apiBaseUrl.trim().isNotEmpty &&
+      data.socketUrl.trim().isNotEmpty &&
+      data.apiKey.trim().isNotEmpty &&
+      data.providerId.trim().isNotEmpty &&
+      data.providerUserId.trim().isNotEmpty &&
+      data.email.trim().isNotEmpty;
+}
 
 class ExampleChatPage extends StatefulWidget {
   const ExampleChatPage({
@@ -22,13 +32,20 @@ class ExampleChatPage extends StatefulWidget {
 }
 
 class _ExampleChatPageState extends State<ExampleChatPage> {
+  _ExampleChatPageState()
+      : _socketPrettyChatLogger = SocketPrettyLogger(
+          verboseData: kDebugMode,
+        ).asChatLogger();
+
   final TextEditingController _composerController = TextEditingController();
   final ScrollController _messagesScrollController = ScrollController();
+
+  /// Spring-style lines to the console; [ChatServiceConfig.socketLogger] sink.
+  final ChatLogger _socketPrettyChatLogger;
 
   StreamSubscription<ChatSocketEvent>? _socketSubscription;
   ChatSession? _session;
   ChatClient? get _client => _session?.client;
-  ChatAuth? _apiAuth;
   ChatAuth? _sessionAuth;
   ChatTenantScope? _tenantScope;
   TenantUser? _currentUser;
@@ -46,6 +63,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   bool _isRefreshing = false;
   bool _isSending = false;
   bool _isRecording = false;
+  bool _isMediaUploading = false;
+  bool _isDirectChatBusy = false;
+  int _pendingReactionRequests = 0;
+  bool _isLoggingOut = false;
   String? _loadingConversationId;
   Timer? _slowConversationHintTimer;
 
@@ -56,6 +77,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   @override
   void initState() {
     super.initState();
+    if (_hasExampleBootstrapConfig(widget.initialData)) {
+      _isBootstrapping = true;
+    }
     unawaited(_bootstrapPackageFlow());
   }
 
@@ -146,8 +170,18 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       return;
     }
     try {
+      // [main] already calls Firebase.initializeApp(); if it failed (no
+      // google-services.json / values.xml), do not retry here — that only
+      // duplicates the same PlatformException and noisy logs.
       if (Firebase.apps.isEmpty) {
-        await Firebase.initializeApp();
+        if (mounted) {
+          setState(() => _pushIntegrationReady = false);
+        }
+        _appendLog(
+          'Push bridge skipped (Firebase not initialized). '
+          'Add Firebase Android/iOS config or use Firebase.initializeApp(options: …) in main.',
+        );
+        return;
       }
       final settings = await FirebaseMessaging.instance.requestPermission(
         alert: true,
@@ -198,9 +232,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       }
       _appendLog(
         'Push bridge not active (add Firebase config to enable)',
-        data: {'error': e.toString()},
+        data: {
+          'error': e.toString().split('\n').first,
+        },
       );
-      debugPrintStack(stackTrace: st);
+      debugPrintStack(stackTrace: st, maxFrames: 12);
     }
   }
 
@@ -241,7 +277,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
   Future<void> _refreshConversationAfterRemoteHint(String conversationId) async {
     final client = _client;
-    final auth = _apiAuth;
+    final auth = _sessionAuth;
     if (client == null || auth == null) {
       return;
     }
@@ -310,9 +346,12 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         providerId.isEmpty ||
         providerUserId.isEmpty ||
         email.isEmpty) {
-      setState(() {
-        _statusText = 'Bootstrap config is incomplete.';
-      });
+      if (mounted) {
+        setState(() {
+          _statusText = 'Bootstrap config is incomplete.';
+          _isBootstrapping = false;
+        });
+      }
       _appendLog('Bootstrap skipped: missing required configuration');
       return;
     }
@@ -331,11 +370,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         config: ChatServiceConfig(
           apiBaseUrl: apiBaseUrl,
           socketUrl: socketUrl,
-          socketTransports: const ['websocket'],
+          // Match vitafy-generic-chat-frontend `createChatSocket` (polling + websocket).
+          socketTransports: const ['polling', 'websocket'],
           apiLogger: (message, {data}) =>
               _appendLog('API $message', data: data),
-          socketLogger: (message, {data}) =>
-              _appendLog('SOCKET $message', data: data),
+          socketLogger: _socketPrettyChatLogger,
         ),
       );
       bootstrappingSession = session;
@@ -347,6 +386,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         providerUserId: providerUserId,
         email: email,
         name: name.isEmpty ? null : name,
+        // Socket polling+upgrade can take several seconds; show tenant + REST data first.
+        awaitSocketConnect: false,
       );
       final tenantScope = session.tenantScope!;
       final registeredUser = session.currentUser!;
@@ -360,7 +401,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       _listenToSocketEvents(session.client);
       setState(() {
         _session = session;
-        _apiAuth = apiAuth;
         _sessionAuth = sessionAuth;
         _tenantScope = tenantScope;
         _currentUser = registeredUser;
@@ -373,16 +413,27 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       bootstrappingSession = null;
 
       final socketConnected = bootstrapResult.socketConnected;
-      if (!socketConnected && bootstrapResult.connectError != null) {
+      final socketDeferred = bootstrapResult.socketConnectPending;
+      if (!socketDeferred &&
+          !socketConnected &&
+          bootstrapResult.connectError != null) {
         _appendLog(
           'Socket connect failed, continuing in REST-only mode',
           data: {'error': bootstrapResult.connectError.toString()},
         );
+      } else if (socketDeferred) {
+        _appendLog('Socket connect started in background');
       }
 
       if (mounted) {
         setState(() {
           _isSocketConnected = socketConnected;
+        });
+      }
+
+      if (mounted) {
+        setState(() {
+          _isBootstrapping = false;
         });
       }
 
@@ -393,9 +444,16 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       }
 
       setState(() {
-        _statusText = socketConnected
-            ? 'Connected as ${registeredUser.displayName} in tenant ${tenantScope.tenantId}.'
-            : 'Connected to tenant data as ${registeredUser.displayName} (read-only until socket reconnects).';
+        if (socketDeferred) {
+          _statusText =
+              'Signed in as ${registeredUser.displayName} · tenant ${tenantScope.tenantId} · connecting realtime…';
+        } else if (socketConnected) {
+          _statusText =
+              'Connected as ${registeredUser.displayName} in tenant ${tenantScope.tenantId}.';
+        } else {
+          _statusText =
+              'Connected to tenant data as ${registeredUser.displayName} (read-only until socket reconnects).';
+        }
       });
       _appendLog(
         'Bootstrap complete',
@@ -433,7 +491,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }
 
   Future<void> _refreshAll({bool selectFirstConversation = false}) async {
-    if (_client == null || _apiAuth == null) {
+    if (_client == null || _sessionAuth == null) {
       return;
     }
 
@@ -443,8 +501,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     });
 
     try {
-      await _refreshUsers();
-      await _refreshConversations();
+      await Future.wait<void>([
+        _refreshUsers(),
+        _refreshConversations(),
+      ]);
 
       final selectedConversationId = _selectedConversationId;
       if (selectedConversationId != null) {
@@ -485,7 +545,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
   Future<void> _refreshUsers() async {
     final client = _client;
-    final auth = _apiAuth;
+    final auth = _sessionAuth;
     if (client == null || auth == null) {
       return;
     }
@@ -506,7 +566,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
   Future<void> _refreshConversations() async {
     final client = _client;
-    final auth = _apiAuth;
+    final auth = _sessionAuth;
     final currentUser = _currentUser;
     if (client == null || auth == null || currentUser == null) {
       return;
@@ -535,6 +595,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     String conversationId, {
     bool tryReconnect = true,
   }) async {
+    conversationId = conversationId.trim();
+    if (conversationId.isEmpty) {
+      return;
+    }
+
     final session = _session;
     final client = _client;
     if (session == null || client == null) {
@@ -631,8 +696,13 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }
 
   Future<void> _loadMessages(String conversationId) async {
+    conversationId = conversationId.trim();
+    if (conversationId.isEmpty) {
+      return;
+    }
+
     final client = _client;
-    final auth = _apiAuth;
+    final auth = _sessionAuth;
     if (client == null || auth == null) {
       return;
     }
@@ -653,7 +723,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
   Future<void> _openDirectChat(MessengerUser user) async {
     final client = _client;
-    final auth = _apiAuth;
+    final auth = _sessionAuth;
     final currentUser = _currentUser;
     if (client == null || auth == null || currentUser == null) {
       _showSnack('Bootstrap the package flow first.');
@@ -667,14 +737,22 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     }
 
     try {
-      setState(() {
-        _statusText = 'Creating direct conversation with ${user.username}...';
-      });
+      if (mounted) {
+        setState(() {
+          _isDirectChatBusy = true;
+          _statusText = 'Creating direct conversation with ${user.username}...';
+        });
+      }
 
+      // Same contract as vitafy-generic-chat-frontend `createDirectConversation`:
+      // both values must be ChatUser.id digit strings.
       final created = await client.createConversation(
         auth,
         type: 'DIRECT',
-        participantIds: [currentUser.id, user.id],
+        participantIds: [
+          currentUser.id.trim(),
+          user.id.trim(),
+        ],
       );
 
       await _refreshConversations();
@@ -685,6 +763,12 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         data: {'error': error.toString(), 'stackTrace': stackTrace.toString()},
       );
       _showSnack('Could not create direct conversation.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDirectChatBusy = false;
+        });
+      }
     }
   }
 
@@ -696,16 +780,15 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       return;
     }
 
-    final connected = await _ensureSocketConnected();
-    if (!connected) {
-      return;
-    }
-
     setState(() {
       _isSending = true;
     });
-
     try {
+      final connected = await _ensureSocketConnected();
+      if (!connected) {
+        return;
+      }
+
       final created = await client.sendMessage(
         conversationId: conversationId,
         type: MessageType.text,
@@ -744,6 +827,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       return;
     }
 
+    if (mounted) {
+      setState(() => _pendingReactionRequests++);
+    }
     try {
       final reaction = await client.reactToMessage(
         conversationId: conversationId,
@@ -757,6 +843,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         data: {'error': error.toString(), 'stackTrace': stackTrace.toString()},
       );
       _showSnack('Could not add the reaction.');
+    } finally {
+      if (mounted) {
+        setState(() => _pendingReactionRequests--);
+      }
     }
   }
 
@@ -771,6 +861,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       return;
     }
 
+    if (mounted) {
+      setState(() => _pendingReactionRequests++);
+    }
     try {
       final removed = await client.removeReaction(
         conversationId: conversationId,
@@ -794,6 +887,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         data: {'error': error.toString(), 'stackTrace': stackTrace.toString()},
       );
       _showSnack('Could not remove the reaction.');
+    } finally {
+      if (mounted) {
+        setState(() => _pendingReactionRequests--);
+      }
     }
   }
 
@@ -837,13 +934,21 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }
 
   Future<void> _logoutToConfiguration() async {
-    await _disposeActiveClient();
+    if (mounted) {
+      setState(() => _isLoggingOut = true);
+    }
+    try {
+      await _disposeActiveClient();
+    } finally {
+      if (mounted) {
+        setState(() => _isLoggingOut = false);
+      }
+    }
     if (!mounted) {
       return;
     }
 
     setState(() {
-      _apiAuth = null;
       _sessionAuth = null;
       _tenantScope = null;
       _currentUser = null;
@@ -1136,6 +1241,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                     createdAt: user.createdAt,
                     avatarUrl: user.avatarUrl,
                     status: user.status,
+                    accessToken: user.accessToken,
+                    tokenType: user.tokenType,
+                    providerUserId: user.providerUserId,
                   )
                 : user,
           )
@@ -1535,9 +1643,93 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
   bool _canDeleteMessage(MessengerChatMessage _) => false;
 
+  bool get _showExampleFullScreenLoader =>
+      _isBootstrapping ||
+      _isRefreshing ||
+      _isSending ||
+      _isMediaUploading ||
+      _isDirectChatBusy ||
+      _isLoggingOut ||
+      (_loadingConversationId != null &&
+          _loadingConversationId!.trim().isNotEmpty) ||
+      _pendingReactionRequests > 0;
+
+  String get _exampleFullScreenLoaderMessage {
+    if (_isLoggingOut) {
+      return 'Signing out…';
+    }
+    if (_isBootstrapping) {
+      return 'Connecting…';
+    }
+    if (_isRefreshing) {
+      return 'Refreshing chats…';
+    }
+    if (_isSending) {
+      return 'Sending message…';
+    }
+    if (_isMediaUploading) {
+      return 'Uploading media…';
+    }
+    if (_isDirectChatBusy) {
+      return 'Opening direct chat…';
+    }
+    final cid = _loadingConversationId?.trim();
+    if (cid != null && cid.isNotEmpty) {
+      return 'Loading conversation…';
+    }
+    if (_pendingReactionRequests > 0) {
+      return 'Updating reaction…';
+    }
+    return 'Loading…';
+  }
+
+  Widget _buildExampleGlobalLoader(ColorScheme scheme) {
+    if (!_showExampleFullScreenLoader) {
+      return const SizedBox.shrink();
+    }
+    return Positioned.fill(
+      child: AbsorbPointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: scheme.surface.withValues(alpha: 0.78),
+          ),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 36,
+                  height: 36,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    color: scheme.primary,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(
+                    _exampleFullScreenLoaderMessage,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: scheme.onSurface.withValues(alpha: 0.88),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentUserName = _currentUser?.displayName ?? 'Example user';
+    final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
@@ -1571,8 +1763,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         ],
       ),
       body: SafeArea(
-        child: Column(
+        child: Stack(
+          fit: StackFit.expand,
           children: [
+            Column(
+              children: [
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
@@ -1712,6 +1907,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                   mediaSenderId: _currentUser?.id,
                   onMediaSendStart: (_) {
                     setState(() {
+                      _isMediaUploading = true;
                       _statusText = 'Uploading media...';
                     });
                   },
@@ -1723,12 +1919,14 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                   },
                   onMediaSendError: (_, error) {
                     setState(() {
+                      _isMediaUploading = false;
                       _statusText = 'Media send failed: $error';
                     });
                     _showSnack('Media send failed: $error');
                   },
                   onMediaMessageSent: (_) {
                     setState(() {
+                      _isMediaUploading = false;
                       _statusText = 'Media sent through package flow.';
                     });
                     _scrollToBottom();
@@ -1739,6 +1937,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                       _mapUiMessageToBackend(conversationId, message),
                     );
                     setState(() {
+                      _isMediaUploading = false;
                       _statusText =
                           'Media sent through package flow and list updated.';
                     });
@@ -1800,6 +1999,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                 ),
               ),
             ),
+              ],
+            ),
+            _buildExampleGlobalLoader(scheme),
           ],
         ),
       ),

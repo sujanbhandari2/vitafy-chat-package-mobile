@@ -8,6 +8,12 @@ import '../models/messenger_user.dart';
 import '../theme/messenger_theme.dart';
 import 'messenger_avatar.dart';
 
+/// Avoid treating every row as "opening" when both ids are empty (`'' == ''`).
+bool _isDirectOpenBusyForUser(String openingDirectUserId, String userId) {
+  final open = openingDirectUserId.trim();
+  return open.isNotEmpty && open == userId.trim();
+}
+
 class MessengerUserListItemStyle {
   const MessengerUserListItemStyle({
     this.margin = EdgeInsets.zero,
@@ -146,12 +152,16 @@ class _PeerListEntry {
     required this.messagePreview,
     required this.hasUnread,
     required this.isInSelectedConversation,
+    this.conversationId,
   });
 
   final MessengerUser user;
   final String messagePreview;
   final bool hasUnread;
   final bool isInSelectedConversation;
+
+  /// When known (peer came from a conversation row), open via [MessengerConversationList.onSelectConversation].
+  final String? conversationId;
 }
 
 class _MessengerConversationListState extends State<MessengerConversationList> {
@@ -247,10 +257,13 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
 
     final seen = <String>{};
     final orderedUsers = <MessengerUser>[];
+    final userConversationId = <String, String>{};
 
-    void addPeers(Iterable<MessengerUser> peers) {
+    void addPeers(MessengerConversation c, Iterable<MessengerUser> peers) {
       for (final u in peers) {
-        if (seen.add(u.id)) {
+        final uid = u.id.trim();
+        userConversationId.putIfAbsent(uid, () => c.id.trim());
+        if (seen.add(uid)) {
           orderedUsers.add(u);
         }
       }
@@ -258,7 +271,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
 
     final selected = _conversationForId(widget.selectedConversationId);
     for (final c in orderedConversations) {
-      addPeers(c.peerUsers);
+      addPeers(c, c.peerUsers);
     }
 
     return orderedUsers
@@ -269,6 +282,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
             hasUnread: (unreadByUser[u.id] ?? 0) > 0,
             isInSelectedConversation:
                 selected != null && selected.peerUsers.any((p) => p.id == u.id),
+            conversationId: userConversationId[u.id.trim()],
           ),
         )
         .toList(growable: false);
@@ -316,6 +330,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
             hasUnread: _legacyHasUnreadForUser(user),
             isInSelectedConversation: selected != null &&
                 _legacyConversationMatchesUser(selected, user),
+            conversationId: matchForUser(user)?.id,
           ),
         )
         .toList(growable: false);
@@ -378,9 +393,19 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
           (e) =>
               e.user.username.toLowerCase().contains(queryLower) ||
               e.user.roleLabel.toLowerCase().contains(queryLower) ||
+              e.user.id.toLowerCase().contains(queryLower) ||
               e.messagePreview.toLowerCase().contains(queryLower),
         )
         .toList(growable: false);
+  }
+
+  Future<void> _onPeerListEntryTap(_PeerListEntry entry) async {
+    final convId = entry.conversationId;
+    if (convId != null && convId.trim().isNotEmpty) {
+      await widget.onSelectConversation(convId);
+      return;
+    }
+    await widget.onOpenDirectChat(entry.user);
   }
 
   Widget _buildMainUserListItem(BuildContext context, _PeerListEntry entry) {
@@ -388,11 +413,14 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
       user: entry.user,
       isSelected: false,
       hasUnread: entry.hasUnread,
-      isOpening: widget.openingDirectUserId == entry.user.id,
+      isOpening: _isDirectOpenBusyForUser(
+        widget.openingDirectUserId,
+        entry.user.id,
+      ),
       messagePreview:
           entry.messagePreview.isEmpty ? null : entry.messagePreview,
       onTap: () {
-        widget.onOpenDirectChat(entry.user);
+        unawaited(_onPeerListEntryTap(entry));
       },
     );
 
@@ -732,13 +760,15 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final q = _query.toLowerCase();
     final filteredUsers = _query.isEmpty
         ? widget.sortedUsers
         : widget.sortedUsers
             .where(
               (user) =>
-                  user.username.toLowerCase().contains(_query) ||
-                  user.roleLabel.toLowerCase().contains(_query),
+                  user.username.toLowerCase().contains(q) ||
+                  user.roleLabel.toLowerCase().contains(q) ||
+                  user.id.toLowerCase().contains(q),
             )
             .toList(growable: false);
 
@@ -834,7 +864,10 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
                             final user = filteredUsers[index];
                             return _DirectUserTile(
                               user: user,
-                              isOpening: widget.openingDirectUserId == user.id,
+                              isOpening: _isDirectOpenBusyForUser(
+                                widget.openingDirectUserId,
+                                user.id,
+                              ),
                               onTap: () {
                                 Navigator.of(context).pop();
                                 widget.onOpenDirectChat(user);
@@ -1000,7 +1033,11 @@ class _DirectUserTile extends StatelessWidget {
 }
 
 String _displayName(String username) {
-  return username
+  final trimmed = username.trim();
+  if (trimmed.isEmpty) {
+    return 'User';
+  }
+  return trimmed
       .split(RegExp(r'[_-]'))
       .where((part) => part.isNotEmpty)
       .map((part) => part[0].toUpperCase() + part.substring(1))
@@ -1008,9 +1045,10 @@ String _displayName(String username) {
 }
 
 String _initials(String username) {
-  final chunks = _displayName(
-    username,
-  ).split(' ').where((part) => part.isNotEmpty).toList();
+  final chunks = _displayName(username)
+      .split(' ')
+      .where((part) => part.isNotEmpty)
+      .toList();
   if (chunks.isEmpty) {
     return 'U';
   }

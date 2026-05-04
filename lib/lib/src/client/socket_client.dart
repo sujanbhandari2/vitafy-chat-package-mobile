@@ -7,6 +7,7 @@ import 'chat_config.dart';
 import 'chat_connection_state.dart';
 import 'chat_exceptions.dart';
 import 'chat_logger.dart';
+import 'socket_pretty_logger.dart';
 
 class SocketClient {
   SocketClient({
@@ -30,6 +31,28 @@ class SocketClient {
 
   bool get isConnected => _socket?.connected ?? false;
 
+  void _socketLog(
+    SocketLogKind kind,
+    String message, {
+    Map<String, Object?>? data,
+    SocketLogLevel? level,
+  }) {
+    final logger = _config.socketLogger;
+    if (logger == null) {
+      return;
+    }
+    final merged = <String, dynamic>{'kind': kind.name};
+    if (level != null) {
+      merged['level'] = level.name;
+    }
+    if (data != null) {
+      merged.addAll(
+        data.map((String k, Object? v) => MapEntry(k, v)),
+      );
+    }
+    logger(message, data: merged);
+  }
+
   void _emitConnection(ChatConnectionState state) {
     if (!_connectionStateController.isClosed) {
       _connectionStateController.add(state);
@@ -40,7 +63,8 @@ class SocketClient {
     if (_socket != null &&
         _socket!.connected &&
         _auth?.apiKey == auth.apiKey &&
-        _auth?.chatUserId == auth.chatUserId) {
+        _auth?.chatUserId == auth.chatUserId &&
+        _auth?.accessToken == auth.accessToken) {
       return;
     }
 
@@ -52,7 +76,8 @@ class SocketClient {
         ? const ['polling', 'websocket']
         : _config.socketTransports;
 
-    _config.socketLogger?.call(
+    _socketLog(
+      SocketLogKind.connectRequest,
       'Socket connect requested',
       data: {
         ..._sanitizedAuth(auth),
@@ -82,7 +107,8 @@ class SocketClient {
     final connectedCompleter = Completer<void>();
 
     socket.onConnect((_) {
-      _config.socketLogger?.call(
+      _socketLog(
+        SocketLogKind.connected,
         'Socket connected',
         data: {'id': socket.id, ..._sanitizedAuth(auth)},
       );
@@ -93,18 +119,41 @@ class SocketClient {
       }
     });
 
-    socket.on('reconnect_attempt', (_) {
+    socket.on('reconnect_attempt', (dynamic data) {
+      _socketLog(
+        SocketLogKind.reconnectAttempt,
+        'Socket reconnect attempt',
+        data: {
+          if (data != null) 'payload': data,
+        },
+      );
       _emitConnection(ChatConnectionState.reconnecting);
     });
-    socket.on('reconnect', (_) {
+    socket.on('reconnect', (dynamic data) {
+      _socketLog(
+        SocketLogKind.reconnect,
+        'Socket reconnected',
+        data: {
+          if (data != null) 'payload': data,
+        },
+      );
       _emitConnection(ChatConnectionState.connected);
     });
-    socket.on('reconnect_failed', (_) {
+    socket.on('reconnect_failed', (dynamic data) {
+      _socketLog(
+        SocketLogKind.reconnectFailed,
+        'Socket reconnect failed',
+        data: {
+          if (data != null) 'payload': data,
+        },
+        level: SocketLogLevel.warn,
+      );
       _emitConnection(ChatConnectionState.failed);
     });
 
     socket.onDisconnect((reason) {
-      _config.socketLogger?.call(
+      _socketLog(
+        SocketLogKind.disconnect,
         'Socket disconnected',
         data: {'reason': reason},
       );
@@ -127,9 +176,11 @@ class SocketClient {
     });
 
     socket.onConnectError((error) {
-      _config.socketLogger?.call(
+      _socketLog(
+        SocketLogKind.connectError,
         'Socket connect error',
         data: {'error': error.toString()},
+        level: SocketLogLevel.error,
       );
       _eventsController.add(
         SocketEvent(
@@ -148,9 +199,11 @@ class SocketClient {
     });
 
     socket.onError((error) {
-      _config.socketLogger?.call(
+      _socketLog(
+        SocketLogKind.socketError,
         'Socket error',
         data: {'error': error.toString()},
+        level: SocketLogLevel.error,
       );
       _eventsController.add(
         SocketEvent(
@@ -191,12 +244,30 @@ class SocketClient {
     try {
       await connectedCompleter.future.timeout(
         _config.connectTimeout,
-        onTimeout: () => throw ChatSocketHandshakeException(
-          message:
-              'Socket connect timeout after ${_config.connectTimeout.inSeconds}s',
-        ),
+        onTimeout: () {
+          _socketLog(
+            SocketLogKind.connectTimeout,
+            'Socket connect timeout after ${_config.connectTimeout.inSeconds}s',
+            data: {'url': effectiveSocketUrl, 'path': effectiveSocketPath},
+            level: SocketLogLevel.error,
+          );
+          throw ChatSocketHandshakeException(
+            message:
+                'Socket connect timeout after ${_config.connectTimeout.inSeconds}s',
+          );
+        },
       );
-    } catch (_) {
+    } catch (e) {
+      // Handshake failures are already logged via connectError / disconnect / onError;
+      // connectTimeout is logged in [onTimeout]. Only log unexpected errors here.
+      if (e is! ChatSocketHandshakeException) {
+        _socketLog(
+          SocketLogKind.connectFailed,
+          'Socket connect failed: $e',
+          data: {'error': e.toString()},
+          level: SocketLogLevel.error,
+        );
+      }
       _emitConnection(ChatConnectionState.failed);
       if (identical(_socket, socket)) {
         socket.disconnect();
@@ -218,25 +289,57 @@ class SocketClient {
       throw const ChatSocketNotConnectedException();
     }
 
-    _config.socketLogger?.call(
+    _socketLog(
+      SocketLogKind.emit,
       'Socket emit',
       data: {'event': event, 'payload': payload},
     );
 
     final completer = Completer<T>();
+    var settled = false;
+
+    void onException(dynamic err) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      socket.off('exception', onException);
+      final msg = _formatNestExceptionPayload(err);
+      _socketLog(
+        SocketLogKind.exception,
+        'Socket exception',
+        data: {'event': event, 'payload': err},
+        level: SocketLogLevel.error,
+      );
+      if (!completer.isCompleted) {
+        completer.completeError(
+          ChatSocketNestException(message: msg, rawPayload: err),
+        );
+      }
+    }
+
+    socket.once('exception', onException);
 
     socket.emitWithAck(
       event,
       payload,
       ack: (response) {
-        _config.socketLogger?.call(
+        if (settled) {
+          return;
+        }
+        settled = true;
+        socket.off('exception', onException);
+        _socketLog(
+          SocketLogKind.ack,
           'Socket ack',
           data: {'event': event, 'response': response},
         );
 
         try {
           final data = _unwrapAck(response);
-          completer.complete(mapper(data));
+          if (!completer.isCompleted) {
+            completer.complete(mapper(data));
+          }
         } catch (error, stackTrace) {
           if (error is ChatSocketServerAckException) {
             completer.completeError(error, stackTrace);
@@ -255,13 +358,57 @@ class SocketClient {
       },
     );
 
-    return completer.future.timeout(
-      _config.socketAckTimeout,
-      onTimeout: () => throw ChatSocketAckTimeoutException(eventName: event),
-    );
+    try {
+      return await completer.future.timeout(
+        _config.socketAckTimeout,
+        onTimeout: () {
+          if (!settled) {
+            settled = true;
+            socket.off('exception', onException);
+          }
+          _socketLog(
+            SocketLogKind.ackTimeout,
+            'Socket ack timeout',
+            data: {'event': event},
+            level: SocketLogLevel.error,
+          );
+          throw ChatSocketAckTimeoutException(eventName: event);
+        },
+      );
+    } catch (e) {
+      if (!settled) {
+        settled = true;
+        socket.off('exception', onException);
+      }
+      rethrow;
+    }
+  }
+
+  static String _formatNestExceptionPayload(Object? payload) {
+    if (payload == null) {
+      return 'Socket server error';
+    }
+    if (payload is String) {
+      return payload.trim().isEmpty ? 'Socket server error' : payload;
+    }
+    if (payload is List) {
+      final parts = payload.map(_formatNestExceptionPayload).where((s) => s.isNotEmpty);
+      final joined = parts.join('; ');
+      return joined.isEmpty ? 'Socket server error' : joined;
+    }
+    if (payload is Map) {
+      final m = payload['message'];
+      if (m is String && m.trim().isNotEmpty) {
+        return m;
+      }
+    }
+    return payload.toString();
   }
 
   void disconnect() {
+    if (_socket != null) {
+      _socketLog(SocketLogKind.clientDisconnect, 'Socket client disconnect()');
+    }
     _emitConnection(ChatConnectionState.disconnected);
     _socket?.disconnect();
     _socket?.dispose();
@@ -277,8 +424,9 @@ class SocketClient {
 
   void _registerEvent(io.Socket socket, String event, SocketEventType type) {
     socket.on(event, (payload) {
-      _config.socketLogger?.call(
-        'Socket event',
+      _socketLog(
+        SocketLogKind.inbound,
+        'Socket inbound event',
         data: {'event': event, 'payload': payload},
       );
       _eventsController.add(SocketEvent(type: type, payload: payload));
@@ -304,6 +452,7 @@ class SocketClient {
     return {
       'apiKey': redactApiKey(auth.apiKey),
       'chatUserId': auth.chatUserId,
+      'hasChatUserToken': auth.hasChatUserAccessToken,
     };
   }
 

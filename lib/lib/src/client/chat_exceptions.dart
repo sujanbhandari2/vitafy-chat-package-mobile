@@ -120,6 +120,18 @@ final class ChatSocketServerAckException extends ChatException {
   }) : super(isRetryable: false);
 }
 
+/// NestJS / Socket.IO `exception` event (no ack callback) — same class of errors
+/// as vitafy-generic-chat-frontend `chatEmitWithAckOrException` `kind: exception`.
+final class ChatSocketNestException extends ChatException {
+  const ChatSocketNestException({
+    required super.message,
+    this.rawPayload,
+    super.cause,
+  }) : super(isRetryable: false);
+
+  final Object? rawPayload;
+}
+
 /// Failure while waiting for the initial socket connection (handshake).
 final class ChatSocketHandshakeException extends ChatException {
   const ChatSocketHandshakeException({
