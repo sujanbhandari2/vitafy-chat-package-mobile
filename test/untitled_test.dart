@@ -1,7 +1,15 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_messenger_ui/lib/health_messenger_client.dart';
 
 void main() {
+  String jwtWithChatUserId(String chatUserId) {
+    String enc(String raw) =>
+        base64Url.encode(utf8.encode(raw)).replaceAll('=', '');
+    return '${enc('{"alg":"none","typ":"JWT"}')}.${enc('{"chatUserId":"$chatUserId"}')}.sig';
+  }
+
   group('Chat client models', () {
     test('ChatAuth: API-key-only headers omit Bearer', () {
       const auth = ChatAuth(
@@ -22,6 +30,9 @@ void main() {
       );
 
       expect(auth.toApiHeaders()['Authorization'], 'Bearer jwt.token.here');
+      final handshakeHeaders = auth.toSocketHandshakeHeaders();
+      expect(handshakeHeaders['Authorization'], 'Bearer jwt.token.here');
+      expect(handshakeHeaders['auth'], 'Bearer jwt.token.here');
       expect(
         auth.toSocketAuth(),
         {
@@ -33,6 +44,85 @@ void main() {
           'accessToken': 'jwt.token.here',
         },
       );
+    });
+
+    test('ChatAuth: strips Bearer prefix from socket auth token only', () {
+      const auth = ChatAuth(
+        apiKey: 'access:secret',
+        chatUserId: '42',
+        accessToken: 'Bearer jwt.token.here',
+      );
+
+      expect(auth.toApiHeaders()['Authorization'], 'Bearer jwt.token.here');
+      expect(
+        auth.toSocketAuth(),
+        {
+          'apiKey': 'access:secret',
+          'xApiKey': 'access:secret',
+          'userId': '42',
+          'chatUserId': '42',
+          'token': 'jwt.token.here',
+          'accessToken': 'jwt.token.here',
+        },
+      );
+    });
+
+    test('ChatAuth: API-key-only socket connect validation passes', () {
+      const auth = ChatAuth(apiKey: 'access:secret');
+      expect(auth.validateForSocketConnect, returnsNormally);
+    });
+
+    test('ChatAuth: socket connect rejects userId without JWT', () {
+      const auth = ChatAuth(
+        apiKey: 'access:secret',
+        chatUserId: '42',
+      );
+      expect(
+        auth.validateForSocketConnect,
+        throwsA(isA<ChatSocketAuthException>()),
+      );
+    });
+
+    test('ChatAuth: socket connect rejects JWT without userId', () {
+      final auth = ChatAuth(
+        apiKey: 'access:secret',
+        accessToken: jwtWithChatUserId('42'),
+      );
+      expect(
+        auth.validateForSocketConnect,
+        throwsA(isA<ChatSocketAuthException>()),
+      );
+    });
+
+    test('ChatAuth: socket connect rejects mismatched JWT chatUserId', () {
+      final auth = ChatAuth(
+        apiKey: 'access:secret',
+        chatUserId: '42',
+        accessToken: jwtWithChatUserId('99'),
+      );
+      expect(
+        auth.validateForSocketConnect,
+        throwsA(isA<ChatSocketAuthException>()),
+      );
+    });
+
+    test('ChatAuth: socket action rejects API-key-only session', () {
+      const auth = ChatAuth(apiKey: 'access:secret');
+      expect(
+        () => auth.validateForSocketAction('join_conversation'),
+        throwsA(isA<ChatSocketAuthException>()),
+      );
+    });
+
+    test('ChatAuth: socket handshake headers omit auth when no JWT', () {
+      const auth = ChatAuth(
+        apiKey: 'access:secret',
+        chatUserId: '42',
+      );
+      final h = auth.toSocketHandshakeHeaders();
+      expect(h['X-Api-Key'], 'access:secret');
+      expect(h.containsKey('Authorization'), isFalse);
+      expect(h.containsKey('auth'), isFalse);
     });
 
     test('TenantUser.fromJson reads accessToken from POST /users payload', () {
@@ -158,6 +248,29 @@ void main() {
         'chatUserId': 'legacy-u',
       });
       expect(typing.userId, 'legacy-u');
+    });
+  });
+
+  group('Socket auth guardrails', () {
+    test('SocketClient.connect rejects partial auth before network', () async {
+      final client = SocketClient(
+        socketUrl: 'https://example.com',
+        config: const ChatServiceConfig(
+          apiBaseUrl: 'https://example.com',
+          socketUrl: 'https://example.com',
+        ),
+      );
+      addTearDown(client.close);
+
+      await expectLater(
+        client.connect(
+          const ChatAuth(
+            apiKey: 'access:secret',
+            chatUserId: '42',
+          ),
+        ),
+        throwsA(isA<ChatSocketAuthException>()),
+      );
     });
   });
 }

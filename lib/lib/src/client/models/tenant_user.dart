@@ -108,7 +108,8 @@ class TenantUser {
 
 /// Reads Vitafy chat-user JWT claim `chatUserId` (unsigned payload parse only).
 String? _readChatUserIdFromJwt(String token) {
-  final parts = token.split('.');
+  final normalizedToken = _stripBearerPrefix(token);
+  final parts = normalizedToken.split('.');
   if (parts.length < 2) {
     return null;
   }
@@ -144,6 +145,16 @@ String? _readChatUserIdFromJwt(String token) {
     return null;
   }
   return null;
+}
+
+String _stripBearerPrefix(String raw) {
+  final trimmed = raw.trim();
+  const prefix = 'bearer ';
+  if (trimmed.length > prefix.length &&
+      trimmed.toLowerCase().startsWith(prefix)) {
+    return trimmed.substring(prefix.length).trim();
+  }
+  return trimmed;
 }
 
 String? _firstNonEmptyString(Map<String, dynamic> json, List<String> keys) {

@@ -241,6 +241,7 @@ class SocketPrettyLogger {
         if (lk == 'apikey' || lk == 'x-api-key') {
           out[k] = redactApiKey(e.value?.toString() ?? '');
         } else if (lk == 'authorization' ||
+            lk == 'auth' ||
             lk == 'accesstoken' ||
             lk == 'token') {
           out[k] = redactAuthorizationHeader(e.value?.toString() ?? '');

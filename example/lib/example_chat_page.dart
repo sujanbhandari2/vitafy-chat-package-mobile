@@ -370,8 +370,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         config: ChatServiceConfig(
           apiBaseUrl: apiBaseUrl,
           socketUrl: socketUrl,
-          // Match vitafy-generic-chat-frontend `createChatSocket` (polling + websocket).
-          socketTransports: const ['polling', 'websocket'],
+          // Flutter mobile is more reliable with websocket-only for this gateway.
+          socketTransports: const ['websocket'],
           apiLogger: (message, {data}) =>
               _appendLog('API $message', data: data),
           socketLogger: _socketPrettyChatLogger,

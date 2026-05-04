@@ -141,6 +141,14 @@ final class ChatSocketHandshakeException extends ChatException {
   });
 }
 
+/// Invalid or incomplete socket authentication before the handshake starts.
+final class ChatSocketAuthException extends ChatException {
+  const ChatSocketAuthException({
+    required super.message,
+    super.cause,
+  }) : super(isRetryable: false);
+}
+
 /// JSON / model parsing failed.
 final class ChatModelParseException extends ChatException {
   const ChatModelParseException({

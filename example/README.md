@@ -30,3 +30,18 @@ Optional: `tenantId`, `senderId`. Native code ignores non-matching `type` values
 ## REST receipt paths
 
 Defaults match `ChatServiceConfig.deliveredReceiptRestPath` / `readReceiptRestPath`. Change them when constructing `ChatServiceConfig` in `_bootstrapPackageFlow` if your API differs.
+
+## Troubleshooting
+
+### `Failed to decode advisories` / `advisoriesUpdated must be a String`
+
+pub.dev can return `"advisoriesUpdated": null` for packages with no advisories; some Dart SDKs still log a `FormatException` while resolving. **Dependencies still resolve** (“Got dependencies!”). Options:
+
+- Run **`flutter upgrade`** when a newer stable SDK ships a matching `pub` fix.
+- After the first successful download, use **`flutter pub get --offline`** to resolve from the local pub cache without re-fetching advisories (no advisory decode step).
+
+### Android: `compileFlutterBuildDebug` / “problem occurred starting process … flutter”
+
+From this repo’s `example` folder, **`flutter build apk --debug`** and **`./gradlew :app:compileFlutterBuildDebug`** should work if `android/local.properties` has a valid `flutter.sdk` and `sdk.dir` (Flutter tooling generates these; paths must exist on your machine).
+
+If Android Studio fails but the terminal works: **File → Settings → Build, Execution, Deployment → Build Tools → Gradle** and ensure the IDE uses a JDK that can run your Flutter install; or run **`cd android && ./gradlew --stop`** and rebuild. Project path segments with spaces are supported by current Gradle/Flutter, but a stale Gradle daemon or IDE JDK mismatch often causes one-off exec failures.

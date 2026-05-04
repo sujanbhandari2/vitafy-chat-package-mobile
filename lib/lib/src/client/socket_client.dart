@@ -20,6 +20,8 @@ class SocketClient {
 
   io.Socket? _socket;
   ChatAuth? _auth;
+  Future<void>? _pendingConnectFuture;
+  ChatAuth? _pendingConnectAuth;
 
   final _eventsController = StreamController<SocketEvent>.broadcast();
   Stream<SocketEvent> get events => _eventsController.stream;
@@ -60,6 +62,7 @@ class SocketClient {
   }
 
   Future<void> connect(ChatAuth auth) async {
+    auth.validateForSocketConnect();
     if (_socket != null &&
         _socket!.connected &&
         _auth?.apiKey == auth.apiKey &&
@@ -67,22 +70,34 @@ class SocketClient {
         _auth?.accessToken == auth.accessToken) {
       return;
     }
+    if (_pendingConnectFuture != null &&
+        _pendingConnectAuth != null &&
+        _sameAuth(_pendingConnectAuth!, auth)) {
+      return _pendingConnectFuture!;
+    }
 
     disconnect();
     _auth = auth;
     final effectiveSocketUrl = _normalizeSocketUrl(socketUrl);
     final effectiveSocketPath = _normalizeSocketPath(_config.socketPath);
+    final socketEndpoint =
+        _resolvedSocketEndpoint(effectiveSocketUrl, effectiveSocketPath);
     final transports = _config.socketTransports.isEmpty
         ? const ['polling', 'websocket']
         : _config.socketTransports;
 
     _socketLog(
       SocketLogKind.connectRequest,
-      'Socket connect requested',
+      'Socket connect handshake: $socketEndpoint',
       data: {
-        ..._sanitizedAuth(auth),
+        'integration': 'socket.io_connect',
+        'handshakeAuth': _sanitizedHandshakeAuthMap(auth),
+        'handshakeHeaders': _sanitizedHandshakeHeadersMap(auth),
+        'chatUserId': auth.chatUserId,
+        'hasChatUserToken': auth.hasChatUserAccessToken,
         'url': effectiveSocketUrl,
         'path': effectiveSocketPath,
+        'socketEndpoint': socketEndpoint,
         'transports': transports,
       },
     );
@@ -95,7 +110,7 @@ class SocketClient {
           .setTransports(transports)
           .setPath(effectiveSocketPath)
           .setAuth(auth.toSocketAuth())
-          .setExtraHeaders(auth.toApiHeaders())
+          .setExtraHeaders(auth.toSocketHandshakeHeaders())
           .enableForceNew()
           .disableAutoConnect()
           .enableReconnection()
@@ -105,12 +120,37 @@ class SocketClient {
           .build(),
     );
     final connectedCompleter = Completer<void>();
+    final connectFuture = connectedCompleter.future.timeout(
+      _config.connectTimeout,
+      onTimeout: () {
+        _socketLog(
+          SocketLogKind.connectTimeout,
+          'Socket connect timeout after ${_config.connectTimeout.inSeconds}s: $socketEndpoint',
+          data: {
+            'url': effectiveSocketUrl,
+            'path': effectiveSocketPath,
+            'socketEndpoint': socketEndpoint,
+          },
+          level: SocketLogLevel.error,
+        );
+        throw ChatSocketHandshakeException(
+          message:
+              'Socket connect timeout after ${_config.connectTimeout.inSeconds}s',
+        );
+      },
+    );
+    _pendingConnectFuture = connectFuture;
+    _pendingConnectAuth = auth;
 
     socket.onConnect((_) {
       _socketLog(
         SocketLogKind.connected,
         'Socket connected',
-        data: {'id': socket.id, ..._sanitizedAuth(auth)},
+        data: {
+          'integration': 'socket.io_connected',
+          'id': socket.id,
+          ..._sanitizedAuth(auth),
+        },
       );
       _emitConnection(ChatConnectionState.connected);
       _eventsController.add(const SocketEvent(type: SocketEventType.connected));
@@ -242,21 +282,7 @@ class SocketClient {
     socket.connect();
 
     try {
-      await connectedCompleter.future.timeout(
-        _config.connectTimeout,
-        onTimeout: () {
-          _socketLog(
-            SocketLogKind.connectTimeout,
-            'Socket connect timeout after ${_config.connectTimeout.inSeconds}s',
-            data: {'url': effectiveSocketUrl, 'path': effectiveSocketPath},
-            level: SocketLogLevel.error,
-          );
-          throw ChatSocketHandshakeException(
-            message:
-                'Socket connect timeout after ${_config.connectTimeout.inSeconds}s',
-          );
-        },
-      );
+      await connectFuture;
     } catch (e) {
       // Handshake failures are already logged via connectError / disconnect / onError;
       // connectTimeout is logged in [onTimeout]. Only log unexpected errors here.
@@ -276,6 +302,11 @@ class SocketClient {
         _auth = null;
       }
       rethrow;
+    } finally {
+      if (identical(_pendingConnectFuture, connectFuture)) {
+        _pendingConnectFuture = null;
+        _pendingConnectAuth = null;
+      }
     }
   }
 
@@ -284,6 +315,7 @@ class SocketClient {
     Map<String, dynamic> payload,
     T Function(dynamic rawData) mapper,
   ) async {
+    _auth?.validateForSocketAction(event);
     final socket = _socket;
     if (socket == null || !socket.connected) {
       throw const ChatSocketNotConnectedException();
@@ -292,7 +324,11 @@ class SocketClient {
     _socketLog(
       SocketLogKind.emit,
       'Socket emit',
-      data: {'event': event, 'payload': payload},
+      data: {
+        'integration': 'socket.emit.$event',
+        'event': event,
+        'payload': payload,
+      },
     );
 
     final completer = Completer<T>();
@@ -409,11 +445,19 @@ class SocketClient {
     if (_socket != null) {
       _socketLog(SocketLogKind.clientDisconnect, 'Socket client disconnect()');
     }
+    final pendingConnectFuture = _pendingConnectFuture;
+    _pendingConnectFuture = null;
+    _pendingConnectAuth = null;
     _emitConnection(ChatConnectionState.disconnected);
     _socket?.disconnect();
     _socket?.dispose();
     _socket = null;
     _auth = null;
+    // Keep the existing caller-facing future semantics: pending connect callers
+    // will still resolve via their own timeout / disconnect handlers.
+    if (pendingConnectFuture != null) {
+      unawaited(pendingConnectFuture.catchError((_) {}));
+    }
   }
 
   Future<void> close() async {
@@ -456,6 +500,43 @@ class SocketClient {
     };
   }
 
+  /// Redacted copy of [ChatAuth.toSocketAuth] for logs (keys match wire payload).
+  static Map<String, Object?> _sanitizedHandshakeAuthMap(ChatAuth auth) {
+    final raw = auth.toSocketAuth();
+    final out = <String, Object?>{};
+    for (final e in raw.entries) {
+      final key = e.key;
+      final value = e.value;
+      if (key == 'apiKey' || key == 'xApiKey' || key == 'X-Api-Key') {
+        out[key] = redactApiKey(value?.toString() ?? '');
+      } else if (key == 'token' || key == 'accessToken') {
+        final token = value?.toString() ?? '';
+        out[key] = token.isEmpty
+            ? ''
+            : redactAuthorizationHeader('Bearer $token');
+      } else {
+        out[key] = value;
+      }
+    }
+    return out;
+  }
+
+  /// Redacted copy of [ChatAuth.toSocketHandshakeHeaders] for logs.
+  static Map<String, Object?> _sanitizedHandshakeHeadersMap(ChatAuth auth) {
+    return auth.toSocketHandshakeHeaders().map(
+      (k, v) {
+        final lower = k.toLowerCase();
+        if (lower == 'x-api-key') {
+          return MapEntry(k, redactApiKey(v));
+        }
+        if (lower == 'authorization' || lower == 'auth') {
+          return MapEntry(k, redactAuthorizationHeader(v));
+        }
+        return MapEntry(k, v);
+      },
+    );
+  }
+
   String _normalizeSocketUrl(String rawUrl) {
     final trimmed = rawUrl.trim();
     if (trimmed.isEmpty) {
@@ -492,6 +573,38 @@ class SocketClient {
       path = '$path/';
     }
     return path;
+  }
+
+  /// Full HTTP(S) URL for the Socket.IO engine (origin + [socketPath]).
+  static String _resolvedSocketEndpoint(String baseUrl, String socketPath) {
+    final trimmedBase = baseUrl.trim();
+    final trimmedPath = socketPath.trim();
+    if (trimmedBase.isEmpty) {
+      return trimmedPath.isEmpty ? '' : trimmedPath;
+    }
+    final uri = Uri.tryParse(trimmedBase);
+    if (uri != null && uri.hasScheme && uri.host.isNotEmpty) {
+      final relative = trimmedPath.isEmpty
+          ? '/'
+          : (trimmedPath.startsWith('/') ? trimmedPath : '/$trimmedPath');
+      return uri.resolve(relative).toString();
+    }
+    if (trimmedPath.isEmpty) {
+      return trimmedBase;
+    }
+    if (trimmedBase.endsWith('/') && trimmedPath.startsWith('/')) {
+      return '${trimmedBase.substring(0, trimmedBase.length - 1)}$trimmedPath';
+    }
+    if (!trimmedBase.endsWith('/') && !trimmedPath.startsWith('/')) {
+      return '$trimmedBase/$trimmedPath';
+    }
+    return '$trimmedBase$trimmedPath';
+  }
+
+  static bool _sameAuth(ChatAuth a, ChatAuth b) {
+    return a.apiKey == b.apiKey &&
+        a.chatUserId == b.chatUserId &&
+        a.accessToken == b.accessToken;
   }
 }
 
