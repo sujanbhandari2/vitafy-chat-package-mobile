@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' show DateFormat;
 import 'package:http/http.dart' as http;
 
 import '../models/messenger_message.dart';
@@ -23,6 +23,12 @@ class MessengerMessageBubble extends StatefulWidget {
     this.onMarkSeen,
     this.enableReactions = true,
     this.reactionOptions = const ['👍', '❤️', '😂', '😮', '😢', '🙏'],
+    this.deleteActionIcon = Icons.delete_outline,
+    this.deleteActionTextStyle = const TextStyle(
+      color: Color(0xFFDC2626),
+      fontSize: 16,
+    ),
+    this.onSwipeToReply,
   });
 
   final MessengerChatMessage message;
@@ -36,14 +42,15 @@ class MessengerMessageBubble extends StatefulWidget {
   final VoidCallback? onMarkSeen;
   final bool enableReactions;
   final List<String> reactionOptions;
+  final IconData deleteActionIcon;
+  final TextStyle deleteActionTextStyle;
+  final ValueChanged<MessengerChatMessage>? onSwipeToReply;
 
   @override
   State<MessengerMessageBubble> createState() => _MessengerMessageBubbleState();
 }
 
 class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
-  bool _showInlineReactions = false;
-
   @override
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
@@ -52,9 +59,6 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
         widget.isMine ? theme.bubbleMineText : theme.bubbleOtherText;
     final timeColor =
         widget.isMine ? theme.bubbleMineTime : theme.bubbleOtherTime;
-    final canShowInlineReactions =
-        widget.enableReactions && widget.onReact != null;
-
     return Semantics(
       container: true,
       label: 'Message from ${widget.message.senderLabel}',
@@ -75,76 +79,21 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
               const SizedBox(width: 6),
             ],
             Flexible(
-              child: TapRegion(
-                onTapOutside: (_) {
-                  if (_showInlineReactions && mounted) {
-                    setState(() => _showInlineReactions = false);
-                  }
-                },
+              child: _SwipeToReplyDetector(
+                enabled: widget.onSwipeToReply != null &&
+                    !widget.message.isUploading &&
+                    !widget.message.isDeleted,
+                isMine: widget.isMine,
+                onCommit: widget.onSwipeToReply == null
+                    ? null
+                    : () => widget.onSwipeToReply!(widget.message),
                 child: GestureDetector(
-                  onLongPress: () async {
-                    if (canShowInlineReactions) {
-                      if (!mounted) {
-                        return;
-                      }
-                      setState(() => _showInlineReactions = true);
-                      return;
-                    }
-                    await _showActions(context);
-                  },
+                  onLongPress: () => _showMessageActionsSheet(context),
                   child: Column(
                     crossAxisAlignment: widget.isMine
                         ? CrossAxisAlignment.end
                         : CrossAxisAlignment.start,
                     children: [
-                      if (_showInlineReactions && canShowInlineReactions) ...[
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: theme.surface,
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: theme.border),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              ...widget.reactionOptions.map(
-                                (reaction) => Padding(
-                                  padding: const EdgeInsets.only(right: 4),
-                                  child: Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      borderRadius: BorderRadius.circular(999),
-                                      onTap: () {
-                                        widget.onReact?.call(reaction);
-                                        if (mounted) {
-                                          setState(
-                                            () => _showInlineReactions = false,
-                                          );
-                                        }
-                                      },
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 4,
-                                          vertical: 2,
-                                        ),
-                                        child: Text(
-                                          reaction,
-                                          style: const TextStyle(fontSize: 18),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                      ],
                       Container(
                         constraints: BoxConstraints(
                           maxWidth: _maxBubbleWidth(context),
@@ -162,33 +111,52 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
                         ),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.end,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            _MessageContent(
-                              message: widget.message,
-                              textColor: textColor,
-                              mutedColor: timeColor,
+                            if (widget.message.quotedReply != null) ...[
+                              _BubbleQuotedReply(
+                                quote: widget.message.quotedReply!,
+                                textColor: textColor,
+                                mutedColor: timeColor,
+                                accentColor: theme.primary,
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                            Align(
+                              alignment: widget.isMine
+                                  ? Alignment.centerRight
+                                  : Alignment.centerLeft,
+                              child: _MessageContent(
+                                message: widget.message,
+                                textColor: textColor,
+                                mutedColor: timeColor,
+                              ),
                             ),
                             const SizedBox(height: 4),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  DateFormat('h:mm a')
-                                      .format(widget.message.createdAt),
-                                  style: TextStyle(
-                                    color: timeColor,
-                                    fontSize: 10.5,
-                                    fontWeight: FontWeight.w500,
+                            Align(
+                              alignment: widget.isMine
+                                  ? Alignment.centerRight
+                                  : Alignment.centerLeft,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    DateFormat('h:mm a')
+                                        .format(widget.message.createdAt),
+                                    style: TextStyle(
+                                      color: timeColor,
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w500,
+                                    ),
                                   ),
-                                ),
-                                if (widget.isMine) ...[
-                                  const SizedBox(width: 4),
-                                  _DeliveryTick(
-                                    status: widget.message.deliveryStatus,
-                                  ),
+                                  if (widget.isMine) ...[
+                                    const SizedBox(width: 4),
+                                    _DeliveryTick(
+                                      status: widget.message.deliveryStatus,
+                                    ),
+                                  ],
                                 ],
-                              ],
+                              ),
                             ),
                             if (widget.message.isUploading ||
                                 widget.message.uploadProgress != null)
@@ -207,55 +175,54 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
                           ],
                         ),
                       ),
-                      if (widget.message.reactions.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Wrap(
-                          spacing: 4,
-                          children: widget.message.reactions.map(
-                            (reaction) {
-                              final canRemove =
-                                  widget.onRemoveReaction != null &&
-                                      widget.currentUserId != null &&
-                                      reaction.userId == widget.currentUserId;
-                              final chip = Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 1,
+                    if (widget.message.reactions.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 4,
+                        children: widget.message.reactions.map(
+                          (reaction) {
+                            final canRemove = widget.onRemoveReaction != null &&
+                                widget.currentUserId != null &&
+                                reaction.userId == widget.currentUserId;
+                            final chip = Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 1,
+                              ),
+                              decoration: BoxDecoration(
+                                color: theme.reactionBackground,
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                  color: theme.reactionBorder,
                                 ),
-                                decoration: BoxDecoration(
-                                  color: theme.reactionBackground,
-                                  borderRadius: BorderRadius.circular(999),
-                                  border: Border.all(
-                                    color: theme.reactionBorder,
-                                  ),
-                                ),
-                                child: Text(
+                              ),
+                              child: Text(
+                                reaction.reactionType,
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            );
+                            if (!canRemove) {
+                              return chip;
+                            }
+                            return Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: () => widget.onRemoveReaction!(
+                                  widget.message.id,
                                   reaction.reactionType,
-                                  style: const TextStyle(fontSize: 12),
                                 ),
-                              );
-                              if (!canRemove) {
-                                return chip;
-                              }
-                              return Material(
-                                color: Colors.transparent,
-                                child: InkWell(
-                                  onTap: () => widget.onRemoveReaction!(
-                                    widget.message.id,
-                                    reaction.reactionType,
-                                  ),
-                                  borderRadius: BorderRadius.circular(999),
-                                  child: chip,
-                                ),
-                              );
-                            },
-                          ).toList(),
-                        ),
-                      ],
+                                borderRadius: BorderRadius.circular(999),
+                                child: chip,
+                              ),
+                            );
+                          },
+                        ).toList(),
+                      ),
                     ],
-                  ),
+                  ],
                 ),
               ),
+            ),
             ),
           ],
         ),
@@ -263,29 +230,101 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
     );
   }
 
-  Future<void> _showActions(BuildContext context) async {
-    final hasAnyAction = widget.onDelete != null && widget.canDelete;
+  Future<void> _showMessageActionsSheet(BuildContext context) async {
+    final canReact = widget.enableReactions && widget.onReact != null;
+    final canDelete = widget.canDelete && widget.onDelete != null;
+    final hasAnyAction = canReact || canDelete;
     if (!hasAnyAction) {
       return;
     }
 
     await showModalBottomSheet<void>(
       context: context,
+      showDragHandle: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
       builder: (sheetContext) => SafeArea(
-        child: Wrap(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (widget.canDelete && widget.onDelete != null)
-              ListTile(
-                leading: const Icon(Icons.delete_outline),
-                title: const Text('Delete message'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  widget.onDelete?.call();
-                },
+            if (canReact) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.only(left: 12, right: 12),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.start,
+                      children: widget.reactionOptions
+                          .map(
+                            (reaction) => Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(999),
+                                  onTap: () {
+                                    Navigator.of(sheetContext).pop();
+                                    widget.onReact?.call(reaction);
+                                  },
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 6,
+                                    ),
+                                    child: Text(
+                                      reaction,
+                                      style: const TextStyle(fontSize: 24),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(growable: false),
+                    ),
+                  ),
+                ),
               ),
+            ],
+            if (canDelete)
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    widget.onDelete?.call();
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          widget.deleteActionIcon,
+                          size: 22,
+                          color: widget.deleteActionTextStyle.color ??
+                              const Color(0xFFDC2626),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Delete message',
+                          style: widget.deleteActionTextStyle,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            const SizedBox(height: 8),
           ],
         ),
       ),
@@ -310,6 +349,175 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
         ? parts[1][0]
         : (parts.first.length > 1 ? parts.first[1] : '');
     return '$first$second'.toUpperCase();
+  }
+}
+
+class _SwipeToReplyDetector extends StatefulWidget {
+  const _SwipeToReplyDetector({
+    required this.enabled,
+    required this.isMine,
+    required this.child,
+    this.onCommit,
+  });
+
+  final bool enabled;
+  final bool isMine;
+  final VoidCallback? onCommit;
+  final Widget child;
+
+  @override
+  State<_SwipeToReplyDetector> createState() => _SwipeToReplyDetectorState();
+}
+
+class _SwipeToReplyDetectorState extends State<_SwipeToReplyDetector> {
+  static const double _kMaxPull = 56;
+  static const double _kCommitThreshold = 40;
+  double _pull = 0;
+
+  bool _swipeNegative(BuildContext context) {
+    final isLtr = Directionality.of(context) == TextDirection.ltr;
+    return isLtr ? widget.isMine : !widget.isMine;
+  }
+
+  void _onHorizontalDragUpdate(DragUpdateDetails details) {
+    if (!widget.enabled || widget.onCommit == null) {
+      return;
+    }
+    final negate = _swipeNegative(context);
+    setState(() {
+      final next = _pull + details.delta.dx;
+      if (negate) {
+        _pull = next.clamp(-_kMaxPull, 0.0);
+      } else {
+        _pull = next.clamp(0.0, _kMaxPull);
+      }
+    });
+  }
+
+  void _onHorizontalDragEnd(DragEndDetails details) {
+    if (!widget.enabled || widget.onCommit == null) {
+      setState(() => _pull = 0);
+      return;
+    }
+    final negate = _swipeNegative(context);
+    final commit =
+        negate ? _pull <= -_kCommitThreshold : _pull >= _kCommitThreshold;
+    if (commit) {
+      widget.onCommit!();
+    }
+    setState(() => _pull = 0);
+  }
+
+  void _onHorizontalDragCancel() {
+    setState(() => _pull = 0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.enabled) {
+      return widget.child;
+    }
+    return GestureDetector(
+      onHorizontalDragUpdate: _onHorizontalDragUpdate,
+      onHorizontalDragEnd: _onHorizontalDragEnd,
+      onHorizontalDragCancel: _onHorizontalDragCancel,
+      behavior: HitTestBehavior.deferToChild,
+      child: Transform.translate(
+        offset: Offset(_pull, 0),
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+class _BubbleQuotedReply extends StatelessWidget {
+  const _BubbleQuotedReply({
+    required this.quote,
+    required this.textColor,
+    required this.mutedColor,
+    required this.accentColor,
+  });
+
+  final MessengerQuotedMessage quote;
+  final Color textColor;
+  final Color mutedColor;
+  final Color accentColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final thumb = _maybeThumbUrl();
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Container(
+          width: 3,
+          height: 40,
+          decoration: BoxDecoration(
+            color: accentColor.withValues(alpha: 0.85),
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 8),
+        if (thumb != null) ...[
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: Image.network(
+              thumb,
+              width: 32,
+              height: 32,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const SizedBox(
+                width: 32,
+                height: 32,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                quote.senderLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: textColor.withValues(alpha: 0.92),
+                ),
+              ),
+              Text(
+                quote.preview,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: mutedColor,
+                  height: 1.2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  String? _maybeThumbUrl() {
+    if (quote.messageType != MessengerMessageType.image) {
+      return null;
+    }
+    final u = quote.preview.trim();
+    final uri = Uri.tryParse(u);
+    if (uri != null &&
+        (uri.scheme == 'http' || uri.scheme == 'https') &&
+        u.isNotEmpty) {
+      return u;
+    }
+    return null;
   }
 }
 

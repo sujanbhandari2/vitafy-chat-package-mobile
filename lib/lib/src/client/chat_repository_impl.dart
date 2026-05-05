@@ -254,14 +254,19 @@ class BackendChatRepositoryImpl implements ChatRepository {
   }
 
   @override
-  Future<DeletedMessageEvent> deleteMessage({
+  Future<DeleteMessageResult> deleteMessage(
+    ChatAuth auth, {
     required String conversationId,
     required String messageId,
-  }) {
-    return _socketApi.deleteMessage(
+    required String userId,
+  }) async {
+    final payload = await _chatApi.deleteMessage(
+      auth,
       conversationId: conversationId,
       messageId: messageId,
+      userId: userId,
     );
+    return DeleteMessageResult.fromJson(payload);
   }
 
   @override

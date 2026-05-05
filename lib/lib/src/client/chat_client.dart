@@ -239,13 +239,17 @@ class ChatClient {
     );
   }
 
-  Future<DeletedMessageEvent> deleteMessage({
+  Future<DeleteMessageResult> deleteMessage(
+    ChatAuth auth, {
     required String conversationId,
     required String messageId,
+    required String userId,
   }) {
     return repository.deleteMessage(
+      auth,
       conversationId: conversationId,
       messageId: messageId,
+      userId: userId,
     );
   }
 

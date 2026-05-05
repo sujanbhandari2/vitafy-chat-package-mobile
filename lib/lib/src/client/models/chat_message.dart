@@ -414,6 +414,45 @@ class ReadReceipt {
   }
 }
 
+class DeleteMessageResult {
+  const DeleteMessageResult({
+    required this.deleted,
+    required this.messageId,
+    required this.conversationId,
+    this.deletedAt,
+  });
+
+  final bool deleted;
+  final String messageId;
+  final String conversationId;
+  final DateTime? deletedAt;
+
+  factory DeleteMessageResult.fromJson(Map<String, dynamic> json) {
+    bool parseBool(Object? raw) {
+      if (raw is bool) {
+        return raw;
+      }
+      if (raw is num) {
+        return raw != 0;
+      }
+      final v = raw?.toString().trim().toLowerCase();
+      return v == 'true' || v == '1' || v == 'yes';
+    }
+
+    return DeleteMessageResult(
+      deleted: parseBool(json['deleted']),
+      messageId:
+          json['messageId']?.toString() ?? json['message_id']?.toString() ?? '',
+      conversationId: json['conversationId']?.toString() ??
+          json['conversation_id']?.toString() ??
+          '',
+      deletedAt: json['deletedAt'] == null
+          ? null
+          : DateTime.tryParse(json['deletedAt'].toString()),
+    );
+  }
+}
+
 class DeletedMessageEvent {
   const DeletedMessageEvent({
     required this.messageId,

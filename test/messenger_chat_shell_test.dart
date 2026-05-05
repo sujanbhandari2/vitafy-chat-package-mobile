@@ -1,9 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
-import 'package:health_messenger_ui/lib/src/client/chat_auth.dart';
-import 'package:health_messenger_ui/lib/src/client/chat_client.dart';
-import 'package:health_messenger_ui/lib/src/client/chat_config.dart';
 
 void main() {
   testWidgets('MessengerChatShell shows empty conversations placeholder',

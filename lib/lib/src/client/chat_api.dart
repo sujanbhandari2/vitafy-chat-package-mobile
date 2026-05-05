@@ -215,6 +215,22 @@ class ChatApi {
     });
   }
 
+  Future<Map<String, dynamic>> deleteMessage(
+    ChatAuth auth, {
+    required String conversationId,
+    required String messageId,
+    required String userId,
+  }) {
+    return _guard(() async {
+      final response = await _dio.delete(
+        _chatUri('conversations/$conversationId/messages/$messageId'),
+        options: _authOptionsChatUser(auth),
+        queryParameters: {'userId': userId},
+      );
+      return _asMap(_unwrapData(response.data));
+    });
+  }
+
   Future<Map<String, dynamic>> markMessageDeliveredRest(
     ChatAuth auth, {
     required String conversationId,

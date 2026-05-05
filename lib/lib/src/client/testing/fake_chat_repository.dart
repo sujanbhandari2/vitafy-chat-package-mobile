@@ -277,15 +277,17 @@ class FakeChatRepository implements ChatRepository {
   }
 
   @override
-  Future<DeletedMessageEvent> deleteMessage({
+  Future<DeleteMessageResult> deleteMessage(
+    ChatAuth auth, {
     required String conversationId,
     required String messageId,
+    required String userId,
   }) async {
-    return DeletedMessageEvent.fromJson({
+    return DeleteMessageResult.fromJson({
+      'deleted': true,
       'messageId': messageId,
       'conversationId': conversationId,
       'deletedAt': DateTime.now().toIso8601String(),
-      'userId': _user.id,
     });
   }
 

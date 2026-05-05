@@ -38,6 +38,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
   final TextEditingController _composerController = TextEditingController();
   final ScrollController _messagesScrollController = ScrollController();
+  final FocusNode _composerFocusNode = FocusNode();
+  MessengerComposerReplyDraft? _composerReplyDraft;
 
   /// Spring-style lines to the console; [ChatServiceConfig.socketLogger] sink.
   final ChatLogger _socketPrettyChatLogger;
@@ -63,6 +65,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   bool _isRecording = false;
   int _pendingReactionRequests = 0;
   bool _isLoggingOut = false;
+  final bool _featureDeleteMessage = true;
   String? _loadingConversationId;
   Timer? _slowConversationHintTimer;
 
@@ -119,6 +122,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     _preBootstrapUnread.dispose();
     _preBootstrapOrder.dispose();
     _composerController.dispose();
+    _composerFocusNode.dispose();
     _messagesScrollController.dispose();
     unawaited(_disposeActiveClient());
     super.dispose();
@@ -670,6 +674,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     setState(() {
       _selectedConversationId = conversationId;
       _loadingConversationId = conversationId;
+      _composerReplyDraft = null;
       _statusText = 'Loading conversation $conversationId...';
     });
     _slowConversationHintTimer = Timer(const Duration(milliseconds: 650), () {
@@ -906,6 +911,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       return;
     }
 
+    final replyId = _composerReplyDraft?.targetMessageId.trim() ?? '';
+    final replyToMessageId = replyId.isEmpty ? null : replyId;
+
     setState(() {
       _isSending = true;
     });
@@ -928,8 +936,14 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         conversationId: conversationId,
         type: MessageType.text,
         content: text,
+        replyToMessageId: replyToMessageId,
       );
       _composerController.clear();
+      if (mounted) {
+        setState(() {
+          _composerReplyDraft = null;
+        });
+      }
       _upsertMessage(conversationId, created);
       _session?.inbox.bumpConversation(conversationId);
 
@@ -1026,6 +1040,41 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       if (mounted) {
         setState(() => _pendingReactionRequests--);
       }
+    }
+  }
+
+  Future<void> _handleDelete(String messageId) async {
+    final client = _client;
+    final auth = _sessionAuth;
+    final currentUser = _currentUser;
+    final conversationId = _selectedConversationId;
+    if (client == null ||
+        auth == null ||
+        currentUser == null ||
+        conversationId == null ||
+        _isDraftConversationId(conversationId)) {
+      return;
+    }
+
+    try {
+      final result = await client.deleteMessage(
+        auth,
+        conversationId: conversationId,
+        messageId: messageId,
+        userId: currentUser.id,
+      );
+      final effectiveDeletedAt = result.deletedAt ?? DateTime.now().toUtc();
+      _applyMessageDeleted(
+        conversationId: result.conversationId,
+        messageId: result.messageId,
+        deletedAt: effectiveDeletedAt,
+      );
+    } catch (error, stackTrace) {
+      _appendLog(
+        'Delete message failed',
+        data: {'error': error.toString(), 'stackTrace': stackTrace.toString()},
+      );
+      _showSnack('Failed to delete message');
     }
   }
 
@@ -1237,7 +1286,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     if (index == -1) {
       next.add(message);
     } else {
-      next[index] = message;
+      next[index] = _coalesceDeletedMessageOnUpsert(next[index], message);
     }
     next.sort((left, right) => left.createdAt.compareTo(right.createdAt));
 
@@ -1269,23 +1318,95 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }
 
   void _applyDeletedMessage(DeletedMessageEvent deletedMessage) {
-    final conversationId = deletedMessage.conversationId;
-    final existing = _messagesByConversation[conversationId] ?? const [];
-    final updated = existing
-        .map(
-          (message) => message.id == deletedMessage.messageId
-              ? message.copyWith(deletedAt: deletedMessage.deletedAt)
-              : message,
-        )
-        .toList(growable: false);
+    _applyMessageDeleted(
+      conversationId: deletedMessage.conversationId,
+      messageId: deletedMessage.messageId,
+      deletedAt: deletedMessage.deletedAt,
+    );
+  }
+
+  void _applyMessageDeleted({
+    required String conversationId,
+    required String messageId,
+    required DateTime deletedAt,
+  }) {
+    final cid = conversationId.trim();
+    final mid = messageId.trim();
+    if (cid.isEmpty || mid.isEmpty) {
+      return;
+    }
+
+    ChatMessage markDeleted(ChatMessage message) {
+      if (message.id != mid) {
+        return message;
+      }
+      final normalizedDeletedAt = deletedAt.toUtc();
+      if (message.deletedAt == normalizedDeletedAt &&
+          message.content.trim() == '[deleted]') {
+        return message;
+      }
+      return message.copyWith(
+        deletedAt: normalizedDeletedAt,
+        content: '[deleted]',
+      );
+    }
 
     if (!mounted) {
       return;
     }
 
     setState(() {
-      _messagesByConversation[conversationId] = updated;
+      final thread = _messagesByConversation[cid] ?? const <ChatMessage>[];
+      final hasThread = thread.isNotEmpty;
+      if (hasThread) {
+        _messagesByConversation[cid] =
+            thread.map(markDeleted).toList(growable: false);
+      }
+
+      _conversations = _conversations
+          .map((conversation) {
+            if (conversation.id != cid) {
+              return conversation;
+            }
+            final latest = conversation.latestMessage;
+            if (latest == null || latest.id != mid) {
+              return conversation;
+            }
+            return Conversation(
+              id: conversation.id,
+              tenantId: conversation.tenantId,
+              type: conversation.type,
+              title: conversation.title,
+              createdBy: conversation.createdBy,
+              createdAt: conversation.createdAt,
+              updatedAt: conversation.updatedAt,
+              participants: conversation.participants,
+              unreadCount: conversation.unreadCount,
+              latestMessage: markDeleted(latest),
+            );
+          })
+          .toList(growable: false);
     });
+  }
+
+  ChatMessage _coalesceDeletedMessageOnUpsert(
+    ChatMessage existing,
+    ChatMessage incoming,
+  ) {
+    if (!existing.isDeleted || incoming.isDeleted) {
+      return incoming;
+    }
+    final inferredDeleted = incoming.content.trim() == '[deleted]';
+    if (inferredDeleted) {
+      return incoming.copyWith(
+        deletedAt: existing.deletedAt,
+        content: '[deleted]',
+      );
+    }
+    return incoming.copyWith(
+      deletedAt: existing.deletedAt,
+      content: '[deleted]',
+    );
   }
 
   void _applyEditedMessage(MessageEditedEvent editedMessage) {
@@ -1541,6 +1662,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       type: _mapUiMessageType(message.type),
       content: _messageContentForUi(message),
       createdAt: message.createdAt,
+      isDeleted: message.isDeleted,
       deliveryStatus: _deliveryStatusFor(message),
       reactions: message.reactions
           .map(
@@ -1551,7 +1673,67 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
           )
           .toList(),
       senderAvatarUrl: _avatarForUser(message.senderId),
+      quotedReply: _quotedReplyFromChat(message),
     );
+  }
+
+  MessengerQuotedMessage? _quotedReplyFromChat(ChatMessage message) {
+    final r = message.replyTo;
+    if (r == null) {
+      return null;
+    }
+    final id = r.id.trim();
+    if (id.isEmpty) {
+      return null;
+    }
+    return MessengerQuotedMessage(
+      messageId: id,
+      senderLabel: _replyToSenderLabel(r),
+      preview: _replyToPreview(r),
+      messageType: _mapUiMessageType(r.type),
+    );
+  }
+
+  String _replyToSenderLabel(ReplyToMessage r) {
+    final senderName = r.sender?.name?.trim() ?? '';
+    if (senderName.isNotEmpty) {
+      return senderName;
+    }
+    final user =
+        _users.where((item) => item.id == r.senderId).firstOrNull;
+    if (user != null) {
+      return user.displayName;
+    }
+    for (final conversation in _conversations) {
+      final participant = conversation.participants
+          .where((item) => item.user.id == r.senderId)
+          .firstOrNull;
+      if (participant != null) {
+        return participant.user.username;
+      }
+    }
+    return r.senderId == _currentUser?.id ? 'You' : 'Unknown user';
+  }
+
+  String _replyToPreview(ReplyToMessage r) {
+    final c = r.content.trim();
+    if (c.isNotEmpty) {
+      return c.length > 80 ? '${c.substring(0, 79)}…' : c;
+    }
+    switch (r.type) {
+      case MessageType.image:
+        return 'Photo';
+      case MessageType.video:
+        return 'Video';
+      case MessageType.voice:
+        return 'Voice message';
+      case MessageType.file:
+        return 'File';
+      case MessageType.text:
+      case MessageType.link:
+      case MessageType.other:
+        return 'Message';
+    }
   }
 
   String _messageContentForUi(ChatMessage message) {
@@ -1681,6 +1863,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }
 
   String _messagePreview(ChatMessage message) {
+    if (message.isDeleted) {
+      return '[deleted]';
+    }
     final content = message.content.trim();
     if (content.isNotEmpty) {
       return content;
@@ -1836,7 +2021,12 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     );
   }
 
-  bool _canDeleteMessage(MessengerChatMessage _) => false;
+  bool _canDeleteMessage(MessengerChatMessage message) {
+    if (!_featureDeleteMessage || message.isDeleted) {
+      return false;
+    }
+    return message.senderId == _currentUser?.id;
+  }
 
   bool get _showExampleFullScreenLoader => _isLoggingOut;
 
@@ -2027,6 +2217,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                                     _preBootstrapOrder)
                                 .value;
                         return MessengerChatShell(
+                      composerReplyDraft: _composerReplyDraft,
+                      onComposerReplyDraftChanged: (draft) => setState(
+                        () => _composerReplyDraft = draft,
+                      ),
+                      composerFocusNode: _composerFocusNode,
                       currentUserId: _currentUser?.id ?? '',
                       currentUserName: currentUserName,
                       isListPaneRefreshing:
@@ -2112,7 +2307,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                       },
                       onReact: _reactToMessage,
                       onRemoveReaction: _removeReactionFromMessage,
-                      onDelete: null,
+                      onDelete: _handleDelete,
                       onMarkSeen: null,
                       canDeleteMessage: _canDeleteMessage,
                       searchVisibility: MessengerSearchVisibility.always,

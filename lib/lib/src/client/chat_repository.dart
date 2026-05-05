@@ -91,9 +91,11 @@ abstract class ChatRepository {
   Future<MarkConversationReadResult> markConversationRead({
     required String conversationId,
   });
-  Future<DeletedMessageEvent> deleteMessage({
+  Future<DeleteMessageResult> deleteMessage(
+    ChatAuth auth, {
     required String conversationId,
     required String messageId,
+    required String userId,
   });
   Future<ChatMessage> editMessage({
     required String conversationId,

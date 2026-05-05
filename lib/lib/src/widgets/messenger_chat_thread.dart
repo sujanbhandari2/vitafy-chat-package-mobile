@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../models/messenger_conversation.dart';
 import '../models/messenger_message.dart';
@@ -72,6 +73,9 @@ class MessengerChatThread extends StatefulWidget {
         MessengerThreadFetchLoadingMode.replaceMessageList,
     this.threadFetchLoadingBuilder,
     this.snapToBottomOnKeyboardInsetChange = true,
+    this.composerReplyDraft,
+    this.onComposerReplyDraftChanged,
+    this.composerFocusNode,
   });
 
   final MessengerConversation? conversation;
@@ -135,6 +139,17 @@ class MessengerChatThread extends StatefulWidget {
   /// a jump to the latest message so the thread stays pinned to the composer.
   final bool snapToBottomOnKeyboardInsetChange;
 
+  /// When set together with [onComposerReplyDraftChanged], swipe-to-reply is
+  /// enabled and this draft is shown above the composer input.
+  final MessengerComposerReplyDraft? composerReplyDraft;
+
+  /// Host updates reply draft (including clearing with `null` after send).
+  final ValueChanged<MessengerComposerReplyDraft?>?
+      onComposerReplyDraftChanged;
+
+  /// Optional focus node for the composer [TextField] (e.g. focus after swipe).
+  final FocusNode? composerFocusNode;
+
   @override
   State<MessengerChatThread> createState() => _MessengerChatThreadState();
 }
@@ -196,6 +211,7 @@ class _MessengerChatThreadState extends State<MessengerChatThread> {
             children: [
               if (showDate) _DateSeparator(date: message.createdAt),
               MessengerMessageBubble(
+                deleteActionTextStyle: Theme.of(context).textTheme.bodyMedium!,
                 message: message,
                 isMine: mine,
                 currentUserId: widget.currentUserId,
@@ -214,6 +230,23 @@ class _MessengerChatThreadState extends State<MessengerChatThread> {
                     : () => widget.onMarkSeen!(message.id),
                 enableReactions: widget.enableReactions,
                 reactionOptions: widget.reactionOptions,
+                onSwipeToReply:
+                    widget.onComposerReplyDraftChanged == null
+                        ? null
+                        : (MessengerChatMessage m) {
+                            widget.onComposerReplyDraftChanged!(
+                              MessengerComposerReplyDraft.fromMessage(m),
+                            );
+                            final focus = widget.composerFocusNode;
+                            if (focus != null) {
+                              SchedulerBinding.instance
+                                  .addPostFrameCallback((_) {
+                                if (focus.canRequestFocus) {
+                                  focus.requestFocus();
+                                }
+                              });
+                            }
+                          },
               ),
             ],
           );
@@ -345,6 +378,11 @@ class _MessengerChatThreadState extends State<MessengerChatThread> {
             hasPendingAttachment: widget.hasPendingAttachment,
             pendingAttachmentLabel: widget.pendingAttachmentLabel,
             onClearPendingAttachment: widget.onClearPendingAttachment,
+            replyDraft: widget.composerReplyDraft,
+            onCancelReplyDraft: widget.onComposerReplyDraftChanged == null
+                ? null
+                : () => widget.onComposerReplyDraftChanged!(null),
+            textFieldFocusNode: widget.composerFocusNode,
           ),
       ],
     );

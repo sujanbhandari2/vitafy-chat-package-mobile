@@ -124,6 +124,9 @@ class MessengerChatShell extends StatefulWidget {
     this.prepareOutgoingConversation,
     this.onMobileThreadClosed,
     this.suggestedPeopleBuilder,
+    this.composerReplyDraft,
+    this.onComposerReplyDraftChanged,
+    this.composerFocusNode,
   });
 
   final String currentUserId;
@@ -277,6 +280,16 @@ class MessengerChatShell extends StatefulWidget {
   /// the conversation list and its existing empty placeholder are unchanged.
   final Widget Function(BuildContext context, List<MessengerUser> users)?
       suggestedPeopleBuilder;
+
+  /// Shown above the composer while replying to a message (swipe-to-reply).
+  final MessengerComposerReplyDraft? composerReplyDraft;
+
+  /// Host owns draft state; invoked when the user swipes to reply or cancels.
+  final ValueChanged<MessengerComposerReplyDraft?>?
+      onComposerReplyDraftChanged;
+
+  /// Optional [FocusNode] for the thread composer field.
+  final FocusNode? composerFocusNode;
 
   @override
   State<MessengerChatShell> createState() => _MessengerChatShellState();
@@ -538,6 +551,9 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
                 _pendingMediaByConversation.remove(selectedConversationId);
               });
             },
+      composerReplyDraft: widget.composerReplyDraft,
+      onComposerReplyDraftChanged: widget.onComposerReplyDraftChanged,
+      composerFocusNode: widget.composerFocusNode,
     );
   }
 
@@ -862,11 +878,17 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       });
       _scheduleMobileThreadRefresh();
     }
+    final trimmedReplyId =
+        widget.composerReplyDraft?.targetMessageId.trim() ?? '';
+    final replyToMessageId =
+        trimmedReplyId.isEmpty ? null : trimmedReplyId;
+
     try {
       final sent = await orchestrator.uploadAndSend(
         conversationId: targetConversationId,
         media: pendingMedia,
         content: caption,
+        replyToMessageId: replyToMessageId,
         onUploadProgress: (progress) {
           _updateUploadProgress(targetConversationId, pending.id, progress);
           widget.onMediaSendProgress?.call(pending.id, progress);
@@ -880,6 +902,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
           _pendingMediaByConversation.remove(targetConversationId);
         });
         widget.composerController.clear();
+        widget.onComposerReplyDraftChanged?.call(null);
         _scheduleMobileThreadRefresh();
       }
       widget.onMediaMessageSent?.call(sentUi);
@@ -1025,7 +1048,48 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       deliveryStatus: message.senderId == widget.currentUserId
           ? MessengerDeliveryStatus.sent
           : MessengerDeliveryStatus.none,
+      quotedReply: _shellQuotedReply(message),
     );
+  }
+
+  MessengerQuotedMessage? _shellQuotedReply(ChatMessage message) {
+    final r = message.replyTo;
+    if (r == null) {
+      return null;
+    }
+    final id = r.id.trim();
+    if (id.isEmpty) {
+      return null;
+    }
+    final label = r.sender?.name?.trim();
+    return MessengerQuotedMessage(
+      messageId: id,
+      senderLabel:
+          label != null && label.isNotEmpty ? label : r.senderId,
+      preview: _shellReplyToPreview(r),
+      messageType: _toUiType(r.type),
+    );
+  }
+
+  String _shellReplyToPreview(ReplyToMessage r) {
+    final c = r.content.trim();
+    if (c.isNotEmpty) {
+      return c.length > 80 ? '${c.substring(0, 79)}…' : c;
+    }
+    switch (r.type) {
+      case MessageType.image:
+        return 'Photo';
+      case MessageType.video:
+        return 'Video';
+      case MessageType.voice:
+        return 'Voice message';
+      case MessageType.file:
+        return 'File';
+      case MessageType.text:
+      case MessageType.link:
+      case MessageType.other:
+        return 'Message';
+    }
   }
 
   MessengerMessageType _toUiType(MessageType type) {
