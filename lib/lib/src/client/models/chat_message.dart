@@ -62,6 +62,7 @@ class ChatMessage {
     required this.replyTo,
     required this.translatedMessage,
     required this.transcribedMessage,
+    required this.editedAt,
     required this.deletedAt,
     required this.createdAt,
     required this.reactions,
@@ -81,6 +82,7 @@ class ChatMessage {
   final ReplyToMessage? replyTo;
   final String? translatedMessage;
   final String? transcribedMessage;
+  final DateTime? editedAt;
   final DateTime? deletedAt;
   final DateTime createdAt;
   final List<MessageReaction> reactions;
@@ -125,6 +127,13 @@ class ChatMessage {
           : null,
       translatedMessage: json['translatedMessage']?.toString(),
       transcribedMessage: json['transcribedMessage']?.toString(),
+      editedAt: json['editedAt'] == null && json['edited_at'] == null
+          ? null
+          : DateTime.parse(
+              json['editedAt']?.toString() ??
+                  json['edited_at']?.toString() ??
+                  DateTime.now().toIso8601String(),
+            ),
       deletedAt: json['deletedAt'] == null
           ? null
           : DateTime.parse(json['deletedAt'].toString()),
@@ -166,6 +175,7 @@ class ChatMessage {
     ReplyToMessage? replyTo,
     String? translatedMessage,
     String? transcribedMessage,
+    DateTime? editedAt,
     DateTime? deletedAt,
     bool clearDeletedAt = false,
     List<MessageReaction>? reactions,
@@ -184,6 +194,7 @@ class ChatMessage {
       replyTo: replyTo ?? this.replyTo,
       translatedMessage: translatedMessage ?? this.translatedMessage,
       transcribedMessage: transcribedMessage ?? this.transcribedMessage,
+      editedAt: editedAt ?? this.editedAt,
       deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
       createdAt: createdAt,
       reactions: reactions ?? this.reactions,
@@ -399,11 +410,13 @@ class DeletedMessageEvent {
     required this.messageId,
     required this.conversationId,
     required this.deletedAt,
+    this.userId,
   });
 
   final String messageId;
   final String conversationId;
   final DateTime deletedAt;
+  final String? userId;
 
   factory DeletedMessageEvent.fromJson(Map<String, dynamic> json) {
     return DeletedMessageEvent(
@@ -415,6 +428,9 @@ class DeletedMessageEvent {
       deletedAt: DateTime.parse(
         json['deletedAt']?.toString() ?? DateTime.now().toIso8601String(),
       ),
+      userId: json['userId']?.toString() ??
+          json['chatUserId']?.toString() ??
+          json['user_id']?.toString(),
     );
   }
 }

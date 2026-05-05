@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/messenger_conversation.dart';
 import '../models/messenger_message.dart';
 import '../models/messenger_attachment.dart';
+import '../models/messenger_thread_loading_style.dart';
 import '../models/messenger_typing.dart';
 import 'messenger_avatar.dart';
 import 'messenger_composer_bar.dart';
@@ -10,7 +11,9 @@ import 'messenger_message_bubble.dart';
 import '../theme/messenger_theme.dart';
 
 /// Extra scroll extent so the last messages, reaction UI, and uploads stay
-/// visibly above the composer and above the on-screen keyboard.
+/// visibly above the composer. Prefer a host [Scaffold] with
+/// [Scaffold.resizeToAvoidBottomInset] so the keyboard resizes the viewport
+/// rather than duplicating inset padding on this list.
 const double _kThreadListBottomScrollPadding = 88;
 
 class MessengerChatThread extends StatelessWidget {
@@ -62,6 +65,7 @@ class MessengerChatThread extends StatelessWidget {
     this.hasPendingAttachment = false,
     this.pendingAttachmentLabel,
     this.onClearPendingAttachment,
+    this.threadLoadingStyle,
   });
 
   final MessengerConversation? conversation;
@@ -111,10 +115,13 @@ class MessengerChatThread extends StatelessWidget {
   final bool hasPendingAttachment;
   final String? pendingAttachmentLabel;
   final VoidCallback? onClearPendingAttachment;
+  final MessengerThreadLoadingStyle? threadLoadingStyle;
 
   @override
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
+    final loadingStyle =
+        threadLoadingStyle ?? MessengerThreadLoadingStyle.defaults;
     final visibleTyping = remoteTypingUsers
         .where((user) => user.userId != currentUserId)
         .toList(growable: false);
@@ -123,8 +130,7 @@ class MessengerChatThread extends StatelessWidget {
         : _formatRemoteTypingLine(visibleTyping, typingIndicatorPrefix);
 
     Widget buildMessageList() {
-      final bottomPad = _kThreadListBottomScrollPadding +
-          MediaQuery.viewInsetsOf(context).bottom;
+      final bottomPad = _kThreadListBottomScrollPadding;
       return ListView.builder(
         controller: messagesScrollController,
         clipBehavior: Clip.none,
@@ -188,54 +194,6 @@ class MessengerChatThread extends StatelessWidget {
       );
     }
 
-    Widget buildLoadingOverlayOnly() {
-      final builder = loadingMessagesBuilder;
-      if (builder != null) {
-        return Positioned.fill(child: builder(context));
-      }
-      return Positioned.fill(
-        child: IgnorePointer(
-          child: Container(
-            color: theme.surface.withValues(alpha: 0.55),
-          ),
-        ),
-      );
-    }
-
-    Widget buildLoadingBanner() {
-      return Align(
-        alignment: Alignment.topCenter,
-        child: Container(
-          margin: const EdgeInsets.only(top: 12),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: theme.surface,
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: theme.border),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Updating messages...',
-                style: TextStyle(
-                  color: theme.subtleText,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
     /// Keeps one [ListView] subtree whenever [messages] is non-empty so opening
     /// a thread (loading → loaded) does not recreate the scroll view (which
     /// reset scroll to the top).
@@ -263,26 +221,22 @@ class MessengerChatThread extends StatelessWidget {
                 key: const ValueKey('threadLoadingCustom'),
                 child: builder(context),
               )
-            : const _ThreadLoadingPlaceholder(key: ValueKey('threadLoading'));
+            : _ThreadLoadingPlaceholder(
+                key: const ValueKey('threadLoading'),
+                style: loadingStyle,
+              );
       } else {
         threadBody = buildEmptyMessages();
       }
     } else {
-      // ListView must be [Positioned.fill] inside [Stack] so it gets a bounded
-      // height; a loose non-positioned child can overflow and paint over the
-      // thread header / app chrome. [Clip.hardEdge] keeps scroll paint in bounds.
-      threadBody = Stack(
-        key: ValueKey('threadMessages-${conversation?.id ?? 'none'}'),
+      // No overlay while reloading — hosts show progress outside the thread
+      // (e.g. app bar, shell list pane, pull-to-refresh).
+      threadBody = ClipRect(
         clipBehavior: Clip.hardEdge,
-        children: [
-          Positioned.fill(
-            child: buildMessageList(),
-          ),
-          if (isConversationLoading) ...[
-            buildLoadingOverlayOnly(),
-            buildLoadingBanner(),
-          ],
-        ],
+        child: KeyedSubtree(
+          key: ValueKey('threadMessages-${conversation?.id ?? 'none'}'),
+          child: buildMessageList(),
+        ),
       );
     }
 
@@ -439,71 +393,40 @@ class _ThreadHeader extends StatelessWidget {
       child: isMobile
           ? SizedBox(
               height: 48,
-              child: Stack(
-                alignment: Alignment.center,
+              child: Row(
                 children: [
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          onPressed: onBack,
-                          icon: const Icon(
-                            Icons.arrow_back_ios_new_rounded,
-                            size: 20,
-                          ),
-                        ),
-                        MessengerAvatar(
-                          label: conversation?.avatarLabel ?? 'CH',
-                          imageUrl: conversation?.avatarUrl,
-                          compact: true,
-                          size: 34,
-                          showOnlineIndicator: conversation?.isOnline != null,
-                          isOnline: conversation?.isOnline ?? false,
-                        ),
-                      ],
-                    ),
-                  ),
-                  Column(
+                  Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        conversation?.title ?? 'No conversation',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 16,
+                      IconButton(
+                        onPressed: onBack,
+                        icon: const Icon(
+                          Icons.arrow_back_ios_new_rounded,
+                          size: 20,
                         ),
+                      ),
+                      MessengerAvatar(
+                        label: conversation?.avatarLabel ?? 'CH',
+                        imageUrl: conversation?.avatarUrl,
+                        compact: true,
+                        size: 34,
+                        showOnlineIndicator: conversation?.isOnline != null,
+                        isOnline: conversation?.isOnline ?? false,
                       ),
                     ],
                   ),
-                  // Align(
-                  //   alignment: Alignment.centerRight,
-                  //   child: Row(
-                  //     mainAxisSize: MainAxisSize.min,
-                  //     children: [
-                  //       IconButton(
-                  //         onPressed: () {},
-                  //         icon: Icon(Icons.call_rounded, color: theme.primary),
-                  //       ),
-                  //       IconButton(
-                  //         onPressed: () {},
-                  //         icon: Icon(
-                  //           Icons.videocam_rounded,
-                  //           color: theme.primary,
-                  //         ),
-                  //       ),
-                  //       IconButton(
-                  //         onPressed: () {},
-                  //         icon: Icon(
-                  //           Icons.info_outline_rounded,
-                  //           color: theme.primary,
-                  //         ),
-                  //       ),
-                  //     ],
-                  //   ),
-                  // ),
+                  Expanded(
+                    child: Text(
+                      conversation?.title ?? 'No conversation',
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             )
@@ -524,6 +447,8 @@ class _ThreadHeader extends StatelessWidget {
                     children: [
                       Text(
                         conversation?.title ?? 'No conversation',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 16,
@@ -595,31 +520,42 @@ class _DateSeparator extends StatelessWidget {
 }
 
 class _ThreadLoadingPlaceholder extends StatelessWidget {
-  const _ThreadLoadingPlaceholder({super.key});
+  const _ThreadLoadingPlaceholder({
+    super.key,
+    required this.style,
+  });
+
+  final MessengerThreadLoadingStyle style;
 
   @override
   Widget build(BuildContext context) {
+    final theme = MessengerTheme.of(context);
+    final textStyle = style.placeholderTextStyle ??
+        TextStyle(
+          color: theme.subtleText,
+          fontWeight: FontWeight.w600,
+        );
     return Semantics(
       container: true,
-      label: 'Loading conversation',
+      label: style.placeholderSemanticsLabel,
       child: Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(strokeWidth: 2.4),
+              SizedBox(
+                width: style.placeholderIndicatorSize,
+                height: style.placeholderIndicatorSize,
+                child: CircularProgressIndicator(
+                  strokeWidth: style.placeholderIndicatorStrokeWidth,
+                  color: style.indicatorColor,
+                ),
               ),
               const SizedBox(height: 14),
               Text(
-                'Loading messages...',
-                style: TextStyle(
-                  color: MessengerTheme.of(context).subtleText,
-                  fontWeight: FontWeight.w600,
-                ),
+                style.placeholderMessage,
+                style: textStyle,
               ),
             ],
           ),

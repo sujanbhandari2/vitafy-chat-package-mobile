@@ -71,6 +71,8 @@ class MessengerConversationList extends StatefulWidget {
     required this.selectedConversationId,
     required this.openingDirectUserId,
     required this.onRefresh,
+    this.enablePullToRefresh = true,
+    this.showTopRefreshProgress = false,
     required this.onLogout,
     required this.onOpenDirectChat,
     required this.onSelectConversation,
@@ -108,7 +110,18 @@ class MessengerConversationList extends StatefulWidget {
   final List<MessengerUser> users;
   final String? selectedConversationId;
   final String openingDirectUserId;
-  final VoidCallback onRefresh;
+  /// Reloads remote data (conversations, users, etc.). Awaited by pull-to-
+  /// refresh and fire-and-forgotten from the header Edit action.
+  final Future<void> Function() onRefresh;
+
+  /// When true (default), the peer list body is wrapped in [RefreshIndicator].
+  final bool enablePullToRefresh;
+
+  /// When true, shows a slim [LinearProgressIndicator] under the top padding
+  /// while remote data is reloading (for hosts that do not use
+  /// [MessengerChatShell.isListPaneRefreshing]).
+  final bool showTopRefreshProgress;
+
   final VoidCallback onLogout;
   final FutureOr<void> Function(MessengerUser user) onOpenDirectChat;
   final FutureOr<void> Function(String conversationId) onSelectConversation;
@@ -457,7 +470,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
             alignment: Alignment.centerLeft,
             child: widget.showHeaderEditButton
                 ? TextButton(
-                    onPressed: widget.onRefresh,
+                    onPressed: () => unawaited(widget.onRefresh()),
                     child: Text(
                       'Edit',
                       style: TextStyle(
@@ -517,6 +530,17 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     final listContent = Column(
       children: [
         const SizedBox(height: 2),
+        if (widget.showTopRefreshProgress) ...[
+          SizedBox(
+            height: 3,
+            child: LinearProgressIndicator(
+              minHeight: 3,
+              backgroundColor: theme.searchBackground,
+              color: theme.primary,
+            ),
+          ),
+          const SizedBox(height: 6),
+        ],
         if (headerRow != null) ...[
           headerRow,
           const SizedBox(height: 6),
@@ -558,18 +582,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
           const SizedBox(height: 8),
         ],
         Expanded(
-          child: filteredEntries.isEmpty
-              ? _buildEmptyPeerList(context)
-              : ListView.separated(
-                  padding: widget.userListPadding,
-                  itemCount: filteredEntries.length,
-                  separatorBuilder: (_, __) =>
-                      SizedBox(height: widget.userListItemSpacing),
-                  itemBuilder: (context, index) {
-                    final entry = filteredEntries[index];
-                    return _buildMainUserListItem(context, entry);
-                  },
-                ),
+          child: _buildPeerScrollBody(context, filteredEntries),
         ),
       ],
     );
@@ -612,6 +625,51 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
           ),
         ),
       ],
+    );
+  }
+
+  Future<void> _onPullRefresh() => widget.onRefresh();
+
+  Widget _buildPeerScrollBody(
+    BuildContext context,
+    List<_PeerListEntry> filteredEntries,
+  ) {
+    final Widget scrollable;
+    if (filteredEntries.isEmpty) {
+      scrollable = LayoutBuilder(
+        builder: (ctx, constraints) => SingleChildScrollView(
+          physics: widget.enablePullToRefresh
+              ? const AlwaysScrollableScrollPhysics()
+              : const ClampingScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: _buildEmptyPeerList(context),
+          ),
+        ),
+      );
+    } else {
+      scrollable = ListView.separated(
+        primary: false,
+        physics: widget.enablePullToRefresh
+            ? const AlwaysScrollableScrollPhysics()
+            : null,
+        padding: widget.userListPadding,
+        itemCount: filteredEntries.length,
+        separatorBuilder: (_, __) =>
+            SizedBox(height: widget.userListItemSpacing),
+        itemBuilder: (context, index) {
+          final entry = filteredEntries[index];
+          return _buildMainUserListItem(context, entry);
+        },
+      );
+    }
+
+    if (!widget.enablePullToRefresh) {
+      return scrollable;
+    }
+    return RefreshIndicator(
+      onRefresh: _onPullRefresh,
+      child: scrollable,
     );
   }
 
@@ -922,8 +980,9 @@ class _DirectUserTile extends StatelessWidget {
       fontSize: 13.5,
     ).merge(style.titleStyle);
     final subtitleStyle = TextStyle(
-      color: theme.subtleText,
+      color: hasUnread ? const Color(0xFF374151) : theme.subtleText,
       fontSize: 11.5,
+      fontWeight: hasUnread ? FontWeight.w700 : FontWeight.w500,
     ).merge(style.subtitleStyle);
     final defaultBorder = BorderSide(color: theme.border);
     final defaultSelectedBorder =
@@ -946,32 +1005,16 @@ class _DirectUserTile extends StatelessWidget {
       padding: style.padding,
       child: Row(
         children: [
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              MessengerAvatar(
-                label: _initials(user.username),
-                imageUrl: user.avatarUrl,
-                compact: true,
-                size: 34,
-                showOnlineIndicator: true,
-                isOnline: user.isOnline,
-              ),
-              if (hasUnread)
-                Positioned(
-                  right: -1,
-                  bottom: -1,
-                  child: Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: style.unreadDotColor ?? theme.primary,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 2),
-                    ),
-                  ),
-                ),
-            ],
+          MessengerAvatar(
+            label: _initials(user.username),
+            imageUrl: user.avatarUrl,
+            compact: true,
+            size: 34,
+            showOnlineIndicator: true,
+            isOnline: user.isOnline,
+            presenceDotColor: hasUnread
+                ? (style.unreadDotColor ?? theme.onlineIndicator)
+                : null,
           ),
           const SizedBox(width: 10),
           Expanded(

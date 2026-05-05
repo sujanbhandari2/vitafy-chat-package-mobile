@@ -25,8 +25,7 @@ class ChatClient {
   ChatRepository get repository => _service.repository;
   ChatServiceConfig get config => _service.config;
   Stream<ChatSocketEvent> get events => repository.socketEvents;
-  Stream<ChatConnectionState> get connectionState =>
-      _service.connectionState;
+  Stream<ChatConnectionState> get connectionState => _service.connectionState;
 
   Future<void> connect(ChatAuth auth) => repository.connectSocket(auth);
 
@@ -228,6 +227,36 @@ class ChatClient {
     return repository.markAsRead(
       conversationId: conversationId,
       messageId: messageId,
+    );
+  }
+
+  Future<MarkConversationReadResult> markConversationRead({
+    required String conversationId,
+  }) {
+    return repository.markConversationRead(
+      conversationId: conversationId,
+    );
+  }
+
+  Future<DeletedMessageEvent> deleteMessage({
+    required String conversationId,
+    required String messageId,
+  }) {
+    return repository.deleteMessage(
+      conversationId: conversationId,
+      messageId: messageId,
+    );
+  }
+
+  Future<ChatMessage> editMessage({
+    required String conversationId,
+    required String messageId,
+    required String content,
+  }) {
+    return repository.editMessage(
+      conversationId: conversationId,
+      messageId: messageId,
+      content: content,
     );
   }
 

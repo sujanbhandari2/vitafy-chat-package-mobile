@@ -245,6 +245,39 @@ class BackendChatRepositoryImpl implements ChatRepository {
   }
 
   @override
+  Future<MarkConversationReadResult> markConversationRead({
+    required String conversationId,
+  }) {
+    return _socketApi.markConversationRead(
+      conversationId: conversationId,
+    );
+  }
+
+  @override
+  Future<DeletedMessageEvent> deleteMessage({
+    required String conversationId,
+    required String messageId,
+  }) {
+    return _socketApi.deleteMessage(
+      conversationId: conversationId,
+      messageId: messageId,
+    );
+  }
+
+  @override
+  Future<ChatMessage> editMessage({
+    required String conversationId,
+    required String messageId,
+    required String content,
+  }) {
+    return _socketApi.editMessage(
+      conversationId: conversationId,
+      messageId: messageId,
+      content: content,
+    );
+  }
+
+  @override
   Future<DeliveredReceipt> markAsDeliveredRest(
     ChatAuth auth, {
     required String conversationId,

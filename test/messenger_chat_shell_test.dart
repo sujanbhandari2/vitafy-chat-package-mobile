@@ -31,7 +31,7 @@ void main() {
               messagesScrollController: scroll,
               isSending: false,
               isRecording: false,
-              onRefresh: () {},
+              onRefresh: () async {},
               onLogout: () {},
               onSelectConversation: (_) async {},
               onOpenDirectChat: (_) async {},
@@ -85,7 +85,7 @@ void main() {
               messagesScrollController: scroll,
               isSending: false,
               isRecording: false,
-              onRefresh: () {},
+              onRefresh: () async {},
               onLogout: () {},
               onSelectConversation: (_) async {},
               onOpenDirectChat: (_) async {},
@@ -143,7 +143,7 @@ void main() {
               messagesScrollController: scroll,
               isSending: false,
               isRecording: false,
-              onRefresh: () {},
+              onRefresh: () async {},
               onLogout: () {},
               onSelectConversation: (_) async {},
               onOpenDirectChat: (_) async {},
@@ -205,7 +205,7 @@ void main() {
               isConversationLoading: true,
               loadingConversationId: 'c1',
               desktopBreakpoint: 200,
-              onRefresh: () {},
+              onRefresh: () async {},
               onLogout: () {},
               onSelectConversation: (_) async {},
               onOpenDirectChat: (_) async {},
@@ -224,7 +224,8 @@ void main() {
     expect(find.text('No messages yet.'), findsNothing);
   });
 
-  testWidgets('loading conversation does not render stale thread message',
+  testWidgets(
+      'loading conversation keeps thread messages visible without overlay',
       (tester) async {
     final composer = TextEditingController();
     final scroll = ScrollController();
@@ -270,7 +271,7 @@ void main() {
               isConversationLoading: true,
               loadingConversationId: 'c1',
               desktopBreakpoint: 200,
-              onRefresh: () {},
+              onRefresh: () async {},
               onLogout: () {},
               onSelectConversation: (_) async {},
               onOpenDirectChat: (_) async {},
@@ -285,8 +286,8 @@ void main() {
     );
 
     await tester.pump();
-    expect(find.text('old-thread-message'), findsNothing);
-    expect(find.text('Loading messages...'), findsOneWidget);
+    expect(find.text('old-thread-message'), findsOneWidget);
+    expect(find.text('Updating messages...'), findsNothing);
   });
 
   testWidgets('shell composer style params reach composer bar', (tester) async {
@@ -334,7 +335,7 @@ void main() {
               messagesScrollController: scroll,
               isSending: false,
               isRecording: false,
-              onRefresh: () {},
+              onRefresh: () async {},
               onLogout: () {},
               onSelectConversation: (_) async {},
               onOpenDirectChat: (_) async {},
@@ -401,7 +402,7 @@ void main() {
               messagesScrollController: scroll,
               isSending: false,
               isRecording: false,
-              onRefresh: () {},
+              onRefresh: () async {},
               onLogout: () {},
               onSelectConversation: (_) async {},
               onOpenDirectChat: (_) async {},
@@ -471,7 +472,7 @@ void main() {
               messagesScrollController: scroll,
               isSending: false,
               isRecording: false,
-              onRefresh: () {},
+              onRefresh: () async {},
               onLogout: () {},
               onSelectConversation: (_) async {},
               onOpenDirectChat: (_) async {},
@@ -501,6 +502,59 @@ void main() {
 
     expect(fallbackCalls, 1);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('isListPaneRefreshing shows slim top progress on list pane',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 600,
+              width: 800,
+              child: MessengerChatShell(
+                currentUserId: 'me',
+                currentUserName: 'Me',
+                isListPaneRefreshing: true,
+                conversations: const [],
+                users: const [
+                  MessengerUser(id: 'u1', username: 'alice'),
+                ],
+                selectedConversationId: null,
+                messages: const [],
+                composerController: composer,
+                messagesScrollController: scroll,
+                isSending: false,
+                isRecording: false,
+                onRefresh: () async {},
+                onLogout: () {},
+                onSelectConversation: (_) async {},
+                onOpenDirectChat: (_) async {},
+                onSend: () {},
+                onPickImage: () {},
+                onPickAudio: () {},
+                onToggleRecording: () {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+                desktopBreakpoint: 400,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
   });
 }
 

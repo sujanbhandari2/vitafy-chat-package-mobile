@@ -41,7 +41,7 @@ void main() {
                 users: const [alice, bob],
                 selectedConversationId: 'c2',
                 openingDirectUserId: '',
-                onRefresh: () {},
+                onRefresh: () async {},
                 onLogout: () {},
                 onOpenDirectChat: (_) async {},
                 onSelectConversation: (_) async {},
@@ -104,7 +104,7 @@ void main() {
                 users: const [alice, bob, cara],
                 selectedConversationId: null,
                 openingDirectUserId: '',
-                onRefresh: () {},
+                onRefresh: () async {},
                 onLogout: () {},
                 onOpenDirectChat: (_) async {},
                 onSelectConversation: (id) async {
@@ -152,7 +152,7 @@ void main() {
                 users: const [],
                 selectedConversationId: null,
                 openingDirectUserId: '',
-                onRefresh: () {},
+                onRefresh: () async {},
                 onLogout: () {},
                 onOpenDirectChat: (_) async {},
                 onSelectConversation: (_) async {},
@@ -186,7 +186,7 @@ void main() {
                 users: const [],
                 selectedConversationId: null,
                 openingDirectUserId: '',
-                onRefresh: () {},
+                onRefresh: () async {},
                 onLogout: () {},
                 onOpenDirectChat: (_) async {},
                 onSelectConversation: (_) async {},
@@ -230,7 +230,7 @@ void main() {
                 users: const [alice],
                 selectedConversationId: 'c1',
                 openingDirectUserId: '',
-                onRefresh: () {},
+                onRefresh: () async {},
                 onLogout: () {},
                 onOpenDirectChat: (_) async {},
                 onSelectConversation: (_) async {},
@@ -265,7 +265,7 @@ void main() {
                 users: const [alice],
                 selectedConversationId: null,
                 openingDirectUserId: '',
-                onRefresh: () {},
+                onRefresh: () async {},
                 onLogout: () {},
                 onOpenDirectChat: (_) async {},
                 onSelectConversation: (_) async {},
@@ -316,7 +316,7 @@ void main() {
                 users: const [alice],
                 selectedConversationId: null,
                 openingDirectUserId: '',
-                onRefresh: () {},
+                onRefresh: () async {},
                 onLogout: () {},
                 onOpenDirectChat: (_) async {},
                 onSelectConversation: (_) async {},
@@ -335,5 +335,86 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('custom-alice_jones'), findsOneWidget);
     expect(find.byType(FilledButton), findsNothing);
+  });
+
+  testWidgets('pull to refresh invokes onRefresh', (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice');
+    var refreshCount = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 520,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [alice],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {
+                  refreshCount++;
+                },
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    await tester.fling(
+      find.byType(Scrollable).first,
+      const Offset(0, 400),
+      2000,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(refreshCount, 1);
+  });
+
+  testWidgets('showTopRefreshProgress shows slim progress bar', (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 400,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [alice],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+                showTopRefreshProgress: true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
   });
 }

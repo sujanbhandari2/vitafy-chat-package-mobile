@@ -512,9 +512,15 @@ class _MessageContent extends StatelessWidget {
               Positioned(
                 top: 16,
                 right: 16,
-                child: IconButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  icon: const Icon(Icons.close_rounded, color: Colors.white),
+                child: Material(
+                  color: Colors.black54,
+                  shape: const CircleBorder(),
+                  elevation: 4,
+                  shadowColor: Colors.black45,
+                  child: IconButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    icon: const Icon(Icons.close_rounded, color: Colors.white),
+                  ),
                 ),
               ),
             ],
@@ -613,6 +619,7 @@ class _MessengerVoicePlayerState extends State<MessengerVoicePlayer> {
   PlayerState _playerState = PlayerState.stopped;
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
+  String? _primedSource;
   String? _playbackError;
   StreamSubscription<PlayerState>? _stateSub;
   StreamSubscription<Duration>? _durationSub;
@@ -684,6 +691,35 @@ class _MessengerVoicePlayerState extends State<MessengerVoicePlayer> {
         _playerState = PlayerState.stopped;
         _position = Duration.zero;
       });
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_primeSourceDuration());
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant MessengerVoicePlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.source != widget.source) {
+      _primedSource = null;
+      unawaited(_resetPlayerForNewSource());
+    }
+  }
+
+  Future<void> _resetPlayerForNewSource() async {
+    try {
+      await _player.stop();
+    } catch (_) {}
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _duration = Duration.zero;
+      _position = Duration.zero;
+      _playerState = PlayerState.stopped;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_primeSourceDuration());
     });
   }
 
@@ -762,8 +798,7 @@ class _MessengerVoicePlayerState extends State<MessengerVoicePlayer> {
             ),
             const SizedBox(width: 8),
             Text(
-              _formatDuration(
-                  _duration == Duration.zero ? _position : _duration),
+              _timeLabelForUi(),
               style: TextStyle(
                 color: widget.iconColor.withValues(alpha: 0.9),
                 fontSize: 11,
@@ -833,6 +868,70 @@ class _MessengerVoicePlayerState extends State<MessengerVoicePlayer> {
     }
 
     _setPlaybackError('Audio cannot be played on this device');
+  }
+
+  String _timeLabelForUi() {
+    if (_duration <= Duration.zero) {
+      return '--:--';
+    }
+    if (_playerState == PlayerState.playing) {
+      var remaining = _duration - _position;
+      if (remaining < Duration.zero) {
+        remaining = Duration.zero;
+      }
+      return _formatDuration(remaining);
+    }
+    return _formatDuration(_duration);
+  }
+
+  Future<void> _primeSourceDuration() async {
+    if (!mounted || widget.source.isEmpty) {
+      return;
+    }
+    if (_primedSource == widget.source) {
+      return;
+    }
+    if (_playerState == PlayerState.playing) {
+      return;
+    }
+    final src = widget.source;
+    try {
+      if (widget.preferDeviceFile) {
+        final file = File(src);
+        if (await file.exists()) {
+          await _player.setSourceDeviceFile(file.path);
+        } else {
+          return;
+        }
+      } else {
+        final uri = Uri.tryParse(src);
+        final isNetwork =
+            uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
+        if (isNetwork) {
+          await _player.setSourceUrl(src);
+        } else {
+          final file = File(src);
+          if (await file.exists()) {
+            await _player.setSourceDeviceFile(file.path);
+          } else {
+            return;
+          }
+        }
+      }
+      if (!mounted || widget.source != src) {
+        return;
+      }
+      final d = await _player.getDuration();
+      if (!mounted || widget.source != src) {
+        return;
+      }
+      _primedSource = src;
+      if (d != null && d > Duration.zero) {
+        setState(() => _duration = d);
+      }
+    } catch (_) {
+      // Duration will arrive from streams when playback starts.
+    }
   }
 
   String _formatDuration(Duration duration) {

@@ -13,7 +13,8 @@ import '../models/tenant_user.dart';
 /// In-memory [ChatRepository] for widget tests and host app doubles.
 class FakeChatRepository implements ChatRepository {
   FakeChatRepository({
-    ChatTenantScope tenantScope = const ChatTenantScope(tenantId: 'test-tenant'),
+    ChatTenantScope tenantScope =
+        const ChatTenantScope(tenantId: 'test-tenant'),
     TenantUser? registeredUser,
   })  : _tenantScope = tenantScope,
         _user = registeredUser ??
@@ -256,6 +257,47 @@ class FakeChatRepository implements ChatRepository {
       'userId': _user.id,
       'readAt': DateTime.now().toIso8601String(),
       'conversationId': conversationId,
+    });
+  }
+
+  @override
+  Future<MarkConversationReadResult> markConversationRead({
+    required String conversationId,
+  }) async {
+    return const MarkConversationReadResult(
+      readCount: 0,
+      unread: 0,
+    );
+  }
+
+  @override
+  Future<DeletedMessageEvent> deleteMessage({
+    required String conversationId,
+    required String messageId,
+  }) async {
+    return DeletedMessageEvent.fromJson({
+      'messageId': messageId,
+      'conversationId': conversationId,
+      'deletedAt': DateTime.now().toIso8601String(),
+      'userId': _user.id,
+    });
+  }
+
+  @override
+  Future<ChatMessage> editMessage({
+    required String conversationId,
+    required String messageId,
+    required String content,
+  }) async {
+    return ChatMessage.fromJson({
+      'id': messageId,
+      'conversationId': conversationId,
+      'tenantId': _tenantScope.tenantId,
+      'senderId': _user.id,
+      'type': MessageType.text.apiValue,
+      'content': content,
+      'editedAt': DateTime.now().toIso8601String(),
+      'createdAt': DateTime.now().toIso8601String(),
     });
   }
 

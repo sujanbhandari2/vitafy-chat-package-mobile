@@ -269,6 +269,28 @@ class SocketClient {
     _registerEvent(
         socket, 'message_delivered', SocketEventType.messageDelivered);
     _registerEvent(socket, 'message_read', SocketEventType.messageRead);
+    _registerEvent(socket, 'message_deleted', SocketEventType.messageDeleted);
+    _registerEvent(socket, 'message_edited', SocketEventType.messageEdited);
+    _registerEvent(
+      socket,
+      'conversation_created',
+      SocketEventType.conversationCreated,
+    );
+    _registerEvent(
+      socket,
+      'conversation_message',
+      SocketEventType.conversationMessage,
+    );
+    _registerEvent(
+      socket,
+      'unread_count_updated',
+      SocketEventType.unreadCountUpdated,
+    );
+    _registerEvent(
+      socket,
+      'user_badge_updated',
+      SocketEventType.userBadgeUpdated,
+    );
     _registerEvent(socket, 'user_typing', SocketEventType.userTyping);
     _registerEvent(
       socket,
@@ -428,7 +450,8 @@ class SocketClient {
       return payload.trim().isEmpty ? 'Socket server error' : payload;
     }
     if (payload is List) {
-      final parts = payload.map(_formatNestExceptionPayload).where((s) => s.isNotEmpty);
+      final parts =
+          payload.map(_formatNestExceptionPayload).where((s) => s.isNotEmpty);
       final joined = parts.join('; ');
       return joined.isEmpty ? 'Socket server error' : joined;
     }
@@ -511,9 +534,8 @@ class SocketClient {
         out[key] = redactApiKey(value?.toString() ?? '');
       } else if (key == 'token' || key == 'accessToken') {
         final token = value?.toString() ?? '';
-        out[key] = token.isEmpty
-            ? ''
-            : redactAuthorizationHeader('Bearer $token');
+        out[key] =
+            token.isEmpty ? '' : redactAuthorizationHeader('Bearer $token');
       } else {
         out[key] = value;
       }
@@ -617,6 +639,12 @@ enum SocketEventType {
   reactionRemoved,
   messageDelivered,
   messageRead,
+  messageDeleted,
+  messageEdited,
+  conversationCreated,
+  conversationMessage,
+  unreadCountUpdated,
+  userBadgeUpdated,
   userTyping,
   userStoppedTyping,
   userOnline,

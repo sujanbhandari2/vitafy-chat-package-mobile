@@ -201,6 +201,21 @@ void main() {
       expect(message.replyTo?.content, 'original');
     });
 
+    test('ChatMessage parses editedAt aliases', () {
+      final message = ChatMessage.fromJson({
+        'id': '101',
+        'conversationId': '55',
+        'tenantId': '8',
+        'senderId': '42',
+        'type': 'TEXT',
+        'content': 'edited',
+        'edited_at': '2026-04-23T10:12:00.000Z',
+        'createdAt': '2026-04-23T10:10:00.000Z',
+      });
+
+      expect(message.editedAt?.toIso8601String(), '2026-04-23T10:12:00.000Z');
+    });
+
     test('DeliveredReceipt and ReadReceipt parse snake_case keys', () {
       final delivered = DeliveredReceipt.fromJson({
         'id': 'd1',
@@ -248,6 +263,128 @@ void main() {
         'chatUserId': 'legacy-u',
       });
       expect(typing.userId, 'legacy-u');
+    });
+
+    test('MarkConversationReadResult fromJson', () {
+      final result = MarkConversationReadResult.fromJson({
+        'readCount': 3,
+        'unread': 0,
+      });
+      expect(result.readCount, 3);
+      expect(result.unread, 0);
+    });
+
+    test('DeletedMessageEvent parses userId', () {
+      final deleted = DeletedMessageEvent.fromJson({
+        'messageId': 'm1',
+        'conversationId': 'c1',
+        'deletedAt': '2026-04-23T12:02:00.000Z',
+        'userId': 'u9',
+      });
+      expect(deleted.userId, 'u9');
+    });
+
+    test('MessageEditedEvent fromJson', () {
+      final edited = MessageEditedEvent.fromJson({
+        'conversationId': 'c1',
+        'message': {
+          'id': 'm1',
+          'conversationId': 'c1',
+          'tenantId': 't1',
+          'senderId': 'u1',
+          'type': 'TEXT',
+          'content': 'next',
+          'editedAt': '2026-04-23T12:03:00.000Z',
+          'createdAt': '2026-04-23T12:00:00.000Z',
+        },
+      });
+      expect(edited.conversationId, 'c1');
+      expect(edited.message.content, 'next');
+      expect(edited.message.editedAt, isNotNull);
+    });
+
+    test('ConversationCreatedEvent fromJson', () {
+      final created = ConversationCreatedEvent.fromJson({
+        'conversation': {
+          'id': 'c7',
+          'tenantId': 't1',
+          'type': 'DIRECT',
+          'createdAt': '2026-04-23T12:00:00.000Z',
+          'updatedAt': '2026-04-23T12:00:00.000Z',
+          'participants': [],
+        },
+        'unreadCount': 2,
+      });
+      expect(created.conversation.id, 'c7');
+      expect(created.unreadCount, 2);
+    });
+
+    test('ConversationMessageEvent fromJson', () {
+      final event = ConversationMessageEvent.fromJson({
+        'conversationId': 'c1',
+        'message': {
+          'id': 'm9',
+          'conversationId': 'c1',
+          'tenantId': 't1',
+          'senderId': 'u2',
+          'type': 'TEXT',
+          'content': 'hello',
+          'createdAt': '2026-04-23T12:00:00.000Z',
+        },
+        'unreadCount': 4,
+      });
+      expect(event.conversationId, 'c1');
+      expect(event.message.id, 'm9');
+      expect(event.unreadCount, 4);
+    });
+
+    test('UnreadCountUpdatedEvent fromJson', () {
+      final event = UnreadCountUpdatedEvent.fromJson({
+        'conversationId': 'c1',
+        'userId': 'u1',
+        'unread': 5,
+      });
+      expect(event.conversationId, 'c1');
+      expect(event.userId, 'u1');
+      expect(event.unread, 5);
+    });
+
+    test('UserBadgeUpdatedEvent fromJson', () {
+      final event = UserBadgeUpdatedEvent.fromJson({
+        'usersWithUnreadMessages': 3,
+        'totalUnreadMessages': 7,
+      });
+      expect(event.usersWithUnreadMessages, 3);
+      expect(event.totalUnreadMessages, 7);
+    });
+
+    test(
+        'ConversationParticipant maps chatUserId when nested chatUser omits id',
+        () {
+      final p = ConversationParticipant.fromJson({
+        'id': '70',
+        'conversationId': '33',
+        'chatUserId': '14',
+        'chatUser': {
+          'tenantId': '1',
+          'name': 'Sujan Bhandari',
+          'email': 'sujan@vitafyhealth.com',
+          'status': 'ACTIVE',
+          'isOnline': false,
+        },
+      });
+      expect(p.userId, '14');
+      expect(p.user.id, '14');
+      expect(p.user.username, 'Sujan Bhandari');
+    });
+
+    test('ConversationParticipantUser reads chat_user_id alias', () {
+      final u = ConversationParticipantUser.fromJson({
+        'chat_user_id': '99',
+        'name': 'Alias User',
+      });
+      expect(u.id, '99');
+      expect(u.username, 'Alias User');
     });
   });
 

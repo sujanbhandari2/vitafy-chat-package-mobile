@@ -63,8 +63,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   bool _isRefreshing = false;
   bool _isSending = false;
   bool _isRecording = false;
-  bool _isMediaUploading = false;
-  bool _isDirectChatBusy = false;
   int _pendingReactionRequests = 0;
   bool _isLoggingOut = false;
   String? _loadingConversationId;
@@ -73,6 +71,27 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   StreamSubscription<MessengerPushEvent>? _pushEventsSubscription;
   MessengerPushFirebaseBinding? _pushFirebaseBinding;
   bool _pushIntegrationReady = false;
+
+  /// Shown on [MessengerSuggestedPeoplePanel] rows while opening a direct chat.
+  String _suggestedPeopleOpeningUserId = '';
+
+  static const String _draftDirectPrefix = '__pending_direct__:';
+
+  bool _isDraftConversationId(String? id) {
+    final t = id?.trim() ?? '';
+    return t.startsWith(_draftDirectPrefix);
+  }
+
+  String? _draftPeerChatUserId(String? draftId) {
+    if (!_isDraftConversationId(draftId)) {
+      return null;
+    }
+    return draftId!.trim().substring(_draftDirectPrefix.length);
+  }
+
+  String _draftConversationIdForPeer(String peerChatUserId) {
+    return '$_draftDirectPrefix${peerChatUserId.trim()}';
+  }
 
   @override
   void initState() {
@@ -95,6 +114,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   List<MessengerChatMessage> get _activeMessages {
     final conversationId = _selectedConversationId;
     if (conversationId == null) {
+      return const [];
+    }
+    if (_isDraftConversationId(conversationId)) {
       return const [];
     }
     final source = _messagesByConversation[conversationId] ?? const [];
@@ -275,7 +297,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     }
   }
 
-  Future<void> _refreshConversationAfterRemoteHint(String conversationId) async {
+  Future<void> _refreshConversationAfterRemoteHint(
+      String conversationId) async {
     final client = _client;
     final auth = _sessionAuth;
     if (client == null || auth == null) {
@@ -409,6 +432,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         _unreadByConversation.clear();
         _typingUserIdsByConversation.clear();
         _selectedConversationId = null;
+        _suggestedPeopleOpeningUserId = '';
       });
       bootstrappingSession = null;
 
@@ -491,7 +515,14 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }
 
   Future<void> _refreshAll({bool selectFirstConversation = false}) async {
-    if (_client == null || _sessionAuth == null) {
+    final client = _client;
+    final auth = _sessionAuth;
+    if (client == null || auth == null) {
+      return;
+    }
+
+    final chatUserId = _currentUser?.id.trim();
+    if (chatUserId == null || chatUserId.isEmpty) {
       return;
     }
 
@@ -501,13 +532,42 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     });
 
     try {
-      await Future.wait<void>([
-        _refreshUsers(),
-        _refreshConversations(),
+      // Fetch in parallel but apply one setState after both complete so we never
+      // show suggested people (empty conversations) with users already loaded.
+      final results = await Future.wait<Object?>([
+        client.getUsers(auth),
+        client.getConversations(
+          auth,
+          forUserId: chatUserId,
+        ),
       ]);
 
+      if (!mounted) {
+        return;
+      }
+
+      final users = results[0]! as List<TenantUser>;
+      final conversations = results[1]! as List<Conversation>;
+
+      final selectedCurrentUser =
+          users.where((user) => user.id == _currentUser?.id).firstOrNull;
+
+      setState(() {
+        _users = users;
+        _currentUser = selectedCurrentUser ?? _currentUser ?? users.firstOrNull;
+        _conversations = conversations;
+        if (_selectedConversationId != null &&
+            !_isDraftConversationId(_selectedConversationId) &&
+            !_conversations.any(
+              (conversation) => conversation.id == _selectedConversationId,
+            )) {
+          _selectedConversationId = null;
+        }
+      });
+
       final selectedConversationId = _selectedConversationId;
-      if (selectedConversationId != null) {
+      if (selectedConversationId != null &&
+          !_isDraftConversationId(selectedConversationId)) {
         await _loadMessages(selectedConversationId);
       } else if (selectFirstConversation && _conversations.isNotEmpty) {
         await _selectConversation(_conversations.first.id, tryReconnect: false);
@@ -543,27 +603,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     }
   }
 
-  Future<void> _refreshUsers() async {
-    final client = _client;
-    final auth = _sessionAuth;
-    if (client == null || auth == null) {
-      return;
-    }
-
-    final users = await client.getUsers(auth);
-    if (!mounted) {
-      return;
-    }
-
-    final selectedCurrentUser =
-        users.where((user) => user.id == _currentUser?.id).firstOrNull;
-
-    setState(() {
-      _users = users;
-      _currentUser = selectedCurrentUser ?? _currentUser ?? users.firstOrNull;
-    });
-  }
-
   Future<void> _refreshConversations() async {
     final client = _client;
     final auth = _sessionAuth;
@@ -583,6 +622,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     setState(() {
       _conversations = conversations;
       if (_selectedConversationId != null &&
+          !_isDraftConversationId(_selectedConversationId) &&
           !_conversations.any(
             (conversation) => conversation.id == _selectedConversationId,
           )) {
@@ -624,7 +664,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     });
 
     if (previousConversationId != null &&
-        previousConversationId != conversationId) {
+        previousConversationId != conversationId &&
+        !_isDraftConversationId(previousConversationId)) {
       unawaited(
         session.leaveConversation(previousConversationId).catchError((error) {
           _appendLog(
@@ -652,7 +693,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                 'Opened conversation $conversationId (REST-only, socket disconnected).';
           });
         }
-        _scrollToBottom();
         return;
       }
 
@@ -663,10 +703,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       }
 
       setState(() {
-        _loadingConversationId = null;
         _statusText = 'Joined conversation $conversationId.';
       });
-      _scrollToBottom();
       unawaited(_markVisibleMessagesAsRead(conversationId));
     } catch (error, stackTrace) {
       _appendLog(
@@ -697,7 +735,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
   Future<void> _loadMessages(String conversationId) async {
     conversationId = conversationId.trim();
-    if (conversationId.isEmpty) {
+    if (conversationId.isEmpty || _isDraftConversationId(conversationId)) {
       return;
     }
 
@@ -717,64 +755,151 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
     setState(() {
       _messagesByConversation[conversationId] = items;
+      if (_loadingConversationId == conversationId) {
+        _loadingConversationId = null;
+      }
     });
-    _scrollToBottom();
   }
 
   Future<void> _openDirectChat(MessengerUser user) async {
-    final client = _client;
-    final auth = _sessionAuth;
     final currentUser = _currentUser;
-    if (client == null || auth == null || currentUser == null) {
+    final session = _session;
+    if (session == null || currentUser == null) {
       _showSnack('Bootstrap the package flow first.');
       return;
     }
 
-    final existing = _findDirectConversation(currentUser.id, user.id);
-    if (existing != null) {
-      await _selectConversation(existing.id);
-      return;
+    if (mounted) {
+      setState(() => _suggestedPeopleOpeningUserId = user.id.trim());
+    }
+    try {
+      final existing = _findDirectConversation(currentUser.id, user.id);
+      if (existing != null) {
+        await _selectConversation(existing.id);
+        return;
+      }
+
+      final previousConversationId = _selectedConversationId;
+      final draftId = _draftConversationIdForPeer(user.id);
+
+      if (previousConversationId != null &&
+          previousConversationId != draftId &&
+          !_isDraftConversationId(previousConversationId)) {
+        unawaited(
+          session.leaveConversation(previousConversationId).catchError((error) {
+            _appendLog(
+              'Leave conversation failed',
+              data: {
+                'conversationId': previousConversationId,
+                'error': error.toString(),
+              },
+            );
+          }),
+        );
+      }
+
+      if (mounted) {
+        setState(() {
+          _selectedConversationId = draftId;
+          _loadingConversationId = null;
+          _statusText = 'Chat with ${user.username}';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _suggestedPeopleOpeningUserId = '');
+      }
+    }
+  }
+
+  Future<String?> _materializeDraftDirectConversation(String draftId) async {
+    final client = _client;
+    final auth = _sessionAuth;
+    final currentUser = _currentUser;
+    final session = _session;
+    final peerId = _draftPeerChatUserId(draftId);
+    if (client == null ||
+        auth == null ||
+        currentUser == null ||
+        session == null ||
+        peerId == null ||
+        peerId.isEmpty) {
+      return null;
     }
 
     try {
-      if (mounted) {
-        setState(() {
-          _isDirectChatBusy = true;
-          _statusText = 'Creating direct conversation with ${user.username}...';
-        });
-      }
-
-      // Same contract as vitafy-generic-chat-frontend `createDirectConversation`:
-      // both values must be ChatUser.id digit strings.
       final created = await client.createConversation(
         auth,
         type: 'DIRECT',
         participantIds: [
           currentUser.id.trim(),
-          user.id.trim(),
+          peerId.trim(),
         ],
       );
 
+      if (!mounted) {
+        return null;
+      }
+
       await _refreshConversations();
-      await _selectConversation(created.id);
+
+      if (!mounted) {
+        return null;
+      }
+
+      setState(() {
+        _selectedConversationId = created.id;
+        _messagesByConversation.remove(draftId);
+      });
+
+      try {
+        await session.joinConversation(created.id);
+      } catch (error, stackTrace) {
+        _appendLog(
+          'Join conversation failed',
+          data: {
+            'conversationId': created.id,
+            'error': error.toString(),
+            'stackTrace': stackTrace.toString(),
+          },
+        );
+      }
+
+      return created.id;
     } catch (error, stackTrace) {
       _appendLog(
         'Create direct conversation failed',
         data: {'error': error.toString(), 'stackTrace': stackTrace.toString()},
       );
       _showSnack('Could not create direct conversation.');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isDirectChatBusy = false;
-        });
-      }
+      return null;
     }
+  }
+
+  Future<String?> _prepareOutgoingConversationForShell(
+    String conversationId,
+  ) async {
+    if (!_isDraftConversationId(conversationId)) {
+      return conversationId;
+    }
+    return _materializeDraftDirectConversation(conversationId);
+  }
+
+  void _onMobileThreadClosed() {
+    if (!_isDraftConversationId(_selectedConversationId)) {
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _selectedConversationId = null;
+    });
   }
 
   Future<void> _sendMessage() async {
     final client = _client;
-    final conversationId = _selectedConversationId;
+    var conversationId = _selectedConversationId;
     final text = _composerController.text.trim();
     if (client == null || conversationId == null || text.isEmpty) {
       return;
@@ -789,6 +914,15 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         return;
       }
 
+      if (_isDraftConversationId(conversationId)) {
+        final realId =
+            await _materializeDraftDirectConversation(conversationId);
+        if (realId == null || !mounted) {
+          return;
+        }
+        conversationId = realId;
+      }
+
       final created = await client.sendMessage(
         conversationId: conversationId,
         type: MessageType.text,
@@ -796,7 +930,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       );
       _composerController.clear();
       _upsertMessage(conversationId, created);
-      _scrollToBottom();
 
       if (!mounted) {
         return;
@@ -921,15 +1054,29 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }
 
   Future<void> _markVisibleMessagesAsRead(String conversationId) async {
-    final currentUserId = _currentUser?.id;
-    if (currentUserId == null) {
+    final client = _client;
+    if (client == null || !_isSocketConnected) {
       return;
     }
-
-    final messages = _messagesByConversation[conversationId] ?? const [];
-    for (final message
-        in messages.where((item) => item.senderId != currentUserId)) {
-      await _markSeen(message.id);
+    try {
+      final result = await client.markConversationRead(
+        conversationId: conversationId,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        if (result.unread > 0) {
+          _unreadByConversation[conversationId] = result.unread;
+        } else {
+          _unreadByConversation.remove(conversationId);
+        }
+      });
+    } catch (error, stackTrace) {
+      _appendLog(
+        'Mark conversation read failed',
+        data: {'error': error.toString(), 'stackTrace': stackTrace.toString()},
+      );
     }
   }
 
@@ -959,6 +1106,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       _unreadByConversation.clear();
       _typingUserIdsByConversation.clear();
       _selectedConversationId = null;
+      _suggestedPeopleOpeningUserId = '';
       _statusText = 'Logged out.';
     });
     _appendLog('Disconnected client session, returning to configuration');
@@ -1056,6 +1204,49 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
           _applyReadReceipt(receipt.conversationId!, receipt);
         }
         break;
+      case ChatSocketEventType.messageDeleted:
+        final deletedMessage = event.deletedMessage;
+        if (deletedMessage != null) {
+          _applyDeletedMessage(deletedMessage);
+        }
+        break;
+      case ChatSocketEventType.messageEdited:
+        final editedMessage = event.editedMessage;
+        if (editedMessage != null) {
+          _applyEditedMessage(editedMessage);
+        }
+        break;
+      case ChatSocketEventType.conversationCreated:
+        final createdConversation = event.conversationCreated;
+        if (createdConversation != null) {
+          _applyConversationCreated(createdConversation);
+        }
+        break;
+      case ChatSocketEventType.conversationMessage:
+        final conversationMessage = event.conversationMessage;
+        if (conversationMessage != null) {
+          _applyConversationMessage(conversationMessage);
+        }
+        break;
+      case ChatSocketEventType.unreadCountUpdated:
+        final unreadCountUpdated = event.unreadCountUpdated;
+        if (unreadCountUpdated != null) {
+          _applyUnreadCountUpdated(unreadCountUpdated);
+        }
+        break;
+      case ChatSocketEventType.userBadgeUpdated:
+        final badgeUpdated = event.userBadgeUpdated;
+        if (badgeUpdated != null) {
+          _appendLog(
+            'User badge updated',
+            data: {
+              'usersWithUnreadMessages': badgeUpdated.usersWithUnreadMessages,
+              if (badgeUpdated.totalUnreadMessages != null)
+                'totalUnreadMessages': badgeUpdated.totalUnreadMessages,
+            },
+          );
+        }
+        break;
       case ChatSocketEventType.userTyping:
         final typing = event.typing;
         if (typing != null &&
@@ -1122,10 +1313,90 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         );
       }
     });
+  }
 
-    if (_selectedConversationId == conversationId) {
-      _scrollToBottom();
+  void _upsertConversation(Conversation conversation) {
+    final next = List<Conversation>.from(_conversations);
+    final index = next.indexWhere((item) => item.id == conversation.id);
+    if (index == -1) {
+      next.insert(0, conversation);
+    } else {
+      next[index] = conversation;
     }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _conversations = next;
+    });
+  }
+
+  void _setUnreadCount(String conversationId, int unread) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      if (unread > 0) {
+        _unreadByConversation[conversationId] = unread;
+      } else {
+        _unreadByConversation.remove(conversationId);
+      }
+    });
+  }
+
+  void _applyDeletedMessage(DeletedMessageEvent deletedMessage) {
+    final conversationId = deletedMessage.conversationId;
+    final existing = _messagesByConversation[conversationId] ?? const [];
+    final updated = existing
+        .map(
+          (message) => message.id == deletedMessage.messageId
+              ? message.copyWith(deletedAt: deletedMessage.deletedAt)
+              : message,
+        )
+        .toList(growable: false);
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _messagesByConversation[conversationId] = updated;
+    });
+  }
+
+  void _applyEditedMessage(MessageEditedEvent editedMessage) {
+    _upsertMessage(editedMessage.conversationId, editedMessage.message);
+  }
+
+  void _applyConversationCreated(ConversationCreatedEvent createdConversation) {
+    _upsertConversation(createdConversation.conversation);
+    _setUnreadCount(
+      createdConversation.conversation.id,
+      createdConversation.unreadCount,
+    );
+  }
+
+  void _applyConversationMessage(ConversationMessageEvent conversationMessage) {
+    final conversationId = conversationMessage.conversationId;
+    _upsertMessage(conversationId, conversationMessage.message);
+
+    final unread =
+        conversationMessage.unreadCount ?? conversationMessage.unread;
+    if (unread != null) {
+      _setUnreadCount(conversationId, unread);
+    }
+  }
+
+  void _applyUnreadCountUpdated(UnreadCountUpdatedEvent unreadCountUpdated) {
+    if (unreadCountUpdated.userId != _currentUser?.id) {
+      return;
+    }
+    _setUnreadCount(
+      unreadCountUpdated.conversationId,
+      unreadCountUpdated.unread,
+    );
   }
 
   void _applyReaction(String conversationId, MessageReaction reaction) {
@@ -1412,7 +1683,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         .toList();
 
     if (others.isNotEmpty) {
-      return others.join(', ');
+      if (others.length <= 2) {
+        return others.join(', ');
+      }
+      return '${others[0]}, ${others[1]}…';
     }
 
     return conversation.type.toUpperCase();
@@ -1476,6 +1750,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       replyTo: null,
       translatedMessage: null,
       transcribedMessage: null,
+      editedAt: null,
       deletedAt: null,
       createdAt: message.createdAt,
       reactions: const [],
@@ -1580,6 +1855,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }
 
   Future<void> _onTypingStart(String conversationId) async {
+    if (_isDraftConversationId(conversationId)) {
+      return;
+    }
     if (!_isSocketConnected || _client == null) {
       return;
     }
@@ -1589,6 +1867,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }
 
   Future<void> _onTypingStop(String conversationId) async {
+    if (_isDraftConversationId(conversationId)) {
+      return;
+    }
     if (!_isSocketConnected || _client == null) {
       return;
     }
@@ -1628,60 +1909,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     );
   }
 
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_messagesScrollController.hasClients) {
-        return;
-      }
-      _messagesScrollController.animateTo(
-        _messagesScrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 240),
-        curve: Curves.easeOut,
-      );
-    });
-  }
-
   bool _canDeleteMessage(MessengerChatMessage _) => false;
 
-  bool get _showExampleFullScreenLoader =>
-      _isBootstrapping ||
-      _isRefreshing ||
-      _isSending ||
-      _isMediaUploading ||
-      _isDirectChatBusy ||
-      _isLoggingOut ||
-      (_loadingConversationId != null &&
-          _loadingConversationId!.trim().isNotEmpty) ||
-      _pendingReactionRequests > 0;
+  bool get _showExampleFullScreenLoader => _isLoggingOut;
 
-  String get _exampleFullScreenLoaderMessage {
-    if (_isLoggingOut) {
-      return 'Signing out…';
-    }
-    if (_isBootstrapping) {
-      return 'Connecting…';
-    }
-    if (_isRefreshing) {
-      return 'Refreshing chats…';
-    }
-    if (_isSending) {
-      return 'Sending message…';
-    }
-    if (_isMediaUploading) {
-      return 'Uploading media…';
-    }
-    if (_isDirectChatBusy) {
-      return 'Opening direct chat…';
-    }
-    final cid = _loadingConversationId?.trim();
-    if (cid != null && cid.isNotEmpty) {
-      return 'Loading conversation…';
-    }
-    if (_pendingReactionRequests > 0) {
-      return 'Updating reaction…';
-    }
-    return 'Loading…';
-  }
+  String get _exampleFullScreenLoaderMessage => 'Signing out…';
 
   Widget _buildExampleGlobalLoader(ColorScheme scheme) {
     if (!_showExampleFullScreenLoader) {
@@ -1768,237 +2000,244 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
           children: [
             Column(
               children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Text(
-                'Tenant: ${_tenantScope?.tenantId ?? 'pending'}  |  '
-                'Push: ${_pushIntegrationReady ? 'on' : 'off'}  |  '
-                '$_statusText',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: const Color(0xFF475569),
-                      fontWeight: FontWeight.w600,
-                    ),
-              ),
-            ),
-            // Container(
-            //   width: double.infinity,
-            //   padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-            //   decoration: const BoxDecoration(
-            //     gradient: LinearGradient(
-            //       colors: [Color(0xFFF0F7F5), Color(0xFFFFFFFF)],
-            //       begin: Alignment.topLeft,
-            //       end: Alignment.bottomRight,
-            //     ),
-            //   ),
-            //   child: Column(
-            //     crossAxisAlignment: CrossAxisAlignment.start,
-            //     children: [
-            //       Wrap(
-            //         spacing: 8,
-            //         runSpacing: 8,
-            //         children: [
-            //           _statusChip(
-            //             'Tenant',
-            //             _tenantScope?.tenantId ?? 'pending',
-            //           ),
-            //           _statusChip(
-            //             'Chat user',
-            //             _currentUser?.id ?? 'pending',
-            //           ),
-            //           _statusChip(
-            //             'Socket',
-            //             _sessionAuth == null
-            //                 ? 'pending'
-            //                 : (_isSocketConnected
-            //                     ? 'connected'
-            //                     : 'disconnected'),
-            //           ),
-            //           _statusChip(
-            //             'Conversations',
-            //             '${_conversations.length}',
-            //           ),
-            //           _statusChip(
-            //             'Users',
-            //             '${_uiUsers.length}',
-            //           ),
-            //         ],
-            //       ),
-            //       const SizedBox(height: 10),
-            //       Text(
-            //         _statusText,
-            //         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            //               color: const Color(0xFF334155),
-            //               fontWeight: FontWeight.w600,
-            //             ),
-            //       ),
-            //       if (_isBootstrapping) ...[
-            //         const SizedBox(height: 12),
-            //         const LinearProgressIndicator(
-            //           minHeight: 4,
-            //         ),
-            //       ],
-            //       const SizedBox(height: 12),
-            //       Text(
-            //         'Transport logs are printed to the console.',
-            //         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            //               color: const Color(0xFF64748B),
-            //               fontWeight: FontWeight.w600,
-            //             ),
-            //       ),
-            //     ],
-            //   ),
-            // ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                child: MessengerChatShell(
-                  currentUserId: _currentUser?.id ?? '',
-                  currentUserName: currentUserName,
-                  conversations: _uiConversations,
-                  users: _uiUsers,
-                  selectedConversationId: _selectedConversationId,
-                  messages: _activeMessages,
-                  composerController: _composerController,
-                  messagesScrollController: _messagesScrollController,
-                  isSending: _isSending,
-                  isRecording: _isRecording,
-                  isConversationLoading:
-                      _loadingConversationId == _selectedConversationId,
-                  loadingConversationId: _loadingConversationId,
-                  loadingMessagesBuilder: (context) => const Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2.4),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                  child: Text(
+                    'Tenant: ${_tenantScope?.tenantId ?? 'pending'}  |  '
+                    'Push: ${_pushIntegrationReady ? 'on' : 'off'}  |  '
+                    '$_statusText',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: const Color(0xFF475569),
+                          fontWeight: FontWeight.w600,
                         ),
-                        SizedBox(height: 12),
-                        Text(
-                          'Loading conversation...',
-                          style: TextStyle(
-                            color: Color(0xFF64748B),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  onRefresh: () => unawaited(_refreshAll()),
-                  onLogout: () => unawaited(_logoutToConfiguration()),
-                  onSelectConversation: _selectConversation,
-                  onOpenDirectChat: _openDirectChat,
-                  onSend: () => unawaited(_sendMessage()),
-                  onPickImage: () {},
-                  onPickAudio: () {},
-                  onToggleRecording: () {
-                    setState(() {
-                      _isRecording = !_isRecording;
-                    });
-                  },
-                  onPickCamera: () {},
-                  onPickDocument: () {},
-                  onPickVideo: () {},
-                  enablePackageMediaSending: true,
-                  mediaChatClient: _client,
-                  mediaChatAuth: _sessionAuth,
-                  mediaSenderId: _currentUser?.id,
-                  onMediaSendStart: (_) {
-                    setState(() {
-                      _isMediaUploading = true;
-                      _statusText = 'Uploading media...';
-                    });
-                  },
-                  onMediaSendProgress: (messageId, progress) {
-                    setState(() {
-                      _statusText =
-                          'Uploading media ${(progress * 100).toStringAsFixed(0)}%';
-                    });
-                  },
-                  onMediaSendError: (_, error) {
-                    setState(() {
-                      _isMediaUploading = false;
-                      _statusText = 'Media send failed: $error';
-                    });
-                    _showSnack('Media send failed: $error');
-                  },
-                  onMediaMessageSent: (_) {
-                    setState(() {
-                      _isMediaUploading = false;
-                      _statusText = 'Media sent through package flow.';
-                    });
-                    _scrollToBottom();
-                  },
-                  onMediaMessageSentForConversation: (conversationId, message) {
-                    _upsertMessage(
-                      conversationId,
-                      _mapUiMessageToBackend(conversationId, message),
-                    );
-                    setState(() {
-                      _isMediaUploading = false;
-                      _statusText =
-                          'Media sent through package flow and list updated.';
-                    });
-                    if (_selectedConversationId == conversationId) {
-                      _scrollToBottom();
-                    }
-                  },
-                  onReact: _reactToMessage,
-                  onRemoveReaction: _removeReactionFromMessage,
-                  onDelete: null,
-                  onMarkSeen: _markSeen,
-                  canDeleteMessage: _canDeleteMessage,
-                  searchVisibility: MessengerSearchVisibility.always,
-                  searchInputTextStyle: const TextStyle(
-                    color: Color(0xFF0F172A),
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  searchHintTextStyle: const TextStyle(
-                    color: Color(0xFF94A3B8),
-                    fontSize: 13.5,
-                  ),
-                  searchFieldBackgroundColor: const Color(0xFFF8FAFC),
-                  searchFieldContentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                  ),
-                  searchIconColor: const Color(0xFF64748B),
-                  searchFieldBorderRadius: 12,
-                  emptyConversationsMessage:
-                      'No conversations yet. Use the people list to create one through the package flow.',
-                  emptyUsersMessage:
-                      'No users found for this tenant. Register another user from a second device or profile to test direct chat creation.',
-                  remoteTypingUsers: _remoteTypingUsersForShell(),
-                  onTypingStart: _onTypingStart,
-                  onTypingStop: _onTypingStop,
-                  enableReactions: true,
-                  composerInputTextStyle: const TextStyle(
-                    color: Color(0xFF0F172A),
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  composerHintTextStyle: const TextStyle(
-                    color: Color(0xFF94A3B8),
-                    fontSize: 13.5,
-                    fontStyle: FontStyle.italic,
-                  ),
-                  composerFieldBackgroundColor: const Color(0xFFF8FAFC),
-                  composerFieldContentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 11,
-                  ),
-                  userListPadding: const EdgeInsets.symmetric(vertical: 4),
-                  userListItemSpacing: 8,
-                  userListItemStyle: const MessengerUserListItemStyle(
-                    margin: EdgeInsets.symmetric(horizontal: 2),
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    borderRadius: 14,
                   ),
                 ),
-              ),
-            ),
+                // Container(
+                //   width: double.infinity,
+                //   padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                //   decoration: const BoxDecoration(
+                //     gradient: LinearGradient(
+                //       colors: [Color(0xFFF0F7F5), Color(0xFFFFFFFF)],
+                //       begin: Alignment.topLeft,
+                //       end: Alignment.bottomRight,
+                //     ),
+                //   ),
+                //   child: Column(
+                //     crossAxisAlignment: CrossAxisAlignment.start,
+                //     children: [
+                //       Wrap(
+                //         spacing: 8,
+                //         runSpacing: 8,
+                //         children: [
+                //           _statusChip(
+                //             'Tenant',
+                //             _tenantScope?.tenantId ?? 'pending',
+                //           ),
+                //           _statusChip(
+                //             'Chat user',
+                //             _currentUser?.id ?? 'pending',
+                //           ),
+                //           _statusChip(
+                //             'Socket',
+                //             _sessionAuth == null
+                //                 ? 'pending'
+                //                 : (_isSocketConnected
+                //                     ? 'connected'
+                //                     : 'disconnected'),
+                //           ),
+                //           _statusChip(
+                //             'Conversations',
+                //             '${_conversations.length}',
+                //           ),
+                //           _statusChip(
+                //             'Users',
+                //             '${_uiUsers.length}',
+                //           ),
+                //         ],
+                //       ),
+                //       const SizedBox(height: 10),
+                //       Text(
+                //         _statusText,
+                //         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                //               color: const Color(0xFF334155),
+                //               fontWeight: FontWeight.w600,
+                //             ),
+                //       ),
+                //       if (_isBootstrapping) ...[
+                //         const SizedBox(height: 12),
+                //         const LinearProgressIndicator(
+                //           minHeight: 4,
+                //         ),
+                //       ],
+                //       const SizedBox(height: 12),
+                //       Text(
+                //         'Transport logs are printed to the console.',
+                //         style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                //               color: const Color(0xFF64748B),
+                //               fontWeight: FontWeight.w600,
+                //             ),
+                //       ),
+                //     ],
+                //   ),
+                // ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: MessengerChatShell(
+                      currentUserId: _currentUser?.id ?? '',
+                      currentUserName: currentUserName,
+                      isListPaneRefreshing:
+                          _isRefreshing || _isBootstrapping,
+                      conversations: _uiConversations,
+                      users: _uiUsers,
+                      selectedConversationId: _selectedConversationId,
+                      messages: _activeMessages,
+                      composerController: _composerController,
+                      messagesScrollController: _messagesScrollController,
+                      isSending: _isSending,
+                      isRecording: _isRecording,
+                      isConversationLoading:
+                          _loadingConversationId == _selectedConversationId,
+                      loadingConversationId: _loadingConversationId,
+                      loadingMessagesBuilder: (context) => const Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 22,
+                              height: 22,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 2.4),
+                            ),
+                            SizedBox(height: 12),
+                            Text(
+                              'Loading conversation...',
+                              style: TextStyle(
+                                color: Color(0xFF64748B),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      onRefresh: () => _refreshAll(),
+                      onLogout: () => unawaited(_logoutToConfiguration()),
+                      onSelectConversation: _selectConversation,
+                      onOpenDirectChat: _openDirectChat,
+                      suggestedPeopleBuilder: (context, users) =>
+                          MessengerSuggestedPeoplePanel(
+                        users: users,
+                        openingUserId: _suggestedPeopleOpeningUserId,
+                        onUserSelected: _openDirectChat,
+                        onPullToRefresh: () => _refreshAll(),
+                      ),
+                      prepareOutgoingConversation:
+                          _prepareOutgoingConversationForShell,
+                      onMobileThreadClosed: _onMobileThreadClosed,
+                      onSend: () => unawaited(_sendMessage()),
+                      onPickImage: () {},
+                      onPickAudio: () {},
+                      onToggleRecording: () {
+                        setState(() {
+                          _isRecording = !_isRecording;
+                        });
+                      },
+                      onPickCamera: () {},
+                      onPickDocument: () {},
+                      onPickVideo: () {},
+                      enablePackageMediaSending: true,
+                      mediaChatClient: _client,
+                      mediaChatAuth: _sessionAuth,
+                      mediaSenderId: _currentUser?.id,
+                      onMediaSendStart: (_) {
+                        setState(() {
+                          _statusText = 'Uploading media...';
+                        });
+                      },
+                      onMediaSendProgress: (messageId, progress) {
+                        setState(() {
+                          _statusText =
+                              'Uploading media ${(progress * 100).toStringAsFixed(0)}%';
+                        });
+                      },
+                      onMediaSendError: (_, error) {
+                        setState(() {
+                          _statusText = 'Media send failed: $error';
+                        });
+                        _showSnack('Media send failed: $error');
+                      },
+                      onMediaMessageSent: (_) {
+                        setState(() {
+                          _statusText = 'Media sent through package flow.';
+                        });
+                      },
+                      onMediaMessageSentForConversation:
+                          (conversationId, message) {
+                        _upsertMessage(
+                          conversationId,
+                          _mapUiMessageToBackend(conversationId, message),
+                        );
+                        setState(() {
+                          _statusText =
+                              'Media sent through package flow and list updated.';
+                        });
+                      },
+                      onReact: _reactToMessage,
+                      onRemoveReaction: _removeReactionFromMessage,
+                      onDelete: null,
+                      onMarkSeen: _markSeen,
+                      canDeleteMessage: _canDeleteMessage,
+                      searchVisibility: MessengerSearchVisibility.always,
+                      searchInputTextStyle: const TextStyle(
+                        color: Color(0xFF0F172A),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      searchHintTextStyle: const TextStyle(
+                        color: Color(0xFF94A3B8),
+                        fontSize: 13.5,
+                      ),
+                      searchFieldBackgroundColor: const Color(0xFFF8FAFC),
+                      searchFieldContentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                      ),
+                      searchIconColor: const Color(0xFF64748B),
+                      searchFieldBorderRadius: 12,
+                      emptyConversationsMessage:
+                          'No conversations yet. Use the people list to create one through the package flow.',
+                      emptyUsersMessage:
+                          'No users found for this tenant. Register another user from a second device or profile to test direct chat creation.',
+                      remoteTypingUsers: _remoteTypingUsersForShell(),
+                      onTypingStart: _onTypingStart,
+                      onTypingStop: _onTypingStop,
+                      enableReactions: true,
+                      composerInputTextStyle: const TextStyle(
+                        color: Color(0xFF0F172A),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      composerHintTextStyle: const TextStyle(
+                        color: Color(0xFF94A3B8),
+                        fontSize: 13.5,
+                        fontStyle: FontStyle.italic,
+                      ),
+                      composerFieldBackgroundColor: const Color(0xFFF8FAFC),
+                      composerFieldContentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 11,
+                      ),
+                      userListPadding: const EdgeInsets.symmetric(vertical: 4),
+                      userListItemSpacing: 8,
+                      userListItemStyle: const MessengerUserListItemStyle(
+                        margin: EdgeInsets.symmetric(horizontal: 2),
+                        padding:
+                            EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        borderRadius: 14,
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
             _buildExampleGlobalLoader(scheme),

@@ -14,8 +14,8 @@ class ExampleBootstrapFormData {
         socketUrl = 'https://api-generic-chat.vitafyhealth.com',
         apiKey =
             'vfk_ak_Qkn3JGfrFSSG1KSeTYtAng:4DxmzYIByyd4jrSOwPqZ5zcRgZqZNiC8YxB9rwHcr3k',
-        providerId = 'flutterSujan',
-        providerUserId = 'sujan',
+        providerId = '7EB541E4-91A9-4DEB-BB7E-55813D3CA140',
+        providerUserId = 'surya bhai legend',
         email = 'Sujan@example.com',
         name = 'Sujan Flutter';
 
