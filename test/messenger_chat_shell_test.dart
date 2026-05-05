@@ -270,6 +270,8 @@ void main() {
               isRecording: false,
               isConversationLoading: true,
               loadingConversationId: 'c1',
+              threadFetchLoadingMode:
+                  MessengerThreadFetchLoadingMode.keepMessagesVisible,
               desktopBreakpoint: 200,
               onRefresh: () async {},
               onLogout: () {},
@@ -504,7 +506,8 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('isListPaneRefreshing shows slim top progress on list pane',
+  testWidgets(
+      'isListPaneRefreshing shows inline spinner replacing conversation list',
       (tester) async {
     final composer = TextEditingController();
     final scroll = ScrollController();
@@ -554,7 +557,67 @@ void main() {
     );
 
     await tester.pump();
-    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.byKey(const ValueKey('conversationListLoading')), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+    expect(find.text('alice'), findsNothing);
+  });
+
+  testWidgets(
+      'isListPaneRefreshing with suggested slot shows inline spinner not panel',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 600,
+              width: 960,
+              child: MessengerChatShell(
+                currentUserId: 'me',
+                currentUserName: 'Me',
+                isListPaneRefreshing: true,
+                conversations: const [],
+                users: const [
+                  MessengerUser(id: 'u1', username: 'alice'),
+                ],
+                selectedConversationId: null,
+                messages: const [],
+                composerController: composer,
+                messagesScrollController: scroll,
+                isSending: false,
+                isRecording: false,
+                onRefresh: () async {},
+                onLogout: () {},
+                onSelectConversation: (_) async {},
+                onOpenDirectChat: (_) async {},
+                onSend: () {},
+                onPickImage: () {},
+                onPickAudio: () {},
+                onToggleRecording: () {},
+                desktopBreakpoint: 400,
+                suggestedPeopleBuilder: (context, users) =>
+                    MessengerSuggestedPeoplePanel(
+                  users: users,
+                  onUserSelected: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    expect(find.text('Suggested people'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
   });
 }
 

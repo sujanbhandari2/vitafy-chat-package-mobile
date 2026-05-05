@@ -7,6 +7,7 @@ import '../client/chat_client.dart';
 import '../client/models/chat_message.dart';
 import '../models/messenger_conversation.dart';
 import '../models/messenger_message.dart';
+import '../models/messenger_thread_fetch_loading_mode.dart';
 import '../models/messenger_thread_loading_style.dart';
 import '../models/messenger_user.dart';
 import '../models/messenger_search_visibility.dart';
@@ -16,6 +17,7 @@ import '../theme/messenger_theme.dart';
 import '../utils/messenger_thread_scroll.dart';
 import 'messenger_chat_thread.dart';
 import 'messenger_conversation_list.dart';
+import 'messenger_default_inline_loading.dart';
 import 'messenger_media_send_orchestrator.dart';
 
 class MessengerChatShell extends StatefulWidget {
@@ -34,6 +36,8 @@ class MessengerChatShell extends StatefulWidget {
     required this.onRefresh,
     this.enablePullToRefresh = true,
     this.isListPaneRefreshing = false,
+    this.conversationListLoadingBuilder,
+    this.suggestedPaneLoadingBuilder,
     required this.onLogout,
     required this.onSelectConversation,
     required this.onOpenDirectChat,
@@ -114,6 +118,9 @@ class MessengerChatShell extends StatefulWidget {
         const Duration(milliseconds: 240),
     this.threadScrollToBottomAnimationCurve = Curves.easeOut,
     this.threadLoadingStyle,
+    this.threadFetchLoadingMode =
+        MessengerThreadFetchLoadingMode.replaceMessageList,
+    this.threadFetchLoadingBuilder,
     this.prepareOutgoingConversation,
     this.onMobileThreadClosed,
     this.suggestedPeopleBuilder,
@@ -138,10 +145,20 @@ class MessengerChatShell extends StatefulWidget {
   /// body in a [RefreshIndicator] that calls [onRefresh].
   final bool enablePullToRefresh;
 
-  /// When true, shows a slim [LinearProgressIndicator] at the top of the list
-  /// pane (conversation list or suggested-people slot) so remote refresh
-  /// state is visible without a full-screen overlay.
+  /// When true, the list pane shows an in-pane loader: [MessengerConversationList]
+  /// replaces its peer scroll body with a centered spinner, and the suggested
+  /// slot (when shown) does the same unless [suggestedPaneLoadingBuilder] is set.
   final bool isListPaneRefreshing;
+
+  /// Overrides the default centered spinner while [isListPaneRefreshing] is true
+  /// on [MessengerConversationList].
+  final WidgetBuilder? conversationListLoadingBuilder;
+
+  /// Overrides loading UI for the suggested-people slot when
+  /// [isListPaneRefreshing] is true. Falls back to [conversationListLoadingBuilder],
+  /// then [MessengerDefaultInlineLoading].
+  final WidgetBuilder? suggestedPaneLoadingBuilder;
+
   final VoidCallback onLogout;
   final FutureOr<void> Function(String conversationId) onSelectConversation;
   final FutureOr<void> Function(MessengerUser user) onOpenDirectChat;
@@ -233,9 +250,16 @@ class MessengerChatShell extends StatefulWidget {
   final Curve threadScrollToBottomAnimationCurve;
 
   /// Customizes the default **empty-thread** loading placeholder when
-  /// [loadingMessagesBuilder] is null. In-thread overlays while messages are
-  /// shown are not part of the package; handle reload UI in the host layer.
+  /// [loadingMessagesBuilder] is null. See [threadFetchLoadingMode] for reload
+  /// behavior when messages are already shown.
   final MessengerThreadLoadingStyle? threadLoadingStyle;
+
+  /// When the selected conversation is loading and messages are already shown.
+  final MessengerThreadFetchLoadingMode threadFetchLoadingMode;
+
+  /// Replaces the message list during refetch when [threadFetchLoadingMode] is
+  /// [MessengerThreadFetchLoadingMode.replaceMessageList].
+  final WidgetBuilder? threadFetchLoadingBuilder;
 
   /// When set, invoked before package media upload so the host can replace a
   /// placeholder conversation id (for example a draft direct chat) with a
@@ -413,9 +437,12 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       onBack: onBack,
       conversation: selectedConversation,
       messages: threadMessages,
+      snapToBottomOnKeyboardInsetChange: widget.autoScrollThreadToBottom,
       isConversationLoading: isSelectedConversationLoading,
       loadingMessagesBuilder: widget.loadingMessagesBuilder,
       threadLoadingStyle: widget.threadLoadingStyle,
+      threadFetchLoadingMode: widget.threadFetchLoadingMode,
+      threadFetchLoadingBuilder: widget.threadFetchLoadingBuilder,
       contentTransitionDuration: widget.threadTransitionDuration,
       currentUserId: widget.currentUserId,
       composerController: widget.composerController,
@@ -1082,32 +1109,28 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     }
   }
 
-  Widget _wrapListPaneWithTopRefreshProgress(BuildContext context, Widget pane) {
-    if (!widget.isListPaneRefreshing) {
-      return pane;
-    }
-    final theme = MessengerTheme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SizedBox(
-          height: 3,
-          child: LinearProgressIndicator(
-            minHeight: 3,
-            backgroundColor: theme.searchBackground,
-            color: theme.primary,
-          ),
-        ),
-        Expanded(child: pane),
-      ],
-    );
-  }
-
   bool get _shouldShowSuggestedPanel =>
       widget.suggestedPeopleBuilder != null && widget.conversations.isEmpty;
 
+  Widget _suggestedPaneLoadingBody(BuildContext context) {
+    return widget.suggestedPaneLoadingBuilder?.call(context) ??
+        widget.conversationListLoadingBuilder?.call(context) ??
+        const MessengerDefaultInlineLoading();
+  }
+
   Widget _buildDesktopConversationPane() {
     if (_shouldShowSuggestedPanel) {
+      if (widget.isListPaneRefreshing) {
+        final theme = MessengerTheme.of(context);
+        return Container(
+          decoration: BoxDecoration(
+            color: theme.surface,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          child: _suggestedPaneLoadingBody(context),
+        );
+      }
       return widget.suggestedPeopleBuilder!(context, widget.users);
     }
     return MessengerConversationList(
@@ -1119,6 +1142,8 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       openingDirectUserId: _openingDirectUserId,
       onRefresh: widget.onRefresh,
       enablePullToRefresh: widget.enablePullToRefresh,
+      isConversationListLoading: widget.isListPaneRefreshing,
+      conversationListLoadingBuilder: widget.conversationListLoadingBuilder,
       onLogout: widget.onLogout,
       onOpenDirectChat: (user) async {
         setState(() => _openingDirectUserId = user.id);
@@ -1160,6 +1185,12 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
 
   Widget _buildMobileConversationPane() {
     if (_shouldShowSuggestedPanel) {
+      if (widget.isListPaneRefreshing) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+          child: _suggestedPaneLoadingBody(context),
+        );
+      }
       return widget.suggestedPeopleBuilder!(context, widget.users);
     }
     return MessengerConversationList(
@@ -1171,6 +1202,8 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       openingDirectUserId: _openingDirectUserId,
       onRefresh: widget.onRefresh,
       enablePullToRefresh: widget.enablePullToRefresh,
+      isConversationListLoading: widget.isListPaneRefreshing,
+      conversationListLoadingBuilder: widget.conversationListLoadingBuilder,
       onLogout: widget.onLogout,
       onOpenDirectChat: (user) async {
         setState(() => _openingDirectUserId = user.id);
@@ -1246,10 +1279,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
             children: [
               SizedBox(
                 width: 360,
-                child: _wrapListPaneWithTopRefreshProgress(
-                  context,
-                  _buildDesktopConversationPane(),
-                ),
+                child: _buildDesktopConversationPane(),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -1257,10 +1287,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
               ),
             ],
           )
-        : _wrapListPaneWithTopRefreshProgress(
-            context,
-            _buildMobileConversationPane(),
-          );
+        : _buildMobileConversationPane();
 
     if (widget.theme == null) {
       return shell;

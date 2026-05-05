@@ -64,6 +64,127 @@ void main() {
     );
   });
 
+  testWidgets('cold list follows apiRank over lastActivityAt', (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
+    const bob = MessengerUser(id: 'b', username: 'bob_smith', roleLabel: '');
+
+    MessengerConversation conv(
+      String id,
+      List<MessengerUser> peers,
+      DateTime activityAt,
+      int apiRank,
+    ) {
+      return MessengerConversation(
+        id: id,
+        title: id,
+        subtitle: 'Last from $id',
+        avatarLabel: 'X',
+        createdAt: DateTime.utc(2026, 1, 1),
+        lastActivityAt: activityAt,
+        peerUsers: peers,
+        apiRank: apiRank,
+      );
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 640,
+              width: 400,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: [
+                  conv('c1', [alice], DateTime.utc(2026, 1, 1), 0),
+                  conv('c2', [bob], DateTime.utc(2026, 1, 20), 1),
+                ],
+                users: const [alice, bob],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getTopLeft(find.text('Alice Jones')).dy,
+      lessThan(tester.getTopLeft(find.text('Bob Smith')).dy),
+    );
+  });
+
+  testWidgets('promoted conversation sorts above cold apiRank', (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
+    const bob = MessengerUser(id: 'b', username: 'bob_smith', roleLabel: '');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 640,
+              width: 400,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: [
+                  MessengerConversation(
+                    id: 'c1',
+                    title: 'c1',
+                    subtitle: 'old',
+                    avatarLabel: 'X',
+                    createdAt: DateTime.utc(2026, 1, 1),
+                    lastActivityAt: DateTime.utc(2026, 1, 1),
+                    peerUsers: const [alice],
+                    apiRank: 0,
+                  ),
+                  MessengerConversation(
+                    id: 'c2',
+                    title: 'c2',
+                    subtitle: 'new',
+                    avatarLabel: 'X',
+                    createdAt: DateTime.utc(2026, 1, 1),
+                    lastActivityAt: DateTime.utc(2026, 1, 25),
+                    peerUsers: const [bob],
+                    apiRank: 1,
+                    promotedAt: DateTime.utc(2026, 2, 1),
+                  ),
+                ],
+                users: const [alice, bob],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getTopLeft(find.text('Bob Smith')).dy,
+      lessThan(tester.getTopLeft(find.text('Alice Jones')).dy),
+    );
+  });
+
   testWidgets('tapping non-top row opens that exact user', (tester) async {
     const alice = MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
     const bob = MessengerUser(id: 'b', username: 'bob_smith', roleLabel: '');
@@ -383,7 +504,8 @@ void main() {
     expect(refreshCount, 1);
   });
 
-  testWidgets('showTopRefreshProgress shows slim progress bar', (tester) async {
+  testWidgets('isConversationListLoading replaces list body with spinner',
+      (tester) async {
     const alice = MessengerUser(id: 'a', username: 'alice');
 
     await tester.pumpWidget(
@@ -406,7 +528,7 @@ void main() {
                 onSelectConversation: (_) async {},
                 searchVisibility: MessengerSearchVisibility.never,
                 showStartChatFab: false,
-                showTopRefreshProgress: true,
+                isConversationListLoading: true,
               ),
             ),
           ),
@@ -415,6 +537,8 @@ void main() {
     );
 
     await tester.pump();
-    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.byKey(const ValueKey('conversationListLoading')), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('alice'), findsNothing);
   });
 }

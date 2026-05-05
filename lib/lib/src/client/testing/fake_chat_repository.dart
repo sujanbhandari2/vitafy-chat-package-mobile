@@ -38,6 +38,9 @@ class FakeChatRepository implements ChatRepository {
   int disconnectSocketCalls = 0;
   final List<String> joinConversationLog = <String>[];
   final List<String> leaveConversationLog = <String>[];
+  final List<String> markConversationReadLog = <String>[];
+  final List<String> markAsDeliveredLog = <String>[];
+  final List<String> markAsReadLog = <String>[];
 
   @override
   Stream<ChatSocketEvent> get socketEvents => _socketEvents.stream;
@@ -237,6 +240,7 @@ class FakeChatRepository implements ChatRepository {
     required String conversationId,
     required String messageId,
   }) async {
+    markAsDeliveredLog.add('$conversationId:$messageId');
     return DeliveredReceipt.fromJson({
       'id': 'd-1',
       'messageId': messageId,
@@ -251,6 +255,7 @@ class FakeChatRepository implements ChatRepository {
     required String conversationId,
     required String messageId,
   }) async {
+    markAsReadLog.add('$conversationId:$messageId');
     return ReadReceipt.fromJson({
       'id': 'r-1',
       'messageId': messageId,
@@ -264,6 +269,7 @@ class FakeChatRepository implements ChatRepository {
   Future<MarkConversationReadResult> markConversationRead({
     required String conversationId,
   }) async {
+    markConversationReadLog.add(conversationId);
     return const MarkConversationReadResult(
       readCount: 0,
       unread: 0,

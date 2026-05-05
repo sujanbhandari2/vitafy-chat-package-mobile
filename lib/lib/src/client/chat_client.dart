@@ -18,7 +18,8 @@ class ChatClient {
   ChatClient({
     required ChatServiceConfig config,
     Dio? dio,
-  }) : _service = ChatService(config: config, dio: dio);
+    ChatRepository? repository,
+  }) : _service = ChatService(config: config, dio: dio, repository: repository);
 
   final ChatService _service;
 

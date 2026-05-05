@@ -7,6 +7,7 @@ import '../models/messenger_search_visibility.dart';
 import '../models/messenger_user.dart';
 import '../theme/messenger_theme.dart';
 import 'messenger_avatar.dart';
+import 'messenger_default_inline_loading.dart';
 
 /// Avoid treating every row as "opening" when both ids are empty (`'' == ''`).
 bool _isDirectOpenBusyForUser(String openingDirectUserId, String userId) {
@@ -72,7 +73,8 @@ class MessengerConversationList extends StatefulWidget {
     required this.openingDirectUserId,
     required this.onRefresh,
     this.enablePullToRefresh = true,
-    this.showTopRefreshProgress = false,
+    this.isConversationListLoading = false,
+    this.conversationListLoadingBuilder,
     required this.onLogout,
     required this.onOpenDirectChat,
     required this.onSelectConversation,
@@ -117,10 +119,13 @@ class MessengerConversationList extends StatefulWidget {
   /// When true (default), the peer list body is wrapped in [RefreshIndicator].
   final bool enablePullToRefresh;
 
-  /// When true, shows a slim [LinearProgressIndicator] under the top padding
-  /// while remote data is reloading (for hosts that do not use
-  /// [MessengerChatShell.isListPaneRefreshing]).
-  final bool showTopRefreshProgress;
+  /// When true, replaces the peer scroll body with a centered loading indicator
+  /// (see [conversationListLoadingBuilder]).
+  final bool isConversationListLoading;
+
+  /// Custom loading widget for [isConversationListLoading]. Defaults to
+  /// [MessengerDefaultInlineLoading].
+  final WidgetBuilder? conversationListLoadingBuilder;
 
   final VoidCallback onLogout;
   final FutureOr<void> Function(MessengerUser user) onOpenDirectChat;
@@ -233,10 +238,35 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     return conversation.effectiveActivityAt;
   }
 
-  int _compareConversationsByActivity(
+  /// Promoted rows first (newer [MessengerConversation.promotedAt] first);
+  /// cold rows follow in [MessengerConversation.apiRank] order (API list order).
+  int _compareConversationsByOrder(
     MessengerConversation left,
     MessengerConversation right,
   ) {
+    final leftHot = left.promotedAt != null;
+    final rightHot = right.promotedAt != null;
+    if (leftHot != rightHot) {
+      return leftHot ? -1 : 1;
+    }
+    if (leftHot && rightHot) {
+      final t = right.promotedAt!.compareTo(left.promotedAt!);
+      if (t != 0) {
+        return t;
+      }
+      return left.id.compareTo(right.id);
+    }
+    final ar = left.apiRank;
+    final br = right.apiRank;
+    if (ar != null && br != null && ar != br) {
+      return ar.compareTo(br);
+    }
+    if (ar != null && br == null) {
+      return -1;
+    }
+    if (ar == null && br != null) {
+      return 1;
+    }
     final activityCompare = _activityAt(right).compareTo(_activityAt(left));
     if (activityCompare != 0) {
       return activityCompare;
@@ -246,7 +276,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
 
   List<MessengerConversation> _conversationsByActivity() {
     final ordered = [...widget.conversations];
-    ordered.sort(_compareConversationsByActivity);
+    ordered.sort(_compareConversationsByOrder);
     return ordered;
   }
 
@@ -318,7 +348,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
       final leftConversation = matchForUser(left);
       final rightConversation = matchForUser(right);
       if (leftConversation != null && rightConversation != null) {
-        final compare = _compareConversationsByActivity(
+        final compare = _compareConversationsByOrder(
             leftConversation, rightConversation);
         if (compare != 0) {
           return compare;
@@ -530,17 +560,6 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     final listContent = Column(
       children: [
         const SizedBox(height: 2),
-        if (widget.showTopRefreshProgress) ...[
-          SizedBox(
-            height: 3,
-            child: LinearProgressIndicator(
-              minHeight: 3,
-              backgroundColor: theme.searchBackground,
-              color: theme.primary,
-            ),
-          ),
-          const SizedBox(height: 6),
-        ],
         if (headerRow != null) ...[
           headerRow,
           const SizedBox(height: 6),
@@ -582,7 +601,13 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
           const SizedBox(height: 8),
         ],
         Expanded(
-          child: _buildPeerScrollBody(context, filteredEntries),
+          child: widget.isConversationListLoading
+              ? KeyedSubtree(
+                  key: const ValueKey('conversationListLoading'),
+                  child: widget.conversationListLoadingBuilder?.call(context) ??
+                      const MessengerDefaultInlineLoading(),
+                )
+              : _buildPeerScrollBody(context, filteredEntries),
         ),
       ],
     );

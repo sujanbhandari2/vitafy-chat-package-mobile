@@ -1,13 +1,16 @@
+export 'health_messenger_client.dart';
 export 'src/models/messenger_conversation.dart';
 export 'src/models/messenger_attachment.dart';
 export 'src/models/messenger_message.dart';
 export 'src/models/messenger_search_visibility.dart';
 export 'src/models/messenger_user.dart';
+export 'src/models/messenger_thread_fetch_loading_mode.dart';
 export 'src/models/messenger_thread_loading_style.dart';
 export 'src/models/messenger_typing.dart';
 export 'src/theme/messenger_theme.dart';
 export 'src/utils/messenger_thread_scroll.dart';
 export 'src/widgets/messenger_avatar.dart';
+export 'src/widgets/messenger_default_inline_loading.dart';
 export 'src/widgets/messenger_chat_shell.dart';
 export 'src/widgets/messenger_chat_thread.dart';
 export 'src/widgets/messenger_composer_bar.dart';

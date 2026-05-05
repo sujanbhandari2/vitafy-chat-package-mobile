@@ -1,4 +1,13 @@
 import 'app_role.dart';
+import 'chat_message.dart';
+
+ChatMessage? _latestMessageFromJson(Map<String, dynamic> json) {
+  final raw = json['latestMessage'] ?? json['latest_message'];
+  if (raw is! Map) {
+    return null;
+  }
+  return ChatMessage.fromJson(Map<String, dynamic>.from(raw));
+}
 
 class Conversation {
   const Conversation({
@@ -10,6 +19,8 @@ class Conversation {
     required this.createdAt,
     required this.updatedAt,
     required this.participants,
+    this.unreadCount,
+    this.latestMessage,
   });
 
   final String id;
@@ -21,11 +32,30 @@ class Conversation {
   final DateTime updatedAt;
   final List<ConversationParticipant> participants;
 
+  /// Per-user unread from REST list, if the API provides it.
+  final int? unreadCount;
+
+  /// Last message on the conversation from REST list payloads (e.g. getConversations).
+  final ChatMessage? latestMessage;
+
   bool get isGlobal => type.toUpperCase() == 'SUPPORT';
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
     final rawParticipants =
         json['participants'] as List<dynamic>? ?? <dynamic>[];
+
+    int? parseUnread(Object? raw) {
+      if (raw == null) {
+        return null;
+      }
+      if (raw is int) {
+        return raw;
+      }
+      if (raw is num) {
+        return raw.toInt();
+      }
+      return int.tryParse(raw.toString());
+    }
 
     return Conversation(
       id: json['id']?.toString() ?? '',
@@ -41,6 +71,7 @@ class Conversation {
             json['createdAt']?.toString() ??
             DateTime.now().toIso8601String(),
       ),
+      unreadCount: parseUnread(json['unreadCount'] ?? json['unread']),
       participants: rawParticipants
           .map(
             (item) => ConversationParticipant.fromJson(
@@ -48,6 +79,7 @@ class Conversation {
             ),
           )
           .toList(),
+      latestMessage: _latestMessageFromJson(json),
     );
   }
 }

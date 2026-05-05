@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 /// Styling for the built-in **empty-thread** loading placeholder only (spinner +
 /// text while [MessengerChatThread.isConversationLoading] is true and there are
 /// no messages yet). Ignored when [MessengerChatThread.loadingMessagesBuilder]
-/// supplies a custom loading widget.
+/// supplies a custom loading widget. Refetch while messages exist is controlled
+/// by [MessengerChatThread.threadFetchLoadingMode].
 ///
 /// Reload styling while messages are already shown is left to the host (shell,
 /// app bar, snackbars, etc.).

@@ -4,7 +4,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:health_messenger_ui/lib/health_messenger_client.dart';
 import 'package:health_messenger_ui/lib/health_messenger_push.dart';
 import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 
@@ -53,7 +52,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   List<TenantUser> _users = const [];
   List<Conversation> _conversations = const [];
   final Map<String, List<ChatMessage>> _messagesByConversation = {};
-  final Map<String, int> _unreadByConversation = {};
   final Map<String, Set<String>> _typingUserIdsByConversation = {};
 
   String? _selectedConversationId;
@@ -74,6 +72,19 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
   /// Shown on [MessengerSuggestedPeoplePanel] rows while opening a direct chat.
   String _suggestedPeopleOpeningUserId = '';
+
+  /// Until [ChatSession.bootstrap] completes, badge listenable has no inbox.
+  final ValueNotifier<Map<String, int>> _preBootstrapUnread =
+      ValueNotifier<Map<String, int>>(const <String, int>{});
+
+  /// Placeholder [ConversationOrderSnapshot] before session exists.
+  final ValueNotifier<ConversationOrderSnapshot> _preBootstrapOrder =
+      ValueNotifier<ConversationOrderSnapshot>(
+    ConversationOrderSnapshot(
+      apiRank: Map<String, int>.unmodifiable(<String, int>{}),
+      promotedAt: Map<String, DateTime>.unmodifiable(<String, DateTime>{}),
+    ),
+  );
 
   static const String _draftDirectPrefix = '__pending_direct__:';
 
@@ -105,6 +116,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   @override
   void dispose() {
     _slowConversationHintTimer?.cancel();
+    _preBootstrapUnread.dispose();
+    _preBootstrapOrder.dispose();
     _composerController.dispose();
     _messagesScrollController.dispose();
     unawaited(_disposeActiveClient());
@@ -123,8 +136,13 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     return source.map(_mapMessage).toList();
   }
 
-  List<MessengerConversation> get _uiConversations {
-    return _conversations.map(_mapConversation).toList();
+  List<MessengerConversation> _mapConversations(
+    Map<String, int> unreadMap,
+    ConversationOrderSnapshot orderSnapshot,
+  ) {
+    return _conversations
+        .map((c) => _mapConversation(c, unreadMap, orderSnapshot))
+        .toList(growable: false);
   }
 
   List<MessengerUser> get _uiUsers {
@@ -429,7 +447,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         _currentUser = registeredUser;
         _isSocketConnected = false;
         _messagesByConversation.clear();
-        _unreadByConversation.clear();
         _typingUserIdsByConversation.clear();
         _selectedConversationId = null;
         _suggestedPeopleOpeningUserId = '';
@@ -565,6 +582,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         }
       });
 
+      _session?.inbox.seedFromConversations(conversations);
+
       final selectedConversationId = _selectedConversationId;
       if (selectedConversationId != null &&
           !_isDraftConversationId(selectedConversationId)) {
@@ -629,6 +648,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         _selectedConversationId = null;
       }
     });
+    _session?.inbox.seedFromConversations(conversations);
   }
 
   Future<void> _selectConversation(
@@ -646,11 +666,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       return;
     }
 
-    final previousConversationId = _selectedConversationId;
     _slowConversationHintTimer?.cancel();
     setState(() {
       _selectedConversationId = conversationId;
-      _unreadByConversation.remove(conversationId);
       _loadingConversationId = conversationId;
       _statusText = 'Loading conversation $conversationId...';
     });
@@ -662,22 +680,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         _statusText = 'Still loading conversation $conversationId...';
       });
     });
-
-    if (previousConversationId != null &&
-        previousConversationId != conversationId &&
-        !_isDraftConversationId(previousConversationId)) {
-      unawaited(
-        session.leaveConversation(previousConversationId).catchError((error) {
-          _appendLog(
-            'Leave conversation failed',
-            data: {
-              'conversationId': previousConversationId,
-              'error': error.toString(),
-            },
-          );
-        }),
-      );
-    }
 
     try {
       await _loadMessages(conversationId);
@@ -705,7 +707,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       setState(() {
         _statusText = 'Joined conversation $conversationId.';
       });
-      unawaited(_markVisibleMessagesAsRead(conversationId));
     } catch (error, stackTrace) {
       _appendLog(
         'Select conversation failed',
@@ -930,6 +931,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       );
       _composerController.clear();
       _upsertMessage(conversationId, created);
+      _session?.inbox.bumpConversation(conversationId);
 
       if (!mounted) {
         return;
@@ -1027,59 +1029,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     }
   }
 
-  Future<void> _markSeen(String messageId) async {
-    final client = _client;
-    final conversationId = _selectedConversationId;
-    if (client == null || conversationId == null || !_isSocketConnected) {
-      return;
-    }
-
-    try {
-      final delivered = await client.markAsDelivered(
-        conversationId: conversationId,
-        messageId: messageId,
-      );
-      final read = await client.markAsRead(
-        conversationId: conversationId,
-        messageId: messageId,
-      );
-      _applyDeliveredReceipt(conversationId, delivered);
-      _applyReadReceipt(conversationId, read);
-    } catch (error, stackTrace) {
-      _appendLog(
-        'Mark read failed',
-        data: {'error': error.toString(), 'stackTrace': stackTrace.toString()},
-      );
-    }
-  }
-
-  Future<void> _markVisibleMessagesAsRead(String conversationId) async {
-    final client = _client;
-    if (client == null || !_isSocketConnected) {
-      return;
-    }
-    try {
-      final result = await client.markConversationRead(
-        conversationId: conversationId,
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        if (result.unread > 0) {
-          _unreadByConversation[conversationId] = result.unread;
-        } else {
-          _unreadByConversation.remove(conversationId);
-        }
-      });
-    } catch (error, stackTrace) {
-      _appendLog(
-        'Mark conversation read failed',
-        data: {'error': error.toString(), 'stackTrace': stackTrace.toString()},
-      );
-    }
-  }
-
   Future<void> _logoutToConfiguration() async {
     if (mounted) {
       setState(() => _isLoggingOut = true);
@@ -1103,7 +1052,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       _users = const [];
       _conversations = const [];
       _messagesByConversation.clear();
-      _unreadByConversation.clear();
       _typingUserIdsByConversation.clear();
       _selectedConversationId = null;
       _suggestedPeopleOpeningUserId = '';
@@ -1171,10 +1119,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         final message = event.message;
         if (message != null) {
           _upsertMessage(message.conversationId, message);
-          if (_selectedConversationId == message.conversationId &&
-              message.senderId != _currentUser?.id) {
-            unawaited(_markSeen(message.id));
-          }
         }
         break;
       case ChatSocketEventType.messageReacted:
@@ -1225,14 +1169,13 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       case ChatSocketEventType.conversationMessage:
         final conversationMessage = event.conversationMessage;
         if (conversationMessage != null) {
-          _applyConversationMessage(conversationMessage);
+          _upsertMessage(
+            conversationMessage.conversationId,
+            conversationMessage.message,
+          );
         }
         break;
       case ChatSocketEventType.unreadCountUpdated:
-        final unreadCountUpdated = event.unreadCountUpdated;
-        if (unreadCountUpdated != null) {
-          _applyUnreadCountUpdated(unreadCountUpdated);
-        }
         break;
       case ChatSocketEventType.userBadgeUpdated:
         final badgeUpdated = event.userBadgeUpdated;
@@ -1304,14 +1247,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
     setState(() {
       _messagesByConversation[conversationId] = next;
-      if (_selectedConversationId != conversationId &&
-          message.senderId != _currentUser?.id) {
-        _unreadByConversation.update(
-          conversationId,
-          (value) => value + 1,
-          ifAbsent: () => 1,
-        );
-      }
     });
   }
 
@@ -1330,19 +1265,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
     setState(() {
       _conversations = next;
-    });
-  }
-
-  void _setUnreadCount(String conversationId, int unread) {
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      if (unread > 0) {
-        _unreadByConversation[conversationId] = unread;
-      } else {
-        _unreadByConversation.remove(conversationId);
-      }
     });
   }
 
@@ -1372,31 +1294,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
   void _applyConversationCreated(ConversationCreatedEvent createdConversation) {
     _upsertConversation(createdConversation.conversation);
-    _setUnreadCount(
-      createdConversation.conversation.id,
-      createdConversation.unreadCount,
-    );
-  }
-
-  void _applyConversationMessage(ConversationMessageEvent conversationMessage) {
-    final conversationId = conversationMessage.conversationId;
-    _upsertMessage(conversationId, conversationMessage.message);
-
-    final unread =
-        conversationMessage.unreadCount ?? conversationMessage.unread;
-    if (unread != null) {
-      _setUnreadCount(conversationId, unread);
-    }
-  }
-
-  void _applyUnreadCountUpdated(UnreadCountUpdatedEvent unreadCountUpdated) {
-    if (unreadCountUpdated.userId != _currentUser?.id) {
-      return;
-    }
-    _setUnreadCount(
-      unreadCountUpdated.conversationId,
-      unreadCountUpdated.unread,
-    );
   }
 
   void _applyReaction(String conversationId, MessageReaction reaction) {
@@ -1530,6 +1427,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
               createdBy: conversation.createdBy,
               createdAt: conversation.createdAt,
               updatedAt: conversation.updatedAt,
+              unreadCount: conversation.unreadCount,
               participants: conversation.participants
                   .map(
                     (participant) => participant.user.id == userId
@@ -1550,6 +1448,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                         : participant,
                   )
                   .toList(),
+              latestMessage: conversation.latestMessage,
             ),
           )
           .toList();
@@ -1592,17 +1491,24 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     );
   }
 
-  MessengerConversation _mapConversation(Conversation conversation) {
+  MessengerConversation _mapConversation(
+    Conversation conversation,
+    Map<String, int> unreadMap,
+    ConversationOrderSnapshot orderSnapshot,
+  ) {
     final title = _conversationTitle(conversation);
     final messages = _messagesByConversation[conversation.id] ?? const [];
-    final latestMessage = messages.isEmpty ? null : messages.last;
-    final subtitle = latestMessage == null
+    final localLatest = messages.isEmpty ? null : messages.last;
+    final restLatest = conversation.latestMessage;
+    final previewSource = _newestChatMessage(localLatest, restLatest);
+    final subtitle = previewSource == null
         ? '${conversation.type} conversation'
-        : _messagePreview(latestMessage);
-    final latestMessageAt = latestMessage?.createdAt;
-    final lastActivityAt = latestMessageAt != null &&
-            latestMessageAt.isAfter(conversation.updatedAt)
-        ? latestMessageAt
+        : _messagePreview(previewSource);
+    final activityCandidate =
+        _newestDateTime(localLatest?.createdAt, restLatest?.createdAt);
+    final lastActivityAt = activityCandidate != null &&
+            activityCandidate.isAfter(conversation.updatedAt)
+        ? activityCandidate
         : conversation.updatedAt;
     final others = conversation.participants
         .where((participant) => participant.user.id != _currentUser?.id)
@@ -1616,12 +1522,14 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       createdAt: conversation.createdAt,
       lastActivityAt: lastActivityAt,
       isGlobal: conversation.isGlobal,
-      unreadCount: _unreadByConversation[conversation.id] ?? 0,
+      unreadCount: unreadMap[conversation.id] ?? 0,
       avatarUrl: others.length == 1 ? others.first.user.avatarUrl : null,
       isOnline: others.any((participant) => participant.user.isOnline),
       peerUsers: others
           .map((p) => _mapParticipantUser(p.user))
           .toList(growable: false),
+      apiRank: orderSnapshot.apiRank[conversation.id],
+      promotedAt: orderSnapshot.promotedAt[conversation.id],
     );
   }
 
@@ -1756,6 +1664,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       reactions: const [],
       deliveredReceipts: const [],
       readReceipts: const [],
+      deliveryStatus: null,
       sender: ChatMessageSender(
         id: message.senderId,
         name: message.senderLabel,
@@ -1764,16 +1673,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }
 
   MessengerDeliveryStatus _deliveryStatusFor(ChatMessage message) {
-    if (message.senderId != _currentUser?.id) {
+    final id = _currentUser?.id ?? '';
+    if (id.isEmpty) {
       return MessengerDeliveryStatus.none;
     }
-    if (message.readReceipts.isNotEmpty) {
-      return MessengerDeliveryStatus.seen;
-    }
-    if (message.deliveredReceipts.isNotEmpty) {
-      return MessengerDeliveryStatus.delivered;
-    }
-    return MessengerDeliveryStatus.sent;
+    return messengerDeliveryStatusFor(message, currentUserId: id);
   }
 
   String _messagePreview(ChatMessage message) {
@@ -1799,6 +1703,29 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       }
     }
     return '[Empty message]';
+  }
+
+  /// Prefer the chronologically newer row when both REST and loaded-thread
+  /// messages exist (partial pagination can make `messages.last` older than
+  /// [Conversation.latestMessage]).
+  ChatMessage? _newestChatMessage(ChatMessage? a, ChatMessage? b) {
+    if (a == null) {
+      return b;
+    }
+    if (b == null) {
+      return a;
+    }
+    return a.createdAt.isBefore(b.createdAt) ? b : a;
+  }
+
+  DateTime? _newestDateTime(DateTime? a, DateTime? b) {
+    if (a == null) {
+      return b;
+    }
+    if (b == null) {
+      return a;
+    }
+    return a.isBefore(b) ? b : a;
   }
 
   String _senderName(ChatMessage message) {
@@ -2084,12 +2011,30 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    child: MessengerChatShell(
+                    child: AnimatedBuilder(
+                      animation: Listenable.merge([
+                        _session?.inbox.unreadByConversation ??
+                            _preBootstrapUnread,
+                        _session?.inbox.conversationOrder ??
+                            _preBootstrapOrder,
+                      ]),
+                      builder: (context, child) {
+                        final unreadMap = (_session?.inbox.unreadByConversation ??
+                                _preBootstrapUnread)
+                            .value;
+                        final orderSnapshot =
+                            (_session?.inbox.conversationOrder ??
+                                    _preBootstrapOrder)
+                                .value;
+                        return MessengerChatShell(
                       currentUserId: _currentUser?.id ?? '',
                       currentUserName: currentUserName,
                       isListPaneRefreshing:
                           _isRefreshing || _isBootstrapping,
-                      conversations: _uiConversations,
+                      conversations: _mapConversations(
+                        unreadMap,
+                        orderSnapshot,
+                      ),
                       users: _uiUsers,
                       selectedConversationId: _selectedConversationId,
                       messages: _activeMessages,
@@ -2100,27 +2045,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                       isConversationLoading:
                           _loadingConversationId == _selectedConversationId,
                       loadingConversationId: _loadingConversationId,
-                      loadingMessagesBuilder: (context) => const Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SizedBox(
-                              width: 22,
-                              height: 22,
-                              child:
-                                  CircularProgressIndicator(strokeWidth: 2.4),
-                            ),
-                            SizedBox(height: 12),
-                            Text(
-                              'Loading conversation...',
-                              style: TextStyle(
-                                color: Color(0xFF64748B),
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                      threadFetchLoadingMode:
+                          MessengerThreadFetchLoadingMode.keepMessagesVisible,
                       onRefresh: () => _refreshAll(),
                       onLogout: () => unawaited(_logoutToConfiguration()),
                       onSelectConversation: _selectConversation,
@@ -2178,6 +2104,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           conversationId,
                           _mapUiMessageToBackend(conversationId, message),
                         );
+                        _session?.inbox.bumpConversation(conversationId);
                         setState(() {
                           _statusText =
                               'Media sent through package flow and list updated.';
@@ -2186,7 +2113,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                       onReact: _reactToMessage,
                       onRemoveReaction: _removeReactionFromMessage,
                       onDelete: null,
-                      onMarkSeen: _markSeen,
+                      onMarkSeen: null,
                       canDeleteMessage: _canDeleteMessage,
                       searchVisibility: MessengerSearchVisibility.always,
                       searchInputTextStyle: const TextStyle(
@@ -2235,6 +2162,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                             EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                         borderRadius: 14,
                       ),
+                    );
+                      },
                     ),
                   ),
                 ),

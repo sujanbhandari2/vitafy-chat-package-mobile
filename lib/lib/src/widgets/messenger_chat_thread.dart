@@ -3,20 +3,22 @@ import 'package:flutter/material.dart';
 import '../models/messenger_conversation.dart';
 import '../models/messenger_message.dart';
 import '../models/messenger_attachment.dart';
+import '../models/messenger_thread_fetch_loading_mode.dart';
 import '../models/messenger_thread_loading_style.dart';
 import '../models/messenger_typing.dart';
 import 'messenger_avatar.dart';
 import 'messenger_composer_bar.dart';
+import 'messenger_default_inline_loading.dart';
 import 'messenger_message_bubble.dart';
 import '../theme/messenger_theme.dart';
+import '../utils/messenger_thread_scroll.dart';
 
-/// Extra scroll extent so the last messages, reaction UI, and uploads stay
-/// visibly above the composer. Prefer a host [Scaffold] with
-/// [Scaffold.resizeToAvoidBottomInset] so the keyboard resizes the viewport
-/// rather than duplicating inset padding on this list.
-const double _kThreadListBottomScrollPadding = 88;
+/// Small bottom padding on the message list; the composer provides most
+/// separation. Prefer a host [Scaffold] with [Scaffold.resizeToAvoidBottomInset]
+/// so the keyboard resizes the viewport rather than duplicating inset padding.
+const double _kThreadListBottomScrollPadding = 8;
 
-class MessengerChatThread extends StatelessWidget {
+class MessengerChatThread extends StatefulWidget {
   const MessengerChatThread({
     super.key,
     required this.conversation,
@@ -66,6 +68,10 @@ class MessengerChatThread extends StatelessWidget {
     this.pendingAttachmentLabel,
     this.onClearPendingAttachment,
     this.threadLoadingStyle,
+    this.threadFetchLoadingMode =
+        MessengerThreadFetchLoadingMode.replaceMessageList,
+    this.threadFetchLoadingBuilder,
+    this.snapToBottomOnKeyboardInsetChange = true,
   });
 
   final MessengerConversation? conversation;
@@ -117,32 +123,71 @@ class MessengerChatThread extends StatelessWidget {
   final VoidCallback? onClearPendingAttachment;
   final MessengerThreadLoadingStyle? threadLoadingStyle;
 
+  /// When [messages] is not empty and [isConversationLoading] is true, controls
+  /// whether the list is replaced by a loader or left visible.
+  final MessengerThreadFetchLoadingMode threadFetchLoadingMode;
+
+  /// Replaces the message list while refetching when [threadFetchLoadingMode] is
+  /// [MessengerThreadFetchLoadingMode.replaceMessageList].
+  final WidgetBuilder? threadFetchLoadingBuilder;
+
+  /// When true, [MediaQuery.viewInsets] bottom changes (e.g. keyboard) trigger
+  /// a jump to the latest message so the thread stays pinned to the composer.
+  final bool snapToBottomOnKeyboardInsetChange;
+
+  @override
+  State<MessengerChatThread> createState() => _MessengerChatThreadState();
+}
+
+class _MessengerChatThreadState extends State<MessengerChatThread> {
+  double _lastViewInsetBottom = 0;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!widget.snapToBottomOnKeyboardInsetChange) {
+      _lastViewInsetBottom = MediaQuery.of(context).viewInsets.bottom;
+      return;
+    }
+    if (widget.conversation == null || widget.messages.isEmpty) {
+      _lastViewInsetBottom = MediaQuery.of(context).viewInsets.bottom;
+      return;
+    }
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+    if (bottom != _lastViewInsetBottom) {
+      _lastViewInsetBottom = bottom;
+      MessengerThreadScroll.scheduleJumpToBottom(
+        widget.messagesScrollController,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
     final loadingStyle =
-        threadLoadingStyle ?? MessengerThreadLoadingStyle.defaults;
-    final visibleTyping = remoteTypingUsers
-        .where((user) => user.userId != currentUserId)
+        widget.threadLoadingStyle ?? MessengerThreadLoadingStyle.defaults;
+    final visibleTyping = widget.remoteTypingUsers
+        .where((user) => user.userId != widget.currentUserId)
         .toList(growable: false);
     final typingLine = visibleTyping.isEmpty
         ? ''
-        : _formatRemoteTypingLine(visibleTyping, typingIndicatorPrefix);
+        : _formatRemoteTypingLine(visibleTyping, widget.typingIndicatorPrefix);
 
     Widget buildMessageList() {
       final bottomPad = _kThreadListBottomScrollPadding;
       return ListView.builder(
-        controller: messagesScrollController,
+        controller: widget.messagesScrollController,
         clipBehavior: Clip.none,
         padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + bottomPad),
-        itemCount: messages.length,
+        itemCount: widget.messages.length,
         itemBuilder: (context, index) {
-          final message = messages[index];
-          final mine = message.senderId == currentUserId;
-          final showDate = showDateSeparators &&
+          final message = widget.messages[index];
+          final mine = message.senderId == widget.currentUserId;
+          final showDate = widget.showDateSeparators &&
               (index == 0 ||
                   !_isSameDay(
-                    messages[index - 1].createdAt,
+                    widget.messages[index - 1].createdAt,
                     message.createdAt,
                   ));
 
@@ -153,20 +198,22 @@ class MessengerChatThread extends StatelessWidget {
               MessengerMessageBubble(
                 message: message,
                 isMine: mine,
-                currentUserId: currentUserId,
-                canDelete: canDeleteMessage?.call(message) ?? mine,
-                onReact: onReact == null
+                currentUserId: widget.currentUserId,
+                canDelete: widget.canDeleteMessage?.call(message) ?? mine,
+                onReact: widget.onReact == null
                     ? null
-                    : (reaction) => onReact!(message.id, reaction),
-                onRemoveReaction: onRemoveReaction == null
+                    : (reaction) => widget.onReact!(message.id, reaction),
+                onRemoveReaction: widget.onRemoveReaction == null
                     ? null
                     : (messageId, reactionType) =>
-                        onRemoveReaction!(messageId, reactionType),
-                onDelete: onDelete == null ? null : () => onDelete!(message.id),
-                onMarkSeen:
-                    onMarkSeen == null ? null : () => onMarkSeen!(message.id),
-                enableReactions: enableReactions,
-                reactionOptions: reactionOptions,
+                        widget.onRemoveReaction!(messageId, reactionType),
+                onDelete:
+                    widget.onDelete == null ? null : () => widget.onDelete!(message.id),
+                onMarkSeen: widget.onMarkSeen == null
+                    ? null
+                    : () => widget.onMarkSeen!(message.id),
+                enableReactions: widget.enableReactions,
+                reactionOptions: widget.reactionOptions,
               ),
             ],
           );
@@ -179,11 +226,11 @@ class MessengerChatThread extends StatelessWidget {
         key: const ValueKey('threadEmpty'),
         container: true,
         label: 'No messages in conversation',
-        child: emptyMessagesBuilder != null
-            ? emptyMessagesBuilder!(context)
+        child: widget.emptyMessagesBuilder != null
+            ? widget.emptyMessagesBuilder!(context)
             : Center(
                 child: Text(
-                  emptyMessagesMessage,
+                  widget.emptyMessagesMessage,
                   style: TextStyle(
                     color: theme.subtleText,
                     fontWeight: FontWeight.w600,
@@ -194,11 +241,11 @@ class MessengerChatThread extends StatelessWidget {
       );
     }
 
-    /// Keeps one [ListView] subtree whenever [messages] is non-empty so opening
-    /// a thread (loading → loaded) does not recreate the scroll view (which
-    /// reset scroll to the top).
+    /// When [messages] is non-empty and not in refetch-replace mode, keeps one
+    /// [ListView] subtree so opening a thread (loading → loaded) does not reset
+    /// scroll to the top.
     Widget threadBody;
-    if (conversation == null) {
+    if (widget.conversation == null) {
       threadBody = Semantics(
         key: const ValueKey('threadNoneSelected'),
         container: true,
@@ -213,9 +260,9 @@ class MessengerChatThread extends StatelessWidget {
           ),
         ),
       );
-    } else if (messages.isEmpty) {
-      if (isConversationLoading) {
-        final builder = loadingMessagesBuilder;
+    } else if (widget.messages.isEmpty) {
+      if (widget.isConversationLoading) {
+        final builder = widget.loadingMessagesBuilder;
         threadBody = builder != null
             ? KeyedSubtree(
                 key: const ValueKey('threadLoadingCustom'),
@@ -228,13 +275,19 @@ class MessengerChatThread extends StatelessWidget {
       } else {
         threadBody = buildEmptyMessages();
       }
+    } else if (widget.isConversationLoading &&
+        widget.threadFetchLoadingMode ==
+            MessengerThreadFetchLoadingMode.replaceMessageList) {
+      threadBody = KeyedSubtree(
+        key: const ValueKey('threadRefetchLoading'),
+        child: widget.threadFetchLoadingBuilder?.call(context) ??
+            const MessengerDefaultInlineLoading(),
+      );
     } else {
-      // No overlay while reloading — hosts show progress outside the thread
-      // (e.g. app bar, shell list pane, pull-to-refresh).
       threadBody = ClipRect(
         clipBehavior: Clip.hardEdge,
         child: KeyedSubtree(
-          key: ValueKey('threadMessages-${conversation?.id ?? 'none'}'),
+          key: ValueKey('threadMessages-${widget.conversation?.id ?? 'none'}'),
           child: buildMessageList(),
         ),
       );
@@ -243,16 +296,18 @@ class MessengerChatThread extends StatelessWidget {
     final stage = Column(
       children: [
         _ThreadHeader(
-          isMobile: isMobile,
-          conversation: conversation,
-          onBack: onBack,
+          isMobile: widget.isMobile,
+          conversation: widget.conversation,
+          onBack: widget.onBack,
         ),
         Expanded(
           child: ClipRect(
             child: ColoredBox(
-              color: isMobile ? theme.threadBackgroundMobile : theme.background,
+              color: widget.isMobile
+                  ? theme.threadBackgroundMobile
+                  : theme.background,
               child: AnimatedSwitcher(
-                duration: contentTransitionDuration,
+                duration: widget.contentTransitionDuration,
                 switchInCurve: Curves.easeOutCubic,
                 switchOutCurve: Curves.easeInCubic,
                 child: threadBody,
@@ -260,41 +315,41 @@ class MessengerChatThread extends StatelessWidget {
             ),
           ),
         ),
-        if (conversation != null && typingLine.isNotEmpty)
+        if (widget.conversation != null && typingLine.isNotEmpty)
           _RemoteTypingStrip(text: typingLine, theme: theme),
-        if (conversation != null)
+        if (widget.conversation != null)
           MessengerComposerBar(
-            controller: composerController,
-            isRecording: isRecording,
-            isSending: isSending,
-            onSend: onSend,
-            onPickImage: onPickImage,
-            onPickAudio: onPickAudio,
-            onStartRecording: onStartRecording,
-            onFinishRecording: onFinishRecording,
-            onCancelRecording: onCancelRecording,
-            onToggleRecording: onToggleRecording,
-            onPickCamera: onPickCamera,
-            onPickVideo: onPickVideo,
-            onPickDocument: onPickDocument,
-            hintText: composerHintText,
-            inputTextStyle: composerInputTextStyle,
-            hintTextStyle: composerHintTextStyle,
-            fieldBackgroundColor: composerFieldBackgroundColor,
-            fieldContentPadding: composerFieldContentPadding,
-            attachmentSheetTitle: attachmentSheetTitle,
-            attachmentOptions: attachmentOptions,
-            typingConversationId: conversation?.id,
-            onTypingStart: onTypingStart,
-            onTypingStop: onTypingStop,
-            hasPendingAttachment: hasPendingAttachment,
-            pendingAttachmentLabel: pendingAttachmentLabel,
-            onClearPendingAttachment: onClearPendingAttachment,
+            controller: widget.composerController,
+            isRecording: widget.isRecording,
+            isSending: widget.isSending,
+            onSend: widget.onSend,
+            onPickImage: widget.onPickImage,
+            onPickAudio: widget.onPickAudio,
+            onStartRecording: widget.onStartRecording,
+            onFinishRecording: widget.onFinishRecording,
+            onCancelRecording: widget.onCancelRecording,
+            onToggleRecording: widget.onToggleRecording,
+            onPickCamera: widget.onPickCamera,
+            onPickVideo: widget.onPickVideo,
+            onPickDocument: widget.onPickDocument,
+            hintText: widget.composerHintText,
+            inputTextStyle: widget.composerInputTextStyle,
+            hintTextStyle: widget.composerHintTextStyle,
+            fieldBackgroundColor: widget.composerFieldBackgroundColor,
+            fieldContentPadding: widget.composerFieldContentPadding,
+            attachmentSheetTitle: widget.attachmentSheetTitle,
+            attachmentOptions: widget.attachmentOptions,
+            typingConversationId: widget.conversation?.id,
+            onTypingStart: widget.onTypingStart,
+            onTypingStop: widget.onTypingStop,
+            hasPendingAttachment: widget.hasPendingAttachment,
+            pendingAttachmentLabel: widget.pendingAttachmentLabel,
+            onClearPendingAttachment: widget.onClearPendingAttachment,
           ),
       ],
     );
 
-    if (isMobile) {
+    if (widget.isMobile) {
       return stage;
     }
 

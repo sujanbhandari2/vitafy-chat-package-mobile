@@ -14,6 +14,7 @@ class ChatService {
     required ChatServiceConfig config,
     Dio? dio,
     SocketClient? socketClient,
+    ChatRepository? repository,
   })  : _config = config,
         _dio = dio ?? createChatDio(config),
         _socketClient = socketClient ??
@@ -23,7 +24,7 @@ class ChatService {
             ) {
     _api = ChatApi(_dio, config);
     _socketApi = ChatSocketApi(_socketClient);
-    _repository = BackendChatRepositoryImpl(_api, _socketApi);
+    _repository = repository ?? BackendChatRepositoryImpl(_api, _socketApi);
   }
 
   final ChatServiceConfig _config;
@@ -31,7 +32,7 @@ class ChatService {
   final SocketClient _socketClient;
   late final ChatApi _api;
   late final ChatSocketApi _socketApi;
-  late final BackendChatRepositoryImpl _repository;
+  late final ChatRepository _repository;
 
   ChatServiceConfig get config => _config;
   Dio get dio => _dio;

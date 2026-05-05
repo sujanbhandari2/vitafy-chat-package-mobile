@@ -69,6 +69,7 @@ class ChatMessage {
     required this.deliveredReceipts,
     required this.readReceipts,
     this.sender,
+    this.deliveryStatus,
   });
 
   final String id;
@@ -89,6 +90,9 @@ class ChatMessage {
   final List<DeliveredReceipt> deliveredReceipts;
   final List<ReadReceipt> readReceipts;
   final ChatMessageSender? sender;
+
+  /// Server-provided delivery/read aggregate when present (e.g. SENT, DELIVERED, SEEN).
+  final String? deliveryStatus;
 
   bool get isDeleted => deletedAt != null;
 
@@ -165,6 +169,9 @@ class ChatMessage {
               Map<String, dynamic>.from(json['sender'] as Map),
             )
           : null,
+      deliveryStatus: json['deliveryStatus']?.toString() ??
+          json['delivery_status']?.toString() ??
+          json['status']?.toString(),
     );
   }
 
@@ -181,6 +188,7 @@ class ChatMessage {
     List<MessageReaction>? reactions,
     List<DeliveredReceipt>? deliveredReceipts,
     List<ReadReceipt>? readReceipts,
+    String? deliveryStatus,
   }) {
     return ChatMessage(
       id: id,
@@ -201,6 +209,7 @@ class ChatMessage {
       deliveredReceipts: deliveredReceipts ?? this.deliveredReceipts,
       readReceipts: readReceipts ?? this.readReceipts,
       sender: sender,
+      deliveryStatus: deliveryStatus ?? this.deliveryStatus,
     );
   }
 }
