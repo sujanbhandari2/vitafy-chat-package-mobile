@@ -29,6 +29,7 @@ class MessengerComposerBar extends StatefulWidget {
     this.fieldContentPadding,
     this.attachmentSheetTitle = 'Attachments',
     this.attachmentOptions,
+    this.attachmentOptionTextStyle,
     this.typingConversationId,
     this.onTypingStart,
     this.onTypingStop,
@@ -62,6 +63,7 @@ class MessengerComposerBar extends StatefulWidget {
   final EdgeInsetsGeometry? fieldContentPadding;
   final String attachmentSheetTitle;
   final List<MessengerAttachmentOption>? attachmentOptions;
+  final TextStyle? attachmentOptionTextStyle;
 
   final String? typingConversationId;
   final Future<void> Function(String conversationId)? onTypingStart;
@@ -275,7 +277,10 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
               ...items.map(
                 (option) => ListTile(
                   leading: Icon(option.icon),
-                  title: Text(option.label),
+                  title: Text(
+                    option.label,
+                    style: widget.attachmentOptionTextStyle,
+                  ),
                   enabled: option.onTap != null,
                   onTap: option.onTap == null
                       ? null
@@ -308,13 +313,6 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
         label: 'Images',
         icon: Icons.image_outlined,
         onTap: widget.onPickImage,
-      ),
-    );
-    options.add(
-      MessengerAttachmentOption(
-        label: 'Video',
-        icon: Icons.videocam_outlined,
-        onTap: widget.onPickVideo,
       ),
     );
     options.add(

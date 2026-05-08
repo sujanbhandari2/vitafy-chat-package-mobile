@@ -126,6 +126,35 @@ void main() {
     },
   );
 
+  testWidgets('deleted message hides reaction panel in action sheet',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerMessageBubble(
+              message: makeMessage(content: 'Deleted', isDeleted: true),
+              isMine: true,
+              enableReactions: true,
+              reactionOptions: const ['👍', '❤️'],
+              onReact: (_) {},
+              canDelete: true,
+              onDelete: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.longPress(find.text('Message deleted'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('👍'), findsNothing);
+    expect(find.text('❤️'), findsNothing);
+    expect(find.text('Delete message'), findsOneWidget);
+  });
+
   testWidgets('delete action uses custom icon and text style', (tester) async {
     const customStyle = TextStyle(color: Colors.purple, fontSize: 18);
     await tester.pumpWidget(

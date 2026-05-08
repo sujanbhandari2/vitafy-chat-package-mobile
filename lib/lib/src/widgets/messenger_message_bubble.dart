@@ -29,6 +29,7 @@ class MessengerMessageBubble extends StatefulWidget {
       fontSize: 16,
     ),
     this.onSwipeToReply,
+    this.attachmentCaptionTextStyle,
   });
 
   final MessengerChatMessage message;
@@ -45,6 +46,9 @@ class MessengerMessageBubble extends StatefulWidget {
   final IconData deleteActionIcon;
   final TextStyle deleteActionTextStyle;
   final ValueChanged<MessengerChatMessage>? onSwipeToReply;
+  /// Merged onto the default caption style under attachment payloads (image,
+  /// video, file, voice). Omitted fields keep theme-derived defaults.
+  final TextStyle? attachmentCaptionTextStyle;
 
   @override
   State<MessengerMessageBubble> createState() => _MessengerMessageBubbleState();
@@ -59,6 +63,11 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
         widget.isMine ? theme.bubbleMineText : theme.bubbleOtherText;
     final timeColor =
         widget.isMine ? theme.bubbleMineTime : theme.bubbleOtherTime;
+    final attachmentCaptionStyle =
+        _mergedAttachmentCaptionStyle(
+      textColor: textColor,
+      override: widget.attachmentCaptionTextStyle,
+    );
     return Semantics(
       container: true,
       label: 'Message from ${widget.message.senderLabel}',
@@ -109,70 +118,80 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
                               ? Border.all(color: theme.border)
                               : null,
                         ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            if (widget.message.quotedReply != null) ...[
-                              _BubbleQuotedReply(
-                                quote: widget.message.quotedReply!,
-                                textColor: textColor,
-                                mutedColor: timeColor,
-                                accentColor: theme.primary,
-                              ),
-                              const SizedBox(height: 8),
-                            ],
-                            Align(
-                              alignment: widget.isMine
-                                  ? Alignment.centerRight
-                                  : Alignment.centerLeft,
-                              child: _MessageContent(
-                                message: widget.message,
-                                textColor: textColor,
-                                mutedColor: timeColor,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Align(
-                              alignment: widget.isMine
-                                  ? Alignment.centerRight
-                                  : Alignment.centerLeft,
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    DateFormat('h:mm a')
-                                        .format(widget.message.createdAt),
-                                    style: TextStyle(
-                                      color: timeColor,
-                                      fontSize: 10.5,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                  if (widget.isMine) ...[
-                                    const SizedBox(width: 4),
-                                    _DeliveryTick(
-                                      status: widget.message.deliveryStatus,
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                            if (widget.message.isUploading ||
-                                widget.message.uploadProgress != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 6),
-                                child: LinearProgressIndicator(
-                                  minHeight: 3,
-                                  value: widget.message.uploadProgress,
-                                  backgroundColor:
-                                      timeColor.withValues(alpha: 0.2),
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    timeColor,
-                                  ),
+                        child: IntrinsicWidth(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (widget.message.quotedReply != null) ...[
+                                _BubbleQuotedReply(
+                                  quote: widget.message.quotedReply!,
+                                  textColor: textColor,
+                                  mutedColor: timeColor,
+                                  accentColor: theme.primary,
+                                  maxTextWidth: _maxBubbleWidth(context) - 56,
+                                ),
+                                const SizedBox(height: 8),
+                              ],
+                              Align(
+                                alignment: widget.isMine
+                                    ? Alignment.centerRight
+                                    : Alignment.centerLeft,
+                                child: _MessageContent(
+                                  message: widget.message,
+                                  textColor: textColor,
+                                  mutedColor: timeColor,
+                                  attachmentCaptionStyle:
+                                      attachmentCaptionStyle,
                                 ),
                               ),
-                          ],
+                              const SizedBox(height: 4),
+                              Align(
+                                alignment: widget.isMine
+                                    ? Alignment.centerRight
+                                    : Alignment.centerLeft,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      DateFormat('h:mm a')
+                                          .format(widget.message.createdAt),
+                                      style: TextStyle(
+                                        color: timeColor,
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    if (widget.isMine) ...[
+                                      const SizedBox(width: 4),
+                                      _DeliveryTick(
+                                        status:
+                                            widget.message.deliveryStatus,
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              if (widget.message.isUploading ||
+                                  widget.message.uploadProgress != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: SizedBox(
+                                    width: 220,
+                                    child: LinearProgressIndicator(
+                                      minHeight: 3,
+                                      value: widget.message.uploadProgress,
+                                      backgroundColor: timeColor
+                                          .withValues(alpha: 0.2),
+                                      valueColor:
+                                          AlwaysStoppedAnimation<Color>(
+                                        timeColor,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
                       ),
                     if (widget.message.reactions.isNotEmpty) ...[
@@ -231,7 +250,9 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
   }
 
   Future<void> _showMessageActionsSheet(BuildContext context) async {
-    final canReact = widget.enableReactions && widget.onReact != null;
+    final canReact = !widget.message.isDeleted &&
+        widget.enableReactions &&
+        widget.onReact != null;
     final canDelete = widget.canDelete && widget.onDelete != null;
     final hasAnyAction = canReact || canDelete;
     if (!hasAnyAction) {
@@ -436,18 +457,22 @@ class _BubbleQuotedReply extends StatelessWidget {
     required this.textColor,
     required this.mutedColor,
     required this.accentColor,
+    required this.maxTextWidth,
   });
 
   final MessengerQuotedMessage quote;
   final Color textColor;
   final Color mutedColor;
   final Color accentColor;
+  /// Caps quote text lines so [IntrinsicWidth] can shrink-wrap short previews.
+  final double maxTextWidth;
 
   @override
   Widget build(BuildContext context) {
     final thumb = _maybeThumbUrl();
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           width: 3,
@@ -474,7 +499,10 @@ class _BubbleQuotedReply extends StatelessWidget {
           ),
           const SizedBox(width: 8),
         ],
-        Expanded(
+        ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: maxTextWidth > 40 ? maxTextWidth : 40,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -548,11 +576,24 @@ class _MessageContent extends StatelessWidget {
     required this.message,
     required this.textColor,
     required this.mutedColor,
+    required this.attachmentCaptionStyle,
   });
 
   final MessengerChatMessage message;
   final Color textColor;
   final Color mutedColor;
+  final TextStyle attachmentCaptionStyle;
+
+  Widget _attachmentCaptionIfAny() {
+    final cap = message.caption?.trim() ?? '';
+    if (cap.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Text(cap, style: attachmentCaptionStyle),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -584,70 +625,92 @@ class _MessageContent extends StatelessWidget {
           uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
       return GestureDetector(
         onTap: () => _openImagePreview(context, message.content, isNetwork),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: isNetwork
-              ? Image.network(
-                  message.content,
-                  width: 220,
-                  height: 220,
-                  fit: BoxFit.cover,
-                  loadingBuilder: (context, child, loadingProgress) {
-                    if (loadingProgress == null) {
-                      return child;
-                    }
-                    final expected = loadingProgress.expectedTotalBytes;
-                    final loaded = loadingProgress.cumulativeBytesLoaded;
-                    final value =
-                        expected == null ? null : loaded / expected.toDouble();
-                    return Container(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: isNetwork
+                  ? Image.network(
+                      message.content,
                       width: 220,
                       height: 220,
-                      alignment: Alignment.center,
-                      color: mutedColor.withValues(alpha: 0.15),
-                      child: CircularProgressIndicator(
-                        value: value,
-                        strokeWidth: 2,
-                        color: mutedColor,
+                      fit: BoxFit.cover,
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) {
+                          return child;
+                        }
+                        final expected = loadingProgress.expectedTotalBytes;
+                        final loaded = loadingProgress.cumulativeBytesLoaded;
+                        final value = expected == null
+                            ? null
+                            : loaded / expected.toDouble();
+                        return Container(
+                          width: 220,
+                          height: 220,
+                          alignment: Alignment.center,
+                          color: mutedColor.withValues(alpha: 0.15),
+                          child: CircularProgressIndicator(
+                            value: value,
+                            strokeWidth: 2,
+                            color: mutedColor,
+                          ),
+                        );
+                      },
+                      errorBuilder: (_, __, ___) => const SizedBox(
+                        width: 220,
+                        height: 100,
+                        child: Center(child: Text('Unable to load image')),
                       ),
-                    );
-                  },
-                  errorBuilder: (_, __, ___) => const SizedBox(
-                    width: 220,
-                    height: 100,
-                    child: Center(child: Text('Unable to load image')),
-                  ),
-                )
-              : Image.file(
-                  File(message.content),
-                  width: 220,
-                  height: 220,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const SizedBox(
-                    width: 220,
-                    height: 100,
-                    child: Center(child: Text('Unable to load image')),
-                  ),
-                ),
+                    )
+                  : Image.file(
+                      File(message.content),
+                      width: 220,
+                      height: 220,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const SizedBox(
+                        width: 220,
+                        height: 100,
+                        child: Center(child: Text('Unable to load image')),
+                      ),
+                    ),
+            ),
+            _attachmentCaptionIfAny(),
+          ],
         ),
       );
     }
 
     if (message.type == MessengerMessageType.video) {
-      return _MediaAssetTile(
-        icon: Icons.videocam_rounded,
-        label: _labelForContent(message.content, fallback: 'Video'),
-        textColor: textColor,
-        mutedColor: mutedColor,
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _MediaAssetTile(
+            icon: Icons.videocam_rounded,
+            label: _labelForContent(message.content, fallback: 'Video'),
+            textColor: textColor,
+            mutedColor: mutedColor,
+          ),
+          _attachmentCaptionIfAny(),
+        ],
       );
     }
 
     if (message.type == MessengerMessageType.file) {
-      return _MediaAssetTile(
-        icon: Icons.insert_drive_file_rounded,
-        label: _labelForContent(message.content, fallback: 'File'),
-        textColor: textColor,
-        mutedColor: mutedColor,
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _MediaAssetTile(
+            icon: Icons.insert_drive_file_rounded,
+            label: _labelForContent(message.content, fallback: 'File'),
+            textColor: textColor,
+            mutedColor: mutedColor,
+          ),
+          _attachmentCaptionIfAny(),
+        ],
       );
     }
 
@@ -655,12 +718,19 @@ class _MessageContent extends StatelessWidget {
       final uri = Uri.tryParse(message.content);
       final isNetwork =
           uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
-      return MessengerVoicePlayer(
-        source: message.content,
-        preferDeviceFile: !isNetwork,
-        iconColor: textColor,
-        waveformActiveColor: textColor,
-        waveformInactiveColor: textColor.withValues(alpha: 0.35),
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          MessengerVoicePlayer(
+            source: message.content,
+            preferDeviceFile: !isNetwork,
+            iconColor: textColor,
+            waveformActiveColor: textColor,
+            waveformInactiveColor: textColor.withValues(alpha: 0.35),
+          ),
+          _attachmentCaptionIfAny(),
+        ],
       );
     }
 
@@ -782,6 +852,25 @@ class _MediaAssetTile extends StatelessWidget {
       ),
     );
   }
+}
+
+/// [TextStyle.merge] returns [other] unchanged when [other.inherit] is false,
+/// which drops bubble defaults such as [color]. Normalize so host overrides
+/// layer on the themed base instead of replacing it.
+TextStyle _mergedAttachmentCaptionStyle({
+  required Color textColor,
+  TextStyle? override,
+}) {
+  final base = TextStyle(
+    fontSize: 13,
+    color: textColor.withValues(alpha: 0.88),
+    height: 1.25,
+  );
+  if (override == null) {
+    return base;
+  }
+  final o = override.inherit ? override : override.copyWith(inherit: true);
+  return base.merge(o);
 }
 
 String _labelForContent(String content, {required String fallback}) {

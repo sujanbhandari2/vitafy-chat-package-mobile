@@ -217,6 +217,59 @@ void main() {
       await connection.close();
     });
 
+    test('seedFromConversations derives unread from messageStatus and force-clears active', () async {
+      final fake = FakeChatRepository();
+      final client = ChatClient(
+        config: const ChatServiceConfig(
+          apiBaseUrl: 'http://localhost',
+          socketUrl: 'http://localhost',
+        ),
+        repository: fake,
+      );
+      final connection = StreamController<ChatConnectionState>.broadcast();
+      final controller = ChatInboxController(
+        client: client,
+        currentUserId: 'user-1',
+        connectionState: connection.stream,
+      );
+
+      await controller.setActiveConversation('open');
+      fake.markConversationReadLog.clear();
+
+      controller.seedFromConversations([
+        Conversation.fromJson({
+          'id': 'unread-room',
+          'tenantId': 't',
+          'type': 'DIRECT',
+          'createdAt': DateTime.utc(2026).toIso8601String(),
+          'updatedAt': DateTime.utc(2026).toIso8601String(),
+          'participants': [],
+          'latestMessageId': '200',
+          'messageStatus': [
+            {'userId': 'user-1', 'lastReadMessageId': '180'},
+          ],
+        }),
+        Conversation.fromJson({
+          'id': 'open',
+          'tenantId': 't',
+          'type': 'DIRECT',
+          'createdAt': DateTime.utc(2026).toIso8601String(),
+          'updatedAt': DateTime.utc(2026).toIso8601String(),
+          'participants': [],
+          'latestMessageId': '300',
+          'messageStatus': [
+            {'userId': 'user-1', 'lastReadMessageId': '280'},
+          ],
+        }),
+      ]);
+
+      expect(controller.unreadByConversation.value['unread-room'], 1);
+      expect(controller.unreadByConversation.value.containsKey('open'), isFalse);
+
+      await controller.dispose();
+      await connection.close();
+    });
+
     test('deleted message does not bump conversation', () async {
       final fake = FakeChatRepository();
       final client = ChatClient(

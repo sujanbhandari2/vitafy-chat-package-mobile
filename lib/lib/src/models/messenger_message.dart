@@ -45,8 +45,12 @@ String messengerReplyPreviewSnippet(MessengerChatMessage message) {
   if (message.isUploading) {
     return 'Sending…';
   }
+  final caption = message.caption?.trim() ?? '';
+  if (caption.isNotEmpty) {
+    return _truncatePreview(caption);
+  }
   final text = message.content.trim();
-  if (text.isNotEmpty) {
+  if (message.type == MessengerMessageType.text && text.isNotEmpty) {
     return _truncatePreview(text);
   }
   switch (message.type) {
@@ -89,6 +93,7 @@ class MessengerChatMessage {
     required this.type,
     required this.content,
     required this.createdAt,
+    this.caption,
     this.isDeleted = false,
     this.deliveryStatus = MessengerDeliveryStatus.none,
     this.reactions = const [],
@@ -103,6 +108,8 @@ class MessengerChatMessage {
   final String senderLabel;
   final MessengerMessageType type;
   final String content;
+  /// Optional text shown beneath image, video, file, or voice payloads.
+  final String? caption;
   final DateTime createdAt;
   final bool isDeleted;
   final MessengerDeliveryStatus deliveryStatus;

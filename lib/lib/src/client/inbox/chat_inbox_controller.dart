@@ -104,8 +104,12 @@ class ChatInboxController {
   }
 
   void seedFromConversations(List<Conversation> list) {
-    _unreadNotifier.value =
-        UnreadMerger.mergeFromConversations(_unreadNotifier.value, list);
+    _unreadNotifier.value = UnreadMerger.mergeFromConversations(
+      _unreadNotifier.value,
+      list,
+      currentUserId: _currentUserId,
+      activeConversationId: _activeConversationId,
+    );
     _promotedAt.clear();
     _apiRank
       ..clear()

@@ -6,22 +6,47 @@ import '../models/conversation.dart';
 class UnreadMerger {
   const UnreadMerger._();
 
-  /// Merges [Conversation.unreadCount] from a REST list into [previous].
-  /// `0` or missing count for an item removes that conversation key when present.
+  /// Merges per-conversation unread from a REST list into [previous].
+  ///
+  /// Resolution order per row:
+  ///   1. Explicit numeric `unreadCount` / `unread` from the server wins (back-compat).
+  ///      A value of `0` or less clears the entry.
+  ///   2. Otherwise, when `latestMessageId` and the current user's message status
+  ///      are present, derive unread from `lastReadMessageId` vs `latestMessageId`.
+  ///      Unread sets the entry to `max(previous, 1)` so any prior socket-derived
+  ///      count is preserved while a fresh seed still shows bold as `1`.
+  ///   3. Rows with neither signal are left untouched.
+  ///
+  /// When [activeConversationId] is set, that conversation is force-cleared so
+  /// the open thread stays at zero on refresh (matches join+markRead semantics).
   static Map<String, int> mergeFromConversations(
     Map<String, int> previous,
-    List<Conversation> list,
-  ) {
+    List<Conversation> list, {
+    required String currentUserId,
+    String? activeConversationId,
+  }) {
     final next = Map<String, int>.from(previous);
+    final active = activeConversationId?.trim();
     for (final c in list) {
+      final id = c.id;
       final u = c.unreadCount;
-      if (u == null) {
-        continue;
+      if (u != null) {
+        if (u <= 0) {
+          next.remove(id);
+        } else {
+          next[id] = u;
+        }
+      } else if (c.latestMessageId != null &&
+          c.messageStatusByUserId.isNotEmpty) {
+        if (c.isUnreadFor(currentUserId)) {
+          final prev = next[id] ?? 0;
+          next[id] = prev > 1 ? prev : 1;
+        } else {
+          next.remove(id);
+        }
       }
-      if (u <= 0) {
-        next.remove(c.id);
-      } else {
-        next[c.id] = u;
+      if (active != null && active.isNotEmpty && id == active) {
+        next.remove(id);
       }
     }
     return next;

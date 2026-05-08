@@ -891,16 +891,35 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     return _materializeDraftDirectConversation(conversationId);
   }
 
-  void _onMobileThreadClosed() {
-    if (!_isDraftConversationId(_selectedConversationId)) {
+  void _onMobileThreadClosed(String conversationId) {
+    final id = conversationId.trim();
+    if (id.isEmpty) {
       return;
     }
-    if (!mounted) {
-      return;
+    final session = _session;
+    if (session != null && !_isDraftConversationId(id)) {
+      unawaited(
+        session.leaveConversation(id).catchError((Object error) {
+          _appendLog(
+            'Leave conversation on mobile thread close failed',
+            data: {
+              'conversationId': id,
+              'error': error.toString(),
+            },
+          );
+        }),
+      );
     }
-    setState(() {
-      _selectedConversationId = null;
-    });
+    if (_isDraftConversationId(id)) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        if (_selectedConversationId == id) {
+          _selectedConversationId = null;
+        }
+      });
+    }
   }
 
   Future<void> _sendMessage() async {
@@ -1655,12 +1674,42 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }
 
   MessengerChatMessage _mapMessage(ChatMessage message) {
+    final body = message.content.trim();
+    final attachmentUrl = message.attachments.isEmpty
+        ? ''
+        : message.attachments.first.url.trim();
+
+    late final String content;
+    late final String? caption;
+
+    switch (message.type) {
+      case MessageType.image:
+      case MessageType.voice:
+      case MessageType.video:
+      case MessageType.file:
+        if (attachmentUrl.isNotEmpty) {
+          content = attachmentUrl;
+          caption = body.isEmpty ? null : body;
+        } else {
+          content = body.isEmpty ? _messagePreview(message) : body;
+          caption = null;
+        }
+        break;
+      case MessageType.text:
+      case MessageType.link:
+      case MessageType.other:
+        content = body.isEmpty ? _messagePreview(message) : body;
+        caption = null;
+        break;
+    }
+
     return MessengerChatMessage(
       id: message.id,
       senderId: message.senderId,
       senderLabel: _senderName(message),
       type: _mapUiMessageType(message.type),
-      content: _messageContentForUi(message),
+      content: content,
+      caption: caption,
       createdAt: message.createdAt,
       isDeleted: message.isDeleted,
       deliveryStatus: _deliveryStatusFor(message),
@@ -1736,30 +1785,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     }
   }
 
-  String _messageContentForUi(ChatMessage message) {
-    final content = message.content.trim();
-    final hasAttachment = message.attachments.isNotEmpty;
-    if (!hasAttachment) {
-      return content.isEmpty ? _messagePreview(message) : content;
-    }
-
-    switch (message.type) {
-      case MessageType.image:
-      case MessageType.voice:
-      case MessageType.video:
-      case MessageType.file:
-        final attachmentUrl = message.attachments.first.url.trim();
-        if (attachmentUrl.isNotEmpty) {
-          return attachmentUrl;
-        }
-        return content.isEmpty ? _messagePreview(message) : content;
-      case MessageType.text:
-      case MessageType.link:
-      case MessageType.other:
-        return content.isEmpty ? _messagePreview(message) : content;
-    }
-  }
-
   String _conversationTitle(Conversation conversation) {
     final explicitTitle = conversation.title?.trim() ?? '';
     if (explicitTitle.isNotEmpty) {
@@ -1826,7 +1851,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       tenantId: _tenantScope?.tenantId ?? '',
       senderId: message.senderId,
       type: backendType,
-      content: hasAttachment ? '' : message.content,
+      content: hasAttachment ? (message.caption ?? '') : message.content,
       attachments: hasAttachment
           ? [
               ChatAttachment(

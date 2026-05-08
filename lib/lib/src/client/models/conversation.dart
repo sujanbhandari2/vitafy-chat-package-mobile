@@ -9,6 +9,42 @@ ChatMessage? _latestMessageFromJson(Map<String, dynamic> json) {
   return ChatMessage.fromJson(Map<String, dynamic>.from(raw));
 }
 
+/// Per-user read/delivery pointers for a conversation.
+class ConversationMessageStatus {
+  const ConversationMessageStatus({
+    required this.userId,
+    this.lastReadMessageId,
+    this.lastDeliveredMessageId,
+  });
+
+  final String userId;
+  final String? lastReadMessageId;
+  final String? lastDeliveredMessageId;
+
+  factory ConversationMessageStatus.fromJson(Map<String, dynamic> json) {
+    final userId = (json['userId'] ??
+            json['chatUserId'] ??
+            json['chat_user_id'] ??
+            json['user_id'] ??
+            '')
+        .toString()
+        .trim();
+    String? readId = _trimToNull(json['lastReadMessageId'] ??
+        json['last_read_message_id'] ??
+        json['lastReadId'] ??
+        json['last_read_id']);
+    String? deliveredId = _trimToNull(json['lastDeliveredMessageId'] ??
+        json['last_delivered_message_id'] ??
+        json['lastDeliveredId'] ??
+        json['last_delivered_id']);
+    return ConversationMessageStatus(
+      userId: userId,
+      lastReadMessageId: readId,
+      lastDeliveredMessageId: deliveredId,
+    );
+  }
+}
+
 class Conversation {
   const Conversation({
     required this.id,
@@ -21,6 +57,8 @@ class Conversation {
     required this.participants,
     this.unreadCount,
     this.latestMessage,
+    this.latestMessageId,
+    this.messageStatusByUserId = const <String, ConversationMessageStatus>{},
   });
 
   final String id;
@@ -38,7 +76,38 @@ class Conversation {
   /// Last message on the conversation from REST list payloads (e.g. getConversations).
   final ChatMessage? latestMessage;
 
+  /// Latest message id on the conversation. Falls back to [latestMessage]?.id
+  /// when the server only ships the embedded message.
+  final String? latestMessageId;
+
+  /// Per-user read/delivery pointers, keyed by user id.
+  ///
+  /// Sourced from any of these JSON shapes (first non-empty wins):
+  ///   - top-level `messageStatus` / `messageStatuses` / `userStatuses` array
+  ///   - per-participant `messageStatus` object on `participants[]`
+  final Map<String, ConversationMessageStatus> messageStatusByUserId;
+
   bool get isGlobal => type.toUpperCase() == 'SUPPORT';
+
+  /// True when [userId] has at least one unread message, derived from
+  /// [latestMessageId] vs the user's `lastReadMessageId`.
+  ///
+  /// Returns `false` when [latestMessageId] is missing (caller cannot decide).
+  bool isUnreadFor(String userId) {
+    final latest = latestMessageId?.trim();
+    if (latest == null || latest.isEmpty) {
+      return false;
+    }
+    final status = messageStatusByUserId[userId];
+    final lastRead = status?.lastReadMessageId?.trim();
+    if (lastRead == null || lastRead.isEmpty) {
+      return true;
+    }
+    if (lastRead == latest) {
+      return false;
+    }
+    return _compareMessageIds(lastRead, latest) < 0;
+  }
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
     final rawParticipants =
@@ -57,6 +126,21 @@ class Conversation {
       return int.tryParse(raw.toString());
     }
 
+    final participants = rawParticipants
+        .map(
+          (item) => ConversationParticipant.fromJson(
+            Map<String, dynamic>.from(item as Map),
+          ),
+        )
+        .toList();
+
+    final latest = _latestMessageFromJson(json);
+    final latestId = _trimToNull(json['latestMessageId'] ??
+            json['latest_message_id'] ??
+            json['lastMessageId'] ??
+            json['last_message_id']) ??
+        latest?.id.trim();
+
     return Conversation(
       id: json['id']?.toString() ?? '',
       tenantId: json['tenantId']?.toString() ?? '',
@@ -72,16 +156,75 @@ class Conversation {
             DateTime.now().toIso8601String(),
       ),
       unreadCount: parseUnread(json['unreadCount'] ?? json['unread']),
-      participants: rawParticipants
-          .map(
-            (item) => ConversationParticipant.fromJson(
-              Map<String, dynamic>.from(item as Map),
-            ),
-          )
-          .toList(),
-      latestMessage: _latestMessageFromJson(json),
+      participants: participants,
+      latestMessage: latest,
+      latestMessageId: (latestId == null || latestId.isEmpty) ? null : latestId,
+      messageStatusByUserId: _messageStatusFromJson(json, rawParticipants),
     );
   }
+}
+
+Map<String, ConversationMessageStatus> _messageStatusFromJson(
+  Map<String, dynamic> json,
+  List<dynamic> rawParticipants,
+) {
+  final out = <String, ConversationMessageStatus>{};
+
+  // Top-level array shapes.
+  final topLevel = json['messageStatus'] ??
+      json['messageStatuses'] ??
+      json['userStatuses'] ??
+      json['statuses'];
+  if (topLevel is List) {
+    for (final item in topLevel) {
+      if (item is! Map) continue;
+      final status = ConversationMessageStatus.fromJson(
+        Map<String, dynamic>.from(item),
+      );
+      if (status.userId.isEmpty) continue;
+      out[status.userId] = status;
+    }
+  }
+
+  // Per-participant `messageStatus` object fallback.
+  for (final raw in rawParticipants) {
+    if (raw is! Map) continue;
+    final part = Map<String, dynamic>.from(raw);
+    final embedded = part['messageStatus'] ?? part['message_status'];
+    if (embedded is! Map) continue;
+    final embeddedMap = Map<String, dynamic>.from(embedded);
+    final pid = (part['chatUserId'] ??
+            part['userId'] ??
+            embeddedMap['userId'] ??
+            embeddedMap['chatUserId'] ??
+            '')
+        .toString()
+        .trim();
+    if (pid.isEmpty) continue;
+    if (out.containsKey(pid)) continue;
+    embeddedMap['userId'] = pid;
+    out[pid] = ConversationMessageStatus.fromJson(embeddedMap);
+  }
+
+  return out;
+}
+
+/// Compares two message ids. Numeric ids are compared as ints; otherwise a
+/// lexical comparison is used. Returns negative when [a] < [b], 0 when equal,
+/// positive when [a] > [b].
+int _compareMessageIds(String a, String b) {
+  final ai = int.tryParse(a);
+  final bi = int.tryParse(b);
+  if (ai != null && bi != null) {
+    return ai.compareTo(bi);
+  }
+  return a.compareTo(b);
+}
+
+String? _trimToNull(Object? raw) {
+  if (raw == null) return null;
+  final s = raw.toString().trim();
+  return s.isEmpty ? null : s;
 }
 
 class ConversationParticipant {

@@ -616,6 +616,73 @@ void main() {
     expect(find.text('Suggested people'), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsWidgets);
   });
+
+  testWidgets('attachment sheet applies custom option label style',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+    const optionStyle = TextStyle(
+      fontSize: 19,
+      fontWeight: FontWeight.w700,
+      color: Colors.deepPurple,
+    );
+    final conversation = MessengerConversation(
+      id: 'c1',
+      title: 'Alice',
+      subtitle: 'Hello',
+      avatarLabel: 'A',
+      createdAt: DateTime.utc(2026),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 700,
+              width: 960,
+              child: MessengerChatShell(
+                currentUserId: 'me',
+                currentUserName: 'Me',
+                conversations: [conversation],
+                users: const [],
+                selectedConversationId: 'c1',
+                messages: const [],
+                composerController: composer,
+                messagesScrollController: scroll,
+                isSending: false,
+                isRecording: false,
+                onRefresh: () async {},
+                onLogout: () {},
+                onSelectConversation: (_) async {},
+                onOpenDirectChat: (_) async {},
+                onSend: () {},
+                onPickImage: () {},
+                onPickAudio: () {},
+                onToggleRecording: () {},
+                desktopBreakpoint: 400,
+                attachmentOptionTextStyle: optionStyle,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add_rounded).last);
+    await tester.pumpAndSettle();
+
+    final label = tester.widget<Text>(find.text('Images'));
+    expect(label.style?.fontSize, optionStyle.fontSize);
+    expect(label.style?.fontWeight, optionStyle.fontWeight);
+    expect(label.style?.color, optionStyle.color);
+  });
 }
 
 class _ThrowingMediaPicker implements MessengerMediaPicker {

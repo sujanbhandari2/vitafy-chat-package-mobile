@@ -76,6 +76,8 @@ class MessengerChatThread extends StatefulWidget {
     this.composerReplyDraft,
     this.onComposerReplyDraftChanged,
     this.composerFocusNode,
+    this.attachmentCaptionTextStyle,
+    this.attachmentOptionTextStyle,
   });
 
   final MessengerConversation? conversation;
@@ -150,6 +152,12 @@ class MessengerChatThread extends StatefulWidget {
   /// Optional focus node for the composer [TextField] (e.g. focus after swipe).
   final FocusNode? composerFocusNode;
 
+  /// Overrides default styling for captions shown under attachment payloads.
+  final TextStyle? attachmentCaptionTextStyle;
+
+  /// Overrides text styling for + sheet options (Camera, Images, etc).
+  final TextStyle? attachmentOptionTextStyle;
+
   @override
   State<MessengerChatThread> createState() => _MessengerChatThreadState();
 }
@@ -212,6 +220,7 @@ class _MessengerChatThreadState extends State<MessengerChatThread> {
               if (showDate) _DateSeparator(date: message.createdAt),
               MessengerMessageBubble(
                 deleteActionTextStyle: Theme.of(context).textTheme.bodyMedium!,
+                attachmentCaptionTextStyle: widget.attachmentCaptionTextStyle,
                 message: message,
                 isMine: mine,
                 currentUserId: widget.currentUserId,
@@ -372,6 +381,7 @@ class _MessengerChatThreadState extends State<MessengerChatThread> {
             fieldContentPadding: widget.composerFieldContentPadding,
             attachmentSheetTitle: widget.attachmentSheetTitle,
             attachmentOptions: widget.attachmentOptions,
+            attachmentOptionTextStyle: widget.attachmentOptionTextStyle,
             typingConversationId: widget.conversation?.id,
             onTypingStart: widget.onTypingStart,
             onTypingStop: widget.onTypingStop,

@@ -127,6 +127,8 @@ class MessengerChatShell extends StatefulWidget {
     this.composerReplyDraft,
     this.onComposerReplyDraftChanged,
     this.composerFocusNode,
+    this.attachmentCaptionTextStyle,
+    this.attachmentOptionTextStyle,
   });
 
   final String currentUserId;
@@ -202,6 +204,7 @@ class MessengerChatShell extends StatefulWidget {
   final EdgeInsetsGeometry? composerFieldContentPadding;
   final String attachmentSheetTitle;
   final List<MessengerAttachmentOption>? attachmentOptions;
+  final TextStyle? attachmentOptionTextStyle;
   final MessengerThemeData? theme;
   final double desktopBreakpoint;
   final String emptyMessagesMessage;
@@ -270,8 +273,12 @@ class MessengerChatShell extends StatefulWidget {
   final Future<String?> Function(String conversationId)?
       prepareOutgoingConversation;
 
-  /// Called after the full-screen mobile thread route is popped (back).
-  final VoidCallback? onMobileThreadClosed;
+  /// Called after the full-screen mobile thread route is popped (back), with
+  /// the [conversationId] for the thread that was shown. Hosts should call
+  /// [ChatSession.leaveConversation] (or equivalent) so the socket inbox no
+  /// longer treats that room as active (otherwise inbound messages can still
+  /// emit read receipts for the sender).
+  final void Function(String conversationId)? onMobileThreadClosed;
 
   /// Optional opt-in slot for an introductory "Suggested people" surface
   /// (typically a [MessengerSuggestedPeoplePanel]). When non-null and
@@ -290,6 +297,9 @@ class MessengerChatShell extends StatefulWidget {
 
   /// Optional [FocusNode] for the thread composer field.
   final FocusNode? composerFocusNode;
+
+  /// Passed through to each [MessengerMessageBubble] in the thread.
+  final TextStyle? attachmentCaptionTextStyle;
 
   @override
   State<MessengerChatShell> createState() => _MessengerChatShellState();
@@ -348,6 +358,15 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     });
   }
 
+  /// Normalized map key for [_pendingMediaByConversation] (trimmed non-empty ids).
+  String? _conversationKey(String? conversationId) {
+    final trimmed = conversationId?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    return trimmed;
+  }
+
   @override
   void didUpdateWidget(covariant MessengerChatShell oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -356,7 +375,9 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
             !identical(oldWidget.messages, widget.messages) ||
             !identical(oldWidget.conversations, widget.conversations) ||
             oldWidget.isConversationLoading != widget.isConversationLoading ||
-            oldWidget.loadingConversationId != widget.loadingConversationId;
+            oldWidget.loadingConversationId != widget.loadingConversationId ||
+            oldWidget.composerReplyDraft?.targetMessageId !=
+                widget.composerReplyDraft?.targetMessageId;
     if (shouldRefreshMobileThread) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
@@ -435,12 +456,13 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
         ? _messagesForConversation(widget.selectedConversationId)
         : const <MessengerChatMessage>[];
     final threadMessages = rawThreadMessages;
-    final pendingMedia = selectedConversationId == null
+    final pendingMediaKey = _conversationKey(selectedConversationId);
+    final pendingMedia = pendingMediaKey == null
         ? null
-        : _pendingMediaByConversation[selectedConversationId.trim()];
+        : _pendingMediaByConversation[pendingMediaKey];
     final hasPendingAttachment = pendingMedia != null;
-    final isMediaSending = selectedConversationId != null &&
-        _mediaSendingConversationIds.contains(selectedConversationId);
+    final isMediaSending = pendingMediaKey != null &&
+        _mediaSendingConversationIds.contains(pendingMediaKey);
     final isPackageRecording = _packageRecording &&
         selectedConversationId != null &&
         selectedConversationId == _recordingConversationId;
@@ -528,6 +550,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       composerFieldContentPadding: widget.composerFieldContentPadding,
       attachmentSheetTitle: widget.attachmentSheetTitle,
       attachmentOptions: widget.attachmentOptions,
+      attachmentOptionTextStyle: widget.attachmentOptionTextStyle,
       onReact: widget.onReact,
       onRemoveReaction: widget.onRemoveReaction,
       onDelete: widget.onDelete,
@@ -548,12 +571,17 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
           ? null
           : () {
               setState(() {
-                _pendingMediaByConversation.remove(selectedConversationId);
+                final k = _conversationKey(selectedConversationId);
+                if (k != null) {
+                  _pendingMediaByConversation.remove(k);
+                }
               });
+              _scheduleMobileThreadRefresh();
             },
       composerReplyDraft: widget.composerReplyDraft,
       onComposerReplyDraftChanged: widget.onComposerReplyDraftChanged,
       composerFocusNode: widget.composerFocusNode,
+      attachmentCaptionTextStyle: widget.attachmentCaptionTextStyle,
     );
   }
 
@@ -574,6 +602,12 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     required String? fallbackConversationId,
     required bool forceLoading,
   }) async {
+    final selected = widget.selectedConversationId?.trim();
+    final fallback = fallbackConversationId?.trim();
+    final mobileClosedConversationId = (selected != null && selected.isNotEmpty)
+        ? selected
+        : (fallback != null && fallback.isNotEmpty ? fallback : '');
+
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (routeContext) => MessengerTheme(
@@ -601,7 +635,9 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     if (!mounted) {
       return;
     }
-    widget.onMobileThreadClosed?.call();
+    if (mobileClosedConversationId.isNotEmpty) {
+      widget.onMobileThreadClosed?.call(mobileClosedConversationId);
+    }
   }
 
   List<MessengerChatMessage> _messagesForConversation(String? conversationId) {
@@ -674,9 +710,9 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   }
 
   Future<void> _handleStartRecording(String? conversationId) async {
-    final targetConversationId =
-        conversationId ?? widget.selectedConversationId;
-    if (targetConversationId == null || targetConversationId.isEmpty) {
+    final recordingKey =
+        _conversationKey(conversationId ?? widget.selectedConversationId);
+    if (recordingKey == null) {
       return;
     }
     final orchestrator = _buildOrchestrator();
@@ -694,7 +730,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       }
       setState(() {
         _packageRecording = true;
-        _recordingConversationId = targetConversationId;
+        _recordingConversationId = recordingKey;
       });
       _scheduleMobileThreadRefresh();
     } catch (error) {
@@ -719,16 +755,17 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     }
     try {
       final picked = await orchestrator.finishVoiceRecording();
-      if (!mounted) {
-        return;
+    if (!mounted) {
+      return;
+    }
+    final finishKey = _conversationKey(targetConversationId);
+    setState(() {
+      _packageRecording = false;
+      _recordingConversationId = null;
+      if (picked != null && finishKey != null) {
+        _pendingMediaByConversation[finishKey] = picked;
       }
-      setState(() {
-        _packageRecording = false;
-        _recordingConversationId = null;
-        if (picked != null) {
-          _pendingMediaByConversation[targetConversationId] = picked;
-        }
-      });
+    });
       _scheduleMobileThreadRefresh();
     } catch (error) {
       if (mounted) {
@@ -776,10 +813,8 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     required VoidCallback fallback,
   }) async {
     final orchestrator = _buildOrchestrator();
-    final conversationId = widget.selectedConversationId;
-    if (orchestrator == null ||
-        conversationId == null ||
-        conversationId.isEmpty) {
+    final pickKey = _conversationKey(widget.selectedConversationId);
+    if (orchestrator == null || pickKey == null) {
       fallback();
       return;
     }
@@ -798,15 +833,15 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       return;
     }
     setState(() {
-      _pendingMediaByConversation[conversationId] = picked!;
+      _pendingMediaByConversation[pickKey] = picked!;
     });
     _scheduleMobileThreadRefresh();
   }
 
   Future<void> _handleSendPressed(String? conversationId) async {
     final selectionKey =
-        (conversationId ?? widget.selectedConversationId)?.trim();
-    if (selectionKey == null || selectionKey.isEmpty) {
+        _conversationKey(conversationId ?? widget.selectedConversationId);
+    if (selectionKey == null) {
       return;
     }
 
@@ -866,6 +901,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       senderLabel: widget.currentUserName,
       type: _toUiType(pendingMedia.messageType),
       content: pendingMedia.file.path,
+      caption: caption.isEmpty ? null : caption,
       createdAt: DateTime.now(),
       isUploading: true,
       uploadProgress: 0,
@@ -980,6 +1016,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
                   senderLabel: item.senderLabel,
                   type: item.type,
                   content: item.content,
+                  caption: item.caption,
                   createdAt: item.createdAt,
                   isDeleted: item.isDeleted,
                   deliveryStatus: item.deliveryStatus,
@@ -987,6 +1024,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
                   isUploading: true,
                   uploadProgress: progress,
                   senderAvatarUrl: item.senderAvatarUrl,
+                  quotedReply: item.quotedReply,
                 )
               : item,
         )
@@ -1011,6 +1049,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
                   senderLabel: item.senderLabel,
                   type: item.type,
                   content: item.content,
+                  caption: item.caption,
                   createdAt: item.createdAt,
                   isDeleted: item.isDeleted,
                   deliveryStatus: item.deliveryStatus,
@@ -1018,6 +1057,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
                   isUploading: false,
                   uploadProgress: null,
                   senderAvatarUrl: item.senderAvatarUrl,
+                  quotedReply: item.quotedReply,
                 )
               : item,
         )
@@ -1033,9 +1073,24 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   }
 
   MessengerChatMessage _toUiMessage(ChatMessage message) {
-    final content = message.attachments.isNotEmpty
-        ? message.attachments.first.url
-        : message.content;
+    final body = message.content.trim();
+    if (message.attachments.isEmpty) {
+      return MessengerChatMessage(
+        id: message.id,
+        senderId: message.senderId,
+        senderLabel: message.senderId == widget.currentUserId
+            ? widget.currentUserName
+            : (message.sender?.name ?? message.senderId),
+        type: _toUiType(message.type),
+        content: body,
+        createdAt: message.createdAt,
+        deliveryStatus: message.senderId == widget.currentUserId
+            ? MessengerDeliveryStatus.sent
+            : MessengerDeliveryStatus.none,
+        quotedReply: _shellQuotedReply(message),
+      );
+    }
+    final url = message.attachments.first.url.trim();
     return MessengerChatMessage(
       id: message.id,
       senderId: message.senderId,
@@ -1043,7 +1098,8 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
           ? widget.currentUserName
           : (message.sender?.name ?? message.senderId),
       type: _toUiType(message.type),
-      content: content,
+      content: url.isNotEmpty ? url : body,
+      caption: url.isNotEmpty && body.isNotEmpty ? body : null,
       createdAt: message.createdAt,
       deliveryStatus: message.senderId == widget.currentUserId
           ? MessengerDeliveryStatus.sent

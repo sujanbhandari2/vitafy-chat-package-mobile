@@ -32,6 +32,46 @@ void main() {
       expect(s, MessengerDeliveryStatus.seen);
     });
 
+    test('prefers exact API READ', () {
+      final s = messengerDeliveryStatusFor(
+        _outgoing(deliveryStatus: 'READ'),
+        currentUserId: 'me',
+      );
+      expect(s, MessengerDeliveryStatus.seen);
+    });
+
+    test('case-insensitive READ maps to seen', () {
+      final s = messengerDeliveryStatusFor(
+        _outgoing(deliveryStatus: 'read'),
+        currentUserId: 'me',
+      );
+      expect(s, MessengerDeliveryStatus.seen);
+    });
+
+    test('UNREAD does not substring-match as seen', () {
+      final s = messengerDeliveryStatusFor(
+        _outgoing(deliveryStatus: 'UNREAD'),
+        currentUserId: 'me',
+      );
+      expect(s, MessengerDeliveryStatus.sent);
+    });
+
+    test('NOT_READ does not substring-match as seen', () {
+      final s = messengerDeliveryStatusFor(
+        _outgoing(deliveryStatus: 'NOT_READ'),
+        currentUserId: 'me',
+      );
+      expect(s, MessengerDeliveryStatus.sent);
+    });
+
+    test('UNDELIVERED does not substring-match as delivered', () {
+      final s = messengerDeliveryStatusFor(
+        _outgoing(deliveryStatus: 'UNDELIVERED'),
+        currentUserId: 'me',
+      );
+      expect(s, MessengerDeliveryStatus.sent);
+    });
+
     test('peer read receipt implies seen', () {
       final s = messengerDeliveryStatusFor(
         _outgoing(
