@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 
 import 'chat_auth.dart';
 import 'models/chat_message.dart';
+import 'models/chat_user_registration_payload.dart';
 import 'models/conversation.dart';
 import 'models/tenant_user.dart';
 
@@ -16,16 +17,31 @@ abstract class ChatRepository {
   Future<ChatTenantScope> getTenantScope(ChatAuth auth);
   Future<TenantUser> registerOrGetUser(
     ChatAuth auth, {
-    required String providerId,
-    required String providerUserId,
-    required String email,
+    String? externalTenantId,
+    String? externalUserId,
+    String? providerId,
+    String? providerUserId,
+    String? externalUserRole,
+    String? email,
     String? name,
+    String? profile,
+  });
+
+  /// Batch merge users + create DIRECT (two users, no [groupName]) or GROUP.
+  Future<Conversation> startConversation(
+    ChatAuth auth, {
+    required List<ChatUserRegistrationBody> users,
+    String? groupName,
   });
   Future<List<Conversation>> getConversations(
     ChatAuth auth, {
     String? forUserId,
   });
-  Future<List<TenantUser>> getUsers(ChatAuth auth);
+  Future<List<TenantUser>> getUsers(
+    ChatAuth auth, {
+    int? limit,
+    int? page,
+  });
   Future<ChatMessagesPage> getMessages(
     ChatAuth auth,
     String conversationId, {

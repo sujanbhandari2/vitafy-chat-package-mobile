@@ -6,6 +6,7 @@ import 'chat_auth.dart';
 import 'chat_config.dart';
 import 'chat_exceptions.dart';
 import 'models/chat_message.dart';
+import 'models/chat_user_registration_payload.dart';
 
 class ChatApi {
   ChatApi(this._dio, this._config);
@@ -33,20 +34,61 @@ class ChatApi {
 
   Future<Map<String, dynamic>> registerOrGetUser(
     ChatAuth auth, {
-    required String providerId,
-    required String providerUserId,
-    required String email,
+    String? externalTenantId,
+    String? externalUserId,
+    @Deprecated('Use externalTenantId') String? providerId,
+    @Deprecated('Use externalUserId') String? providerUserId,
+    String? externalUserRole,
+    String? email,
     String? name,
+    String? profile,
   }) {
     return _guard(() async {
+      final body = ChatUserRegistrationBody.resolve(
+        externalTenantId: externalTenantId,
+        externalUserId: externalUserId,
+        providerId: providerId,
+        providerUserId: providerUserId,
+        externalUserRole: externalUserRole,
+        email: email,
+        name: name,
+        profile: profile,
+      );
       final response = await _dio.post(
         _chatUri('users'),
         options: _authOptionsApiKeyOnly(auth),
-        data: {
-          'providerId': providerId,
-          'providerUserId': providerUserId,
-          'email': email,
-          if (name != null && name.trim().isNotEmpty) 'name': name,
+        data: body.toRegistrationJson(),
+      );
+
+      return _asMap(_unwrapData(response.data));
+    });
+  }
+
+  /// `POST …/users/start-conversation` (Vitafy: API key + chat-user Bearer).
+  Future<Map<String, dynamic>> postUsersStartConversation(
+    ChatAuth auth, {
+    required List<ChatUserRegistrationBody> users,
+    String? groupName,
+  }) {
+    return _guard(() async {
+      if (users.isEmpty) {
+        throw ArgumentError('startConversation requires a non-empty users list.');
+      }
+      for (var i = 0; i < users.length; i++) {
+        final u = users[i];
+        if (u.externalTenantId.trim().isEmpty || u.externalUserId.trim().isEmpty) {
+          throw ArgumentError(
+            'startConversation: users[$i] is missing externalTenantId or externalUserId.',
+          );
+        }
+      }
+      final response = await _dio.post(
+        _chatUri('users/start-conversation'),
+        options: _authOptionsChatUser(auth),
+        data: <String, dynamic>{
+          'users': users.map((u) => u.toRegistrationJson()).toList(),
+          if (groupName != null && groupName.trim().isNotEmpty)
+            'groupName': groupName.trim(),
         },
       );
 
@@ -71,11 +113,19 @@ class ChatApi {
     });
   }
 
-  Future<List<Map<String, dynamic>>> getUsers(ChatAuth auth) {
+  Future<List<Map<String, dynamic>>> getUsers(
+    ChatAuth auth, {
+    int? limit,
+    int? page,
+  }) {
     return _guard(() async {
       final response = await _dio.get(
         _chatUri('users'),
         options: _authOptionsChatUser(auth),
+        queryParameters: <String, dynamic>{
+          if (limit != null) 'limit': limit,
+          if (page != null) 'page': page,
+        },
       );
       return _asMapList(_unwrapData(response.data));
     });

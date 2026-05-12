@@ -164,6 +164,117 @@ void main() {
     expect(find.text('Chats'), findsOneWidget);
   });
 
+  testWidgets('mobile open-direct picker delegates and updates host state',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    const existingUser = MessengerUser(id: 'u1', username: 'alice_jones');
+    const newPeer = MessengerUser(id: 'u2', username: 'bob');
+    final c1 = MessengerConversation(
+      id: 'c1',
+      title: 'Alice Jones',
+      subtitle: 'Hello',
+      avatarLabel: 'A',
+      createdAt: DateTime.utc(2026),
+      peerUsers: const [existingUser],
+    );
+    final c2 = MessengerConversation(
+      id: 'c2',
+      title: 'Bob',
+      subtitle: 'New thread',
+      avatarLabel: 'B',
+      createdAt: DateTime.utc(2026),
+      peerUsers: const [newPeer],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: _HostShellHarness(
+            composer: composer,
+            scroll: scroll,
+            initialConversations: [c1],
+            users: const [existingUser, newPeer],
+            createdConversation: c2,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.edit_square));
+    await tester.pumpAndSettle();
+    // Tap the row action: title text is not wired to onTap (only the Chat button is).
+    await tester.tap(find.text('Chat').at(1));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsOneWidget);
+    expect(_HostShellHarnessState.openDirectCallCount, 1);
+    expect(_HostShellHarnessState.latestSelectedConversationId, 'c2');
+  });
+
+  testWidgets(
+      'mobile open-direct uses host selection after async gap (not stale id)',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    const existingUser = MessengerUser(id: 'u1', username: 'alice_jones');
+    const newPeer = MessengerUser(id: 'u2', username: 'bob');
+    final c1 = MessengerConversation(
+      id: 'c1',
+      title: 'Alice Jones',
+      subtitle: 'Hello',
+      avatarLabel: 'A',
+      createdAt: DateTime.utc(2026),
+      peerUsers: const [existingUser],
+    );
+    final c2 = MessengerConversation(
+      id: 'c2',
+      title: 'Bob',
+      subtitle: 'New thread',
+      avatarLabel: 'B',
+      createdAt: DateTime.utc(2026),
+      peerUsers: const [newPeer],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: _DeferredOpenDirectHarness(
+            composer: composer,
+            scroll: scroll,
+            initialConversations: [c1],
+            users: const [existingUser, newPeer],
+            createdConversation: c2,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.edit_square));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Chat').at(1));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Bob'), findsWidgets);
+    expect(_DeferredOpenDirectHarnessState.latestOpenedConversationId, 'c2');
+  });
+
   testWidgets('desktop thread shows loading state instead of empty text',
       (tester) async {
     final composer = TextEditingController();
@@ -554,7 +665,8 @@ void main() {
     );
 
     await tester.pump();
-    expect(find.byKey(const ValueKey('conversationListLoading')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('conversationListLoading')), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsWidgets);
     expect(find.text('alice'), findsNothing);
   });
@@ -600,7 +712,7 @@ void main() {
                 onPickAudio: () {},
                 onToggleRecording: () {},
                 desktopBreakpoint: 400,
-                suggestedPeopleBuilder: (context, users) =>
+                suggestedPeopleBuilder: (context, users, _) =>
                     MessengerSuggestedPeoplePanel(
                   users: users,
                   onUserSelected: (_) {},
@@ -702,4 +814,158 @@ class _NoopMediaClient extends ChatClient {
             socketUrl: 'https://example.com',
           ),
         );
+}
+
+/// Host defers updating [selectedConversationId] until after an async gap,
+/// reproducing stale-widget reads if the shell does not wait for a frame.
+class _DeferredOpenDirectHarness extends StatefulWidget {
+  const _DeferredOpenDirectHarness({
+    required this.composer,
+    required this.scroll,
+    required this.initialConversations,
+    required this.users,
+    required this.createdConversation,
+  });
+
+  final TextEditingController composer;
+  final ScrollController scroll;
+  final List<MessengerConversation> initialConversations;
+  final List<MessengerUser> users;
+  final MessengerConversation createdConversation;
+
+  @override
+  State<_DeferredOpenDirectHarness> createState() =>
+      _DeferredOpenDirectHarnessState();
+}
+
+class _DeferredOpenDirectHarnessState extends State<_DeferredOpenDirectHarness> {
+  static String? latestOpenedConversationId;
+
+  late List<MessengerConversation> conversations;
+  String? selectedConversationId;
+
+  @override
+  void initState() {
+    super.initState();
+    conversations = [...widget.initialConversations];
+    selectedConversationId = conversations.first.id;
+    latestOpenedConversationId = selectedConversationId;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: MessengerChatShell(
+        currentUserId: 'me',
+        currentUserName: 'Me',
+        conversations: conversations,
+        users: widget.users,
+        selectedConversationId: selectedConversationId,
+        messages: const [],
+        composerController: widget.composer,
+        messagesScrollController: widget.scroll,
+        isSending: false,
+        isRecording: false,
+        onRefresh: () async {},
+        onLogout: () {},
+        onSelectConversation: (id) async {
+          setState(() => selectedConversationId = id);
+          latestOpenedConversationId = id;
+        },
+        onOpenDirectChat: (_) async {
+          await Future<void>.delayed(Duration.zero);
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            selectedConversationId = widget.createdConversation.id;
+            conversations = [
+              ...conversations,
+              widget.createdConversation,
+            ];
+          });
+          latestOpenedConversationId = widget.createdConversation.id;
+        },
+        onSend: () {},
+        onPickImage: () {},
+        onPickAudio: () {},
+        onToggleRecording: () {},
+      ),
+    );
+  }
+}
+
+class _HostShellHarness extends StatefulWidget {
+  const _HostShellHarness({
+    required this.composer,
+    required this.scroll,
+    required this.initialConversations,
+    required this.users,
+    required this.createdConversation,
+  });
+
+  final TextEditingController composer;
+  final ScrollController scroll;
+  final List<MessengerConversation> initialConversations;
+  final List<MessengerUser> users;
+  final MessengerConversation createdConversation;
+
+  @override
+  State<_HostShellHarness> createState() => _HostShellHarnessState();
+}
+
+class _HostShellHarnessState extends State<_HostShellHarness> {
+  static int openDirectCallCount = 0;
+  static String? latestSelectedConversationId;
+
+  late List<MessengerConversation> conversations;
+  String? selectedConversationId;
+
+  @override
+  void initState() {
+    super.initState();
+    conversations = [...widget.initialConversations];
+    selectedConversationId = conversations.first.id;
+    openDirectCallCount = 0;
+    latestSelectedConversationId = selectedConversationId;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: MessengerChatShell(
+        currentUserId: 'me',
+        currentUserName: 'Me',
+        conversations: conversations,
+        users: widget.users,
+        selectedConversationId: selectedConversationId,
+        messages: const [],
+        composerController: widget.composer,
+        messagesScrollController: widget.scroll,
+        isSending: false,
+        isRecording: false,
+        onRefresh: () async {},
+        onLogout: () {},
+        onSelectConversation: (id) async {
+          setState(() => selectedConversationId = id);
+          latestSelectedConversationId = id;
+        },
+        onOpenDirectChat: (_) async {
+          openDirectCallCount++;
+          setState(() {
+            selectedConversationId = widget.createdConversation.id;
+            conversations = [
+              ...conversations,
+              widget.createdConversation,
+            ];
+          });
+          latestSelectedConversationId = widget.createdConversation.id;
+        },
+        onSend: () {},
+        onPickImage: () {},
+        onPickAudio: () {},
+        onToggleRecording: () {},
+      ),
+    );
+  }
 }

@@ -14,6 +14,11 @@ void main() {
 
   const alice = MessengerUser(id: 'u1', username: 'alice');
   const bob = MessengerUser(id: 'u2', username: 'bob');
+  const carol = MessengerUser(
+    id: 'u3',
+    username: 'carol',
+    roleLabel: 'Nurse',
+  );
 
   testWidgets('renders default title and helper text', (tester) async {
     await tester.pumpWidget(
@@ -206,6 +211,71 @@ void main() {
     expect(count, 1);
   });
 
+  testWidgets('search field filters users by name and role', (tester) async {
+    var query = '';
+
+    await tester.pumpWidget(
+      wrap(
+        StatefulBuilder(
+          builder: (context, setState) {
+            return MessengerSuggestedPeoplePanel(
+              users: const [alice, bob, carol],
+              onUserSelected: (_) {},
+              showSearchField: true,
+              searchQuery: query,
+              onSearchQueryChanged: (value) {
+                setState(() => query = value);
+              },
+            );
+          },
+        ),
+      ),
+    );
+
+    expect(find.text('alice'), findsOneWidget);
+    expect(find.text('bob'), findsOneWidget);
+    expect(find.text('carol'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextFormField), 'nur');
+    await tester.pumpAndSettle();
+
+    expect(find.text('alice'), findsNothing);
+    expect(find.text('bob'), findsNothing);
+    expect(find.text('carol'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextFormField), 'bo');
+    await tester.pumpAndSettle();
+
+    expect(find.text('alice'), findsNothing);
+    expect(find.text('bob'), findsOneWidget);
+    expect(find.text('carol'), findsNothing);
+  });
+
+  testWidgets('search no-result state shows custom text', (tester) async {
+    var query = 'zzz';
+
+    await tester.pumpWidget(
+      wrap(
+        StatefulBuilder(
+          builder: (context, setState) {
+            return MessengerSuggestedPeoplePanel(
+              users: const [alice, bob],
+              onUserSelected: (_) {},
+              showSearchField: true,
+              searchQuery: query,
+              noSearchResultsText: 'No matches',
+              onSearchQueryChanged: (value) {
+                setState(() => query = value);
+              },
+            );
+          },
+        ),
+      ),
+    );
+
+    expect(find.text('No matches'), findsOneWidget);
+  });
+
   testWidgets(
     'shell renders suggestedPeopleBuilder when conversations are empty',
     (tester) async {
@@ -243,10 +313,13 @@ void main() {
                 onPickAudio: () {},
                 onToggleRecording: () {},
                 emptyConversationsMessage: 'No chats yet',
-                suggestedPeopleBuilder: (context, users) =>
+                suggestedPeopleBuilder: (context, users, openDirectChat) =>
                     MessengerSuggestedPeoplePanel(
                   users: users,
-                  onUserSelected: (user) => selected = user,
+                  onUserSelected: (user) async {
+                    await openDirectChat(user);
+                    selected = user;
+                  },
                 ),
               ),
             ),

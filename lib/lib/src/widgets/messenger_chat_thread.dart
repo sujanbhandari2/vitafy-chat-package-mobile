@@ -205,6 +205,9 @@ class _MessengerChatThreadState extends State<MessengerChatThread> {
         padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + bottomPad),
         itemCount: widget.messages.length,
         itemBuilder: (context, index) {
+          if (index < 0 || index >= widget.messages.length) {
+            return const SizedBox.shrink();
+          }
           final message = widget.messages[index];
           final mine = message.senderId == widget.currentUserId;
           final showDate = widget.showDateSeparators &&

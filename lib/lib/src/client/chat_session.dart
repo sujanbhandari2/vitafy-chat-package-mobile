@@ -51,10 +51,14 @@ class ChatSession {
   /// [ChatSessionBootstrapResult.socketConnectPending] as true.
   Future<ChatSessionBootstrapResult> bootstrap({
     required ChatAuth apiAuth,
-    required String providerId,
-    required String providerUserId,
-    required String email,
+    String? externalTenantId,
+    String? externalUserId,
+    @Deprecated('Use externalTenantId') String? providerId,
+    @Deprecated('Use externalUserId') String? providerUserId,
+    String? externalUserRole,
+    String? email,
     String? name,
+    String? profile,
     bool awaitSocketConnect = true,
   }) async {
     await _inbox?.dispose();
@@ -63,10 +67,14 @@ class ChatSession {
     _tenantScope = await _client.getTenantScope(apiAuth);
     _currentUser = await _client.registerOrGetUser(
       apiAuth,
+      externalTenantId: externalTenantId,
+      externalUserId: externalUserId,
       providerId: providerId,
       providerUserId: providerUserId,
+      externalUserRole: externalUserRole,
       email: email,
       name: name,
+      profile: profile,
     );
     final accessToken = (_currentUser!.accessToken ?? '').trim();
     if (accessToken.isEmpty) {

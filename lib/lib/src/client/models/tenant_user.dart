@@ -72,13 +72,22 @@ class TenantUser {
         accessToken.isNotEmpty) {
       idStr = _readChatUserIdFromJwt(accessToken) ?? '';
     }
-    final provider =
-        _firstNonEmptyString(json, const ['providerUserId', 'provider_user_id']);
+    final provider = _firstNonEmptyString(json, const [
+      'externalUserId',
+      'external_user_id',
+      'providerUserId',
+      'provider_user_id',
+    ]);
     return TenantUser(
       id: idStr,
       tenantId: _firstNonEmptyString(
             json,
-            const ['tenantId', 'tenant_id'],
+            const [
+              'tenantId',
+              'tenant_id',
+              'externalTenantId',
+              'external_tenant_id',
+            ],
           ) ??
           '',
       name: _firstNonEmptyString(json, const ['name', 'username']) ?? '',
@@ -96,7 +105,7 @@ class TenantUser {
           DateTime.now(),
       avatarUrl: _firstNonEmptyString(
         json,
-        const ['avatarUrl', 'avatar_url'],
+        const ['avatarUrl', 'avatar_url', 'profile'],
       ),
       status: _firstNonEmptyString(json, const ['status']),
       accessToken: json['accessToken']?.toString(),

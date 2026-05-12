@@ -952,8 +952,10 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
                                 user.id,
                               ),
                               onTap: () {
+                                final open = widget.onOpenDirectChat;
+                                final u = user;
                                 Navigator.of(context).pop();
-                                widget.onOpenDirectChat(user);
+                                open(u);
                               },
                               showChatButton: true,
                               isSelected: false,

@@ -7,6 +7,7 @@ import '../chat_auth.dart';
 import '../chat_repository.dart';
 import '../models/app_role.dart';
 import '../models/chat_message.dart';
+import '../models/chat_user_registration_payload.dart';
 import '../models/conversation.dart';
 import '../models/tenant_user.dart';
 
@@ -36,6 +37,9 @@ class FakeChatRepository implements ChatRepository {
   final _socketEvents = StreamController<ChatSocketEvent>.broadcast();
   int connectSocketCalls = 0;
   int disconnectSocketCalls = 0;
+  int startConversationCalls = 0;
+  List<ChatUserRegistrationBody>? lastStartConversationUsers;
+  String? lastStartConversationGroupName;
   final List<String> joinConversationLog = <String>[];
   final List<String> leaveConversationLog = <String>[];
   final List<String> markConversationReadLog = <String>[];
@@ -73,12 +77,36 @@ class FakeChatRepository implements ChatRepository {
   @override
   Future<TenantUser> registerOrGetUser(
     ChatAuth auth, {
-    required String providerId,
-    required String providerUserId,
-    required String email,
+    String? externalTenantId,
+    String? externalUserId,
+    String? providerId,
+    String? providerUserId,
+    String? externalUserRole,
+    String? email,
     String? name,
+    String? profile,
   }) async {
     return _user;
+  }
+
+  @override
+  Future<Conversation> startConversation(
+    ChatAuth auth, {
+    required List<ChatUserRegistrationBody> users,
+    String? groupName,
+  }) async {
+    startConversationCalls++;
+    lastStartConversationUsers = List<ChatUserRegistrationBody>.from(users);
+    lastStartConversationGroupName = groupName;
+    return Conversation.fromJson({
+      'id': 'conv-start',
+      'type': groupName != null && groupName.trim().isNotEmpty ? 'GROUP' : 'DIRECT',
+      'tenantId': _tenantScope.tenantId,
+      'name': groupName,
+      'createdAt': DateTime.now().toIso8601String(),
+      'updatedAt': DateTime.now().toIso8601String(),
+      'participants': <dynamic>[],
+    });
   }
 
   @override
@@ -90,7 +118,11 @@ class FakeChatRepository implements ChatRepository {
   }
 
   @override
-  Future<List<TenantUser>> getUsers(ChatAuth auth) async {
+  Future<List<TenantUser>> getUsers(
+    ChatAuth auth, {
+    int? limit,
+    int? page,
+  }) async {
     return const [];
   }
 

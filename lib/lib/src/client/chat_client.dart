@@ -10,6 +10,7 @@ import 'chat_repository.dart';
 import 'chat_service.dart';
 import '../push/push_models.dart';
 import 'models/chat_message.dart';
+import 'models/chat_user_registration_payload.dart';
 import 'models/conversation.dart';
 import 'models/tenant_user.dart';
 
@@ -38,17 +39,38 @@ class ChatClient {
 
   Future<TenantUser> registerOrGetUser(
     ChatAuth auth, {
-    required String providerId,
-    required String providerUserId,
-    required String email,
+    String? externalTenantId,
+    String? externalUserId,
+    @Deprecated('Use externalTenantId') String? providerId,
+    @Deprecated('Use externalUserId') String? providerUserId,
+    String? externalUserRole,
+    String? email,
     String? name,
+    String? profile,
   }) {
     return repository.registerOrGetUser(
       auth,
+      externalTenantId: externalTenantId,
+      externalUserId: externalUserId,
       providerId: providerId,
       providerUserId: providerUserId,
+      externalUserRole: externalUserRole,
       email: email,
       name: name,
+      profile: profile,
+    );
+  }
+
+  /// Batch merge users + create DIRECT or GROUP (`POST …/users/start-conversation`).
+  Future<Conversation> startConversation(
+    ChatAuth auth, {
+    required List<ChatUserRegistrationBody> users,
+    String? groupName,
+  }) {
+    return repository.startConversation(
+      auth,
+      users: users,
+      groupName: groupName,
     );
   }
 
@@ -59,8 +81,12 @@ class ChatClient {
     return repository.getConversations(auth, forUserId: forUserId);
   }
 
-  Future<List<TenantUser>> getUsers(ChatAuth auth) {
-    return repository.getUsers(auth);
+  Future<List<TenantUser>> getUsers(
+    ChatAuth auth, {
+    int? limit,
+    int? page,
+  }) {
+    return repository.getUsers(auth, limit: limit, page: page);
   }
 
   Future<ChatMessagesPage> getMessages(
@@ -88,6 +114,22 @@ class ChatClient {
       type: type,
       creatorUserId: creatorUserId,
       participantIds: participantIds,
+    );
+  }
+
+  /// Returns an existing DIRECT conversation for `currentUserId` and
+  /// `peerUserId`, or creates it when missing.
+  Future<ChatDirectConversationResolution> resolveDirectConversation(
+    ChatAuth auth, {
+    required String currentUserId,
+    required String peerUserId,
+    List<Conversation>? seedConversations,
+  }) {
+    return _service.directConversationResolver.resolve(
+      auth: auth,
+      currentUserId: currentUserId,
+      peerUserId: peerUserId,
+      seedConversations: seedConversations,
     );
   }
 

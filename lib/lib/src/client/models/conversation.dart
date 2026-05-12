@@ -314,6 +314,8 @@ String _participantLabelFromJson(Map<String, dynamic> json, String idStr) {
     'displayName',
     'display_name',
     'email',
+    'externalUserId',
+    'external_user_id',
     'providerUserId',
     'provider_user_id',
   ]);

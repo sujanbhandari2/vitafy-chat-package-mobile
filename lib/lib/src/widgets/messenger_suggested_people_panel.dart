@@ -14,7 +14,8 @@ import 'messenger_avatar.dart';
 /// via the optional builder / widget slots without losing tap behavior.
 ///
 /// Typical wiring (host-composed or via [MessengerChatShell]'s
-/// `suggestedPeopleBuilder` slot):
+/// `suggestedPeopleBuilder` slot — use the third callback argument as
+/// [onUserSelected] on mobile so the shell can open the full-screen thread):
 ///
 /// ```dart
 /// MessengerSuggestedPeoplePanel(
@@ -42,6 +43,11 @@ class MessengerSuggestedPeoplePanel extends StatelessWidget {
     this.emptyBuilder,
     this.isLoading = false,
     this.loadingBuilder,
+    this.showSearchField = false,
+    this.searchQuery = '',
+    this.onSearchQueryChanged,
+    this.searchHintText = 'Search people...',
+    this.noSearchResultsText = 'No people match your search.',
     this.padding = const EdgeInsets.fromLTRB(16, 12, 16, 12),
     this.itemSpacing = 8,
     this.titleTextStyle,
@@ -50,7 +56,10 @@ class MessengerSuggestedPeoplePanel extends StatelessWidget {
     this.shrinkWrap = false,
     this.semanticsLabel = 'Suggested people',
     this.onPullToRefresh,
-  });
+  }) : assert(
+          !showSearchField || onSearchQueryChanged != null,
+          'onSearchQueryChanged is required when showSearchField is true.',
+        );
 
   /// Users to suggest starting a chat with.
   final List<MessengerUser> users;
@@ -108,6 +117,22 @@ class MessengerSuggestedPeoplePanel extends StatelessWidget {
   /// Custom loading builder. Defaults to a centered [CircularProgressIndicator].
   final WidgetBuilder? loadingBuilder;
 
+  /// Enables the built-in search input shown above the people list.
+  final bool showSearchField;
+
+  /// Controlled query value used for local filtering when [showSearchField]
+  /// is true.
+  final String searchQuery;
+
+  /// Called whenever the search input changes.
+  final ValueChanged<String>? onSearchQueryChanged;
+
+  /// Search input placeholder text.
+  final String searchHintText;
+
+  /// Copy shown when [searchQuery] has text but no users match.
+  final String noSearchResultsText;
+
   /// Outer padding around the whole panel.
   final EdgeInsetsGeometry padding;
 
@@ -137,6 +162,8 @@ class MessengerSuggestedPeoplePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
+    final normalizedSearchQuery = searchQuery.trim();
+    final filteredUsers = _filterUsers(users, normalizedSearchQuery);
 
     final header = headerBuilder?.call(context, users) ??
         _buildDefaultHeader(context, theme);
@@ -146,12 +173,14 @@ class MessengerSuggestedPeoplePanel extends StatelessWidget {
       body = loadingBuilder?.call(context) ?? _buildDefaultLoading();
     } else if (users.isEmpty) {
       body = emptyBuilder?.call(context) ?? _buildDefaultEmpty(theme);
+    } else if (filteredUsers.isEmpty && normalizedSearchQuery.isNotEmpty) {
+      body = _buildNoSearchResults(theme);
     } else {
-      body = _buildList(context);
+      body = _buildList(context, filteredUsers);
     }
 
     body = _wrapWithPullToRefresh(context, body,
-        scrollableList: !isLoading && users.isNotEmpty);
+        scrollableList: !isLoading && filteredUsers.isNotEmpty);
 
     return Semantics(
       container: true,
@@ -163,6 +192,10 @@ class MessengerSuggestedPeoplePanel extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             header,
+            if (showSearchField) ...[
+              const SizedBox(height: 10),
+              _buildSearchField(theme),
+            ],
             const SizedBox(height: 12),
             Flexible(child: body),
             if (footerWidget != null) ...[
@@ -256,7 +289,58 @@ class MessengerSuggestedPeoplePanel extends StatelessWidget {
     );
   }
 
-  Widget _buildList(BuildContext context) {
+  Widget _buildNoSearchResults(MessengerThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: Center(
+        child: Text(
+          noSearchResultsText,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: theme.subtleText,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchField(MessengerThemeData theme) {
+    return Container(
+      height: 38,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: theme.searchBackground,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.search, color: theme.mutedText, size: 18),
+          const SizedBox(width: 6),
+          Expanded(
+            child: TextFormField(
+              key: ValueKey<String>(searchQuery),
+              initialValue: searchQuery,
+              onChanged: onSearchQueryChanged,
+              decoration: InputDecoration(
+                hintText: searchHintText,
+                hintStyle: TextStyle(color: theme.mutedText),
+                border: InputBorder.none,
+                isDense: true,
+              ),
+            ),
+          ),
+          if (searchQuery.trim().isNotEmpty)
+            GestureDetector(
+              onTap: () => onSearchQueryChanged?.call(''),
+              child: Icon(Icons.close_rounded, color: theme.mutedText),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildList(BuildContext context, List<MessengerUser> visibleUsers) {
     final listPhysics = onPullToRefresh != null
         ? AlwaysScrollableScrollPhysics(
             parent: physics ?? const ClampingScrollPhysics(),
@@ -268,11 +352,11 @@ class MessengerSuggestedPeoplePanel extends StatelessWidget {
       physics: listPhysics,
       shrinkWrap: shrinkWrap,
       padding: EdgeInsets.zero,
-      itemCount: users.length,
-      separatorBuilder: separatorBuilder ??
-          (_, __) => SizedBox(height: itemSpacing),
+      itemCount: visibleUsers.length,
+      separatorBuilder:
+          separatorBuilder ?? (_, __) => SizedBox(height: itemSpacing),
       itemBuilder: (context, index) {
-        final user = users[index];
+        final user = visibleUsers[index];
         if (itemBuilder != null) {
           return itemBuilder!(context, user, index);
         }
@@ -291,6 +375,21 @@ class MessengerSuggestedPeoplePanel extends StatelessWidget {
       return false;
     }
     return opening == userId.trim();
+  }
+
+  List<MessengerUser> _filterUsers(
+    List<MessengerUser> source,
+    String query,
+  ) {
+    final q = query.toLowerCase();
+    if (q.isEmpty) {
+      return source;
+    }
+    return source.where((user) {
+      return user.username.toLowerCase().contains(q) ||
+          user.roleLabel.toLowerCase().contains(q) ||
+          user.id.toLowerCase().contains(q);
+    }).toList(growable: false);
   }
 }
 
