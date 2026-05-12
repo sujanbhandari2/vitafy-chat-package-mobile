@@ -112,10 +112,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     return draftId!.trim().substring(_draftDirectPrefix.length);
   }
 
-  String _draftConversationIdForPeer(String peerChatUserId) {
-    return '$_draftDirectPrefix${peerChatUserId.trim()}';
-  }
-
   @override
   void initState() {
     super.initState();
@@ -973,7 +969,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     }
   }
 
-  Future<void> _createSuggestedGroup(List<MessengerUser> selectedUsers) async {
+  Future<void> _createSuggestedGroup(
+    MessengerGroupCreateRequest request,
+  ) async {
     final currentUser = _currentUser;
     final session = _session;
     final client = _client;
@@ -987,9 +985,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       throw StateError('Session auth is not ready.');
     }
 
+    final groupName = request.groupName.trim();
     final uniqueUsers = <MessengerUser>[];
     final seenIds = <String>{};
-    for (final user in selectedUsers) {
+    for (final user in request.selectedUsers) {
       final id = user.id.trim();
       if (id.isEmpty || !seenIds.add(id)) {
         continue;
@@ -1032,6 +1031,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         created = await client.startConversation(
           auth,
           users: [selfBody, ...peerBodies],
+          groupName: groupName.isEmpty ? null : groupName,
         );
       } else {
         final participantIds =
@@ -1046,6 +1046,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         created = await client.createConversation(
           auth,
           type: 'GROUP',
+          title: groupName.isEmpty ? null : groupName,
           creatorUserId: currentUser.id.trim(),
           participantIds: participantIds,
         );
@@ -1069,6 +1070,422 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       if (mounted) {
         setState(() => _isCreatingSuggestedGroup = false);
       }
+    }
+  }
+
+  Future<void> _editGroupConversation(
+    MessengerConversation conversationView,
+  ) async {
+    final client = _client;
+    final auth = _sessionAuth;
+    final currentUser = _currentUser;
+    final conversation = _conversationById(conversationView.id);
+    if (client == null || auth == null || currentUser == null) {
+      _showSnack('Session auth is not ready yet.');
+      return;
+    }
+    if (conversation == null || conversation.type.toUpperCase() != 'GROUP') {
+      return;
+    }
+
+    final initialName = _conversationTitle(conversation);
+    final controller = TextEditingController(text: initialName);
+    final focusNode = FocusNode();
+    final nextName = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        var errorText = '';
+        return StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: const Text('Edit group'),
+            content: SizedBox(
+              width: 420,
+              child: MessengerGroupNameTextField(
+                controller: controller,
+                focusNode: focusNode,
+                labelText: 'Group name',
+                hintText: 'Enter a group name',
+                backgroundColor:
+                    Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: 12,
+                iconColor: Theme.of(context).colorScheme.onSurfaceVariant,
+                hintStyle: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 14,
+                ),
+                errorText: errorText.isEmpty ? null : errorText,
+                onSubmitted: (_) {
+                  final value = controller.text.trim();
+                  if (value.isEmpty) {
+                    setState(() => errorText = 'Enter a group name.');
+                    return;
+                  }
+                  focusNode.unfocus();
+                  Navigator.of(dialogContext).pop(value);
+                },
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final value = controller.text.trim();
+                  if (value.isEmpty) {
+                    setState(() => errorText = 'Enter a group name.');
+                    return;
+                  }
+                  focusNode.unfocus();
+                  Navigator.of(dialogContext).pop(value);
+                },
+                child: const Text('Save'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      controller.dispose();
+      focusNode.dispose();
+    });
+
+    final trimmedName = nextName?.trim() ?? '';
+    if (trimmedName.isEmpty || trimmedName == initialName.trim()) {
+      return;
+    }
+
+    try {
+      _appendLog(
+        'Updating group conversation',
+        data: {
+          'conversationId': conversation.id,
+          'name': trimmedName,
+        },
+      );
+      await client.updateConversation(
+        auth,
+        conversationId: conversation.id,
+        title: trimmedName,
+        actorUserId: currentUser.id,
+      );
+      await _refreshConversations();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _statusText = 'Updated group name.';
+      });
+      _showSnack('Group updated.');
+    } catch (error, stackTrace) {
+      _appendLog(
+        'Update group failed',
+        data: {
+          'conversationId': conversation.id,
+          'error': error.toString(),
+          'stackTrace': stackTrace.toString(),
+        },
+      );
+      _showSnack('Could not update the group.');
+    }
+  }
+
+  Future<void> _addPeopleToGroupConversation(
+    MessengerConversation conversationView,
+  ) async {
+    final client = _client;
+    final auth = _sessionAuth;
+    final currentUser = _currentUser;
+    final conversation = _conversationById(conversationView.id);
+    if (client == null || auth == null || currentUser == null) {
+      _showSnack('Session auth is not ready yet.');
+      return;
+    }
+    if (conversation == null || conversation.type.toUpperCase() != 'GROUP') {
+      return;
+    }
+
+    final selectedUsers = await _showAddPeopleDialog(conversation);
+    if (selectedUsers == null || selectedUsers.isEmpty) {
+      return;
+    }
+
+    try {
+      for (final user in selectedUsers) {
+        final resolvedUserId =
+            await _resolveConversationParticipantUserId(user);
+        if (resolvedUserId == null || resolvedUserId.isEmpty) {
+          throw StateError('Could not resolve participant ${user.id}.');
+        }
+        await client.addParticipant(
+          auth,
+          conversationId: conversation.id,
+          userId: resolvedUserId,
+          actorUserId: currentUser.id,
+        );
+      }
+      await _refreshConversations();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _statusText = 'Added people to the group.';
+      });
+      _showSnack(
+        selectedUsers.length == 1
+            ? '1 person added.'
+            : '${selectedUsers.length} people added.',
+      );
+    } catch (error, stackTrace) {
+      _appendLog(
+        'Add participants failed',
+        data: {
+          'conversationId': conversation.id,
+          'error': error.toString(),
+          'stackTrace': stackTrace.toString(),
+        },
+      );
+      _showSnack('Could not add people to the group.');
+    }
+  }
+
+  Future<List<MessengerUser>?> _showAddPeopleDialog(
+    Conversation conversation,
+  ) async {
+    final allUsers = _uiUsers;
+
+    final searchController = TextEditingController();
+    final selectedIds = <String>{};
+    String query = '';
+
+    final result = await showDialog<List<MessengerUser>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) {
+          final loweredQuery = query.trim().toLowerCase();
+          final filteredUsers = loweredQuery.isEmpty
+              ? allUsers
+              : allUsers
+                  .where(
+                    (user) =>
+                        user.username.toLowerCase().contains(loweredQuery) ||
+                        user.roleLabel.toLowerCase().contains(loweredQuery) ||
+                        user.id.toLowerCase().contains(loweredQuery),
+                  )
+                  .toList(growable: false);
+          final selectedUsers = allUsers
+              .where((user) => selectedIds.contains(user.id.trim()))
+              .toList(growable: false);
+
+          return AlertDialog(
+            title: const Text('Add people'),
+            content: SizedBox(
+              width: 520,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: searchController,
+                    decoration: const InputDecoration(
+                      labelText: 'Search people',
+                      hintText: 'Type a name, role, or id',
+                    ),
+                    onChanged: (value) {
+                      setState(() => query = value);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Selected people (${selectedUsers.length})',
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (selectedUsers.isEmpty)
+                    const Text('No people selected yet.')
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: selectedUsers
+                          .map(
+                            (user) => InputChip(
+                              backgroundColor: const Color(0xFFF1F5F9),
+                              labelStyle:
+                                  const TextStyle(color: Color(0xFF111827)),
+                              label: Text(_displayName(user.username)),
+                              onDeleted: () {
+                                setState(() {
+                                  selectedIds.remove(user.id.trim());
+                                });
+                              },
+                            ),
+                          )
+                          .toList(growable: false),
+                    ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 280,
+                    child: filteredUsers.isEmpty
+                        ? const Center(
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(vertical: 24),
+                              child: Text('No people match your search.'),
+                            ),
+                          )
+                        : ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: filteredUsers.length,
+                            separatorBuilder: (_, __) =>
+                                const Divider(height: 1),
+                            itemBuilder: (context, index) {
+                              final user = filteredUsers[index];
+                              final isSelected =
+                                  selectedIds.contains(user.id.trim());
+                              final alreadyInConversation =
+                                  _userAlreadyInConversation(
+                                conversation,
+                                user,
+                              );
+                              final subtitleParts = <String>[
+                                if (user.roleLabel.trim().isNotEmpty)
+                                  user.roleLabel.trim(),
+                                if (alreadyInConversation) 'Already in group',
+                              ];
+                              return ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(_displayName(user.username)),
+                                subtitle: subtitleParts.isEmpty
+                                    ? null
+                                    : Text(subtitleParts.join(' • ')),
+                                trailing: alreadyInConversation
+                                    ? const Text(
+                                        'Added',
+                                        style: TextStyle(
+                                          color: Color(0xFF64748B),
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      )
+                                    : FilledButton.tonal(
+                                        onPressed: () {
+                                          setState(() {
+                                            if (isSelected) {
+                                              selectedIds.remove(
+                                                user.id.trim(),
+                                              );
+                                            } else {
+                                              selectedIds.add(user.id.trim());
+                                            }
+                                          });
+                                        },
+                                        child: Text(
+                                          isSelected ? 'Selected' : 'Add',
+                                        ),
+                                      ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: selectedUsers.isEmpty
+                    ? null
+                    : () => Navigator.of(dialogContext).pop(selectedUsers),
+                child: const Text('Add people'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    searchController.dispose();
+    return result;
+  }
+
+  Future<void> _deleteConversation(
+    MessengerConversation conversationView,
+  ) async {
+    final client = _client;
+    final auth = _sessionAuth;
+    final currentUser = _currentUser;
+    final conversation = _conversationById(conversationView.id);
+    if (client == null || auth == null || currentUser == null) {
+      _showSnack('Session auth is not ready yet.');
+      return;
+    }
+    if (conversation == null) {
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete chat'),
+        content: Text(
+          'Delete "${_conversationTitle(conversation)}"? This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red.shade600,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+
+    try {
+      await client.deleteConversation(
+        auth,
+        conversationId: conversation.id,
+        actorUserId: currentUser.id,
+      );
+      if (_selectedConversationId == conversation.id) {
+        _messagesByConversation.remove(conversation.id);
+        setState(() {
+          _selectedConversationId = null;
+          _composerReplyDraft = null;
+        });
+      }
+      await _refreshConversations();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _statusText = 'Deleted conversation ${conversation.id}.';
+      });
+      _showSnack('Chat deleted.');
+    } catch (error, stackTrace) {
+      _appendLog(
+        'Delete conversation failed',
+        data: {
+          'conversationId': conversation.id,
+          'error': error.toString(),
+          'stackTrace': stackTrace.toString(),
+        },
+      );
+      _showSnack('Could not delete the chat.');
     }
   }
 
@@ -1558,10 +1975,13 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     final existing = _messagesByConversation[conversationId] ?? const [];
     final next = List<ChatMessage>.from(existing);
     final index = next.indexWhere((item) => item.id == message.id);
+    late final ChatMessage upsertedMessage;
     if (index == -1) {
       next.add(message);
+      upsertedMessage = message;
     } else {
-      next[index] = _coalesceDeletedMessageOnUpsert(next[index], message);
+      upsertedMessage = _coalesceDeletedMessageOnUpsert(next[index], message);
+      next[index] = upsertedMessage;
     }
     next.sort((left, right) => left.createdAt.compareTo(right.createdAt));
 
@@ -1571,6 +1991,13 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
     setState(() {
       _messagesByConversation[conversationId] = next;
+      _conversations = _conversations
+          .map(
+            (conversation) => conversation.id == conversationId
+                ? _mergeConversationWithMessage(conversation, upsertedMessage)
+                : conversation,
+          )
+          .toList(growable: false);
     });
   }
 
@@ -1646,17 +2073,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         if (latest == null || latest.id != mid) {
           return conversation;
         }
-        return Conversation(
-          id: conversation.id,
-          tenantId: conversation.tenantId,
-          type: conversation.type,
-          title: conversation.title,
-          createdBy: conversation.createdBy,
-          createdAt: conversation.createdAt,
-          updatedAt: conversation.updatedAt,
-          participants: conversation.participants,
-          unreadCount: conversation.unreadCount,
+        return _copyConversation(
+          conversation,
           latestMessage: markDeleted(latest),
+          latestMessageId: latest.id,
         );
       }).toList(growable: false);
     });
@@ -1755,12 +2175,22 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     final nextReceipts = List<DeliveredReceipt>.from(target.deliveredReceipts)
       ..removeWhere((item) => item.userId == receipt.userId)
       ..add(receipt);
+    final updatedMessage = target.copyWith(deliveredReceipts: nextReceipts);
 
     final nextMessages = List<ChatMessage>.from(messages);
-    nextMessages[index] = target.copyWith(deliveredReceipts: nextReceipts);
+    nextMessages[index] = updatedMessage;
 
     setState(() {
       _messagesByConversation[conversationId] = nextMessages;
+      _conversations = _conversations
+          .map(
+            (conversation) => _replaceConversationLatestMessage(
+              conversation,
+              conversationId: conversationId,
+              message: updatedMessage,
+            ),
+          )
+          .toList(growable: false);
     });
   }
 
@@ -1779,13 +2209,105 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     final nextReceipts = List<ReadReceipt>.from(target.readReceipts)
       ..removeWhere((item) => item.userId == receipt.userId)
       ..add(receipt);
+    final updatedMessage = target.copyWith(readReceipts: nextReceipts);
 
     final nextMessages = List<ChatMessage>.from(messages);
-    nextMessages[index] = target.copyWith(readReceipts: nextReceipts);
+    nextMessages[index] = updatedMessage;
 
     setState(() {
       _messagesByConversation[conversationId] = nextMessages;
+      _conversations = _conversations
+          .map(
+            (conversation) => _replaceConversationLatestMessage(
+              conversation,
+              conversationId: conversationId,
+              message: updatedMessage,
+            ),
+          )
+          .toList(growable: false);
     });
+  }
+
+  Conversation _replaceConversationLatestMessage(
+    Conversation conversation, {
+    required String conversationId,
+    required ChatMessage message,
+  }) {
+    if (conversation.id != conversationId) {
+      return conversation;
+    }
+    final latest = conversation.latestMessage;
+    if (latest == null || latest.id != message.id) {
+      return conversation;
+    }
+    return _copyConversation(
+      conversation,
+      latestMessage: message,
+      latestMessageId: message.id,
+    );
+  }
+
+  Conversation _mergeConversationWithMessage(
+    Conversation conversation,
+    ChatMessage message,
+  ) {
+    final shouldReplaceLatest =
+        _shouldReplaceConversationLatest(conversation.latestMessage, message);
+    final nextUpdatedAt = message.createdAt.isAfter(conversation.updatedAt)
+        ? message.createdAt
+        : conversation.updatedAt;
+    return _copyConversation(
+      conversation,
+      updatedAt: nextUpdatedAt,
+      latestMessage: shouldReplaceLatest ? message : conversation.latestMessage,
+      latestMessageId:
+          shouldReplaceLatest ? message.id : conversation.latestMessageId,
+    );
+  }
+
+  bool _shouldReplaceConversationLatest(
+    ChatMessage? currentLatest,
+    ChatMessage candidate,
+  ) {
+    if (currentLatest == null) {
+      return true;
+    }
+    if (currentLatest.id == candidate.id) {
+      return true;
+    }
+    if (candidate.createdAt.isAfter(currentLatest.createdAt)) {
+      return true;
+    }
+    if (candidate.createdAt.isBefore(currentLatest.createdAt)) {
+      return false;
+    }
+    return false;
+  }
+
+  Conversation _copyConversation(
+    Conversation conversation, {
+    String? title,
+    DateTime? updatedAt,
+    int? unreadCount,
+    ChatMessage? latestMessage,
+    String? latestMessageId,
+    Map<String, ConversationMessageStatus>? messageStatusByUserId,
+  }) {
+    return Conversation(
+      id: conversation.id,
+      tenantId: conversation.tenantId,
+      type: conversation.type,
+      title: title ?? conversation.title,
+      createdBy: conversation.createdBy,
+      createdAt: conversation.createdAt,
+      updatedAt: updatedAt ?? conversation.updatedAt,
+      participants: conversation.participants,
+      unreadCount: unreadCount ?? conversation.unreadCount,
+      latestMessage: latestMessage ?? conversation.latestMessage,
+      latestMessageId: latestMessageId ?? conversation.latestMessageId,
+      messageStatusByUserId:
+          messageStatusByUserId ?? conversation.messageStatusByUserId,
+    );
   }
 
   void _applyPresenceUpdate(String userId, bool isOnline) {
@@ -1863,6 +2385,88 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       }
     }
     return null;
+  }
+
+  Conversation? _conversationById(String? conversationId) {
+    final id = conversationId?.trim() ?? '';
+    if (id.isEmpty) {
+      return null;
+    }
+    for (final conversation in _conversations) {
+      if (conversation.id.trim() == id) {
+        return conversation;
+      }
+    }
+    return null;
+  }
+
+  bool _userAlreadyInConversation(
+    Conversation conversation,
+    MessengerUser user,
+  ) {
+    final userId = user.id.trim();
+    if (userId.isEmpty) {
+      return false;
+    }
+    if (!_useDummyAssociatedUsers) {
+      return conversation.participants.any(
+        (participant) => participant.user.id.trim() == userId,
+      );
+    }
+
+    final associated = kDummyAssociatedUsers
+        .where((candidate) => candidate.userId.trim() == userId)
+        .firstOrNull;
+    final comparableNames = <String>{
+      userId.toLowerCase(),
+      user.username.trim().toLowerCase(),
+      user.roleLabel.trim().toLowerCase(),
+      if (associated != null) ...[
+        associated.userId.trim().toLowerCase(),
+        associated.name.trim().toLowerCase(),
+        associated.email.trim().toLowerCase(),
+      ],
+    }..removeWhere((value) => value.isEmpty);
+
+    for (final participant in conversation.participants) {
+      final participantIds = <String>{
+        participant.user.id.trim().toLowerCase(),
+        participant.user.username.trim().toLowerCase(),
+        (participant.user.email ?? '').trim().toLowerCase(),
+      }..removeWhere((value) => value.isEmpty);
+      if (participantIds.intersection(comparableNames).isNotEmpty) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<String?> _resolveConversationParticipantUserId(
+    MessengerUser user,
+  ) async {
+    final auth = _sessionAuth;
+    final client = _client;
+    if (auth == null || client == null) {
+      return null;
+    }
+    if (!_useDummyAssociatedUsers) {
+      return user.id.trim();
+    }
+    final registration = _registrationBodyForDummyAssociatedPeer(user);
+    if (registration == null) {
+      return null;
+    }
+    final tenantUser = await client.registerOrGetUser(
+      auth,
+      externalTenantId: registration.externalTenantId,
+      externalUserId: registration.externalUserId,
+      externalUserRole: registration.externalUserRole,
+      email: registration.email,
+      name: registration.name,
+      profile: registration.profile,
+    );
+    final resolvedId = tenantUser.id.trim();
+    return resolvedId.isEmpty ? null : resolvedId;
   }
 
   MessengerUser _mapUser(TenantUser user) {
@@ -2165,23 +2769,67 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       return content;
     }
     if (message.attachments.isNotEmpty) {
-      switch (message.type) {
-        case MessageType.image:
-          return '[Image attachment]';
-        case MessageType.voice:
-          return '[Voice attachment]';
-        case MessageType.video:
-          return '[Video attachment]';
-        case MessageType.file:
-          return '[File attachment]';
-        case MessageType.link:
-          return '[Link attachment]';
-        case MessageType.other:
-        case MessageType.text:
-          return '[Attachment]';
-      }
+      return _attachmentPreviewLabel(message);
     }
     return '[Empty message]';
+  }
+
+  String _attachmentPreviewLabel(ChatMessage message) {
+    final attachment = message.attachments.first;
+    final normalizedKind = attachment.kind?.trim().toLowerCase() ?? '';
+    final normalizedMime = attachment.mimeType?.trim().toLowerCase() ?? '';
+    final normalizedName = attachment.fileName?.trim().toLowerCase() ?? '';
+
+    bool looksLikeDocument() {
+      return normalizedMime.startsWith('application/') ||
+          normalizedName.endsWith('.pdf') ||
+          normalizedName.endsWith('.doc') ||
+          normalizedName.endsWith('.docx') ||
+          normalizedName.endsWith('.xls') ||
+          normalizedName.endsWith('.xlsx') ||
+          normalizedName.endsWith('.ppt') ||
+          normalizedName.endsWith('.pptx') ||
+          normalizedName.endsWith('.txt');
+    }
+
+    switch (message.type) {
+      case MessageType.image:
+        return 'Image';
+      case MessageType.voice:
+        return 'Voice';
+      case MessageType.video:
+        return 'Video';
+      case MessageType.file:
+        return 'Document';
+      case MessageType.link:
+        return 'Link';
+      case MessageType.text:
+      case MessageType.other:
+        break;
+    }
+
+    if (normalizedKind.contains('image') ||
+        normalizedMime.startsWith('image/')) {
+      return 'Image';
+    }
+    if (normalizedKind.contains('voice') ||
+        normalizedKind.contains('audio') ||
+        normalizedMime.startsWith('audio/')) {
+      return 'Voice';
+    }
+    if (normalizedKind.contains('video') ||
+        normalizedMime.startsWith('video/')) {
+      return 'Video';
+    }
+    if (normalizedKind.contains('link')) {
+      return 'Link';
+    }
+    if (normalizedKind.contains('file') ||
+        normalizedKind.contains('document') ||
+        looksLikeDocument()) {
+      return 'Document';
+    }
+    return 'Attachment';
   }
 
   /// Prefer the chronologically newer row when both REST and loaded-thread
@@ -2239,6 +2887,18 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   String _nameForUser(String userId) {
     return _users.where((item) => item.id == userId).firstOrNull?.displayName ??
         userId;
+  }
+
+  String _displayName(String username) {
+    final trimmed = username.trim();
+    if (trimmed.isEmpty) {
+      return 'User';
+    }
+    return trimmed
+        .split(RegExp(r'[_-]'))
+        .where((part) => part.isNotEmpty)
+        .map((part) => part[0].toUpperCase() + part.substring(1))
+        .join(' ');
   }
 
   List<MessengerTypingUser> _remoteTypingUsersForShell() {
@@ -2541,16 +3201,20 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           onLogout: () => unawaited(_logoutToConfiguration()),
                           onSelectConversation: _selectConversation,
                           onOpenDirectChat: _openDirectChat,
-                          onCreateGroupSelected: _createSuggestedGroup,
+                          onCreateGroupRequested: _createSuggestedGroup,
                           isCreatingGroup: _isCreatingSuggestedGroup,
+                          groupNameInputBehavior:
+                              MessengerGroupNameInputBehavior.required,
                           suggestedPeopleBuilder:
                               (context, users, openDirectChat) =>
                                   MessengerSuggestedPeoplePanel(
                             users: users,
                             openingUserId: _suggestedPeopleOpeningUserId,
                             onUserSelected: openDirectChat,
-                            onCreateGroupSelected: _createSuggestedGroup,
+                            onCreateGroupRequested: _createSuggestedGroup,
                             isCreatingGroup: _isCreatingSuggestedGroup,
+                            groupNameInputBehavior:
+                                MessengerGroupNameInputBehavior.required,
                             onPullToRefresh: () => _refreshAll(),
                             showSearchField: true,
                             searchQuery: _suggestedPeopleSearchQuery,
@@ -2560,6 +3224,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                             noSearchResultsText:
                                 'No people match "$_suggestedPeopleSearchQuery".',
                           ),
+                          onEditGroupConversation: _editGroupConversation,
+                          onAddPeopleToGroupConversation:
+                              _addPeopleToGroupConversation,
+                          onDeleteConversation: _deleteConversation,
                           prepareOutgoingConversation:
                               _prepareOutgoingConversationForShell,
                           onMobileThreadClosed: _onMobileThreadClosed,
