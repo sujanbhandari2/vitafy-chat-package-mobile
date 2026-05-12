@@ -7,13 +7,17 @@ import '../client/chat_client.dart';
 import '../client/models/chat_message.dart';
 import '../models/messenger_conversation.dart';
 import '../models/messenger_message.dart';
+import '../models/messenger_thread_fetch_loading_mode.dart';
+import '../models/messenger_thread_loading_style.dart';
 import '../models/messenger_user.dart';
 import '../models/messenger_search_visibility.dart';
 import '../models/messenger_attachment.dart';
 import '../models/messenger_typing.dart';
 import '../theme/messenger_theme.dart';
+import '../utils/messenger_thread_scroll.dart';
 import 'messenger_chat_thread.dart';
 import 'messenger_conversation_list.dart';
+import 'messenger_default_inline_loading.dart';
 import 'messenger_media_send_orchestrator.dart';
 
 class MessengerChatShell extends StatefulWidget {
@@ -30,6 +34,10 @@ class MessengerChatShell extends StatefulWidget {
     required this.isSending,
     required this.isRecording,
     required this.onRefresh,
+    this.enablePullToRefresh = true,
+    this.isListPaneRefreshing = false,
+    this.conversationListLoadingBuilder,
+    this.suggestedPaneLoadingBuilder,
     required this.onLogout,
     required this.onSelectConversation,
     required this.onOpenDirectChat,
@@ -104,6 +112,23 @@ class MessengerChatShell extends StatefulWidget {
     this.onMediaSendError,
     this.onMediaMessageSent,
     this.onMediaMessageSentForConversation,
+    this.autoScrollThreadToBottom = true,
+    this.threadScrollToBottomAnimated = false,
+    this.threadScrollToBottomAnimationDuration =
+        const Duration(milliseconds: 240),
+    this.threadScrollToBottomAnimationCurve = Curves.easeOut,
+    this.threadLoadingStyle,
+    this.threadFetchLoadingMode =
+        MessengerThreadFetchLoadingMode.replaceMessageList,
+    this.threadFetchLoadingBuilder,
+    this.prepareOutgoingConversation,
+    this.onMobileThreadClosed,
+    this.suggestedPeopleBuilder,
+    this.composerReplyDraft,
+    this.onComposerReplyDraftChanged,
+    this.composerFocusNode,
+    this.attachmentCaptionTextStyle,
+    this.attachmentOptionTextStyle,
   });
 
   final String currentUserId;
@@ -116,7 +141,30 @@ class MessengerChatShell extends StatefulWidget {
   final ScrollController messagesScrollController;
   final bool isSending;
   final bool isRecording;
-  final VoidCallback onRefresh;
+
+  /// Reloads conversations/users from the host. Used by the header Edit
+  /// action and by pull-to-refresh on the conversation list when
+  /// [enablePullToRefresh] is true.
+  final Future<void> Function() onRefresh;
+
+  /// When true (default), the conversation list pane wraps its scrollable
+  /// body in a [RefreshIndicator] that calls [onRefresh].
+  final bool enablePullToRefresh;
+
+  /// When true, the list pane shows an in-pane loader: [MessengerConversationList]
+  /// replaces its peer scroll body with a centered spinner, and the suggested
+  /// slot (when shown) does the same unless [suggestedPaneLoadingBuilder] is set.
+  final bool isListPaneRefreshing;
+
+  /// Overrides the default centered spinner while [isListPaneRefreshing] is true
+  /// on [MessengerConversationList].
+  final WidgetBuilder? conversationListLoadingBuilder;
+
+  /// Overrides loading UI for the suggested-people slot when
+  /// [isListPaneRefreshing] is true. Falls back to [conversationListLoadingBuilder],
+  /// then [MessengerDefaultInlineLoading].
+  final WidgetBuilder? suggestedPaneLoadingBuilder;
+
   final VoidCallback onLogout;
   final FutureOr<void> Function(String conversationId) onSelectConversation;
   final FutureOr<void> Function(MessengerUser user) onOpenDirectChat;
@@ -157,6 +205,7 @@ class MessengerChatShell extends StatefulWidget {
   final EdgeInsetsGeometry? composerFieldContentPadding;
   final String attachmentSheetTitle;
   final List<MessengerAttachmentOption>? attachmentOptions;
+  final TextStyle? attachmentOptionTextStyle;
   final MessengerThemeData? theme;
   final double desktopBreakpoint;
   final String emptyMessagesMessage;
@@ -196,6 +245,69 @@ class MessengerChatShell extends StatefulWidget {
   final void Function(String conversationId, MessengerChatMessage message)?
       onMediaMessageSentForConversation;
 
+  /// When true, [MessengerChatShell] scrolls [messagesScrollController] to the
+  /// latest message after conversation changes, loading state changes, or the
+  /// message list grows / last message id changes.
+  final bool autoScrollThreadToBottom;
+
+  /// When false (default), uses [MessengerThreadScroll.scheduleJumpToBottom].
+  final bool threadScrollToBottomAnimated;
+
+  final Duration threadScrollToBottomAnimationDuration;
+  final Curve threadScrollToBottomAnimationCurve;
+
+  /// Customizes the default **empty-thread** loading placeholder when
+  /// [loadingMessagesBuilder] is null. See [threadFetchLoadingMode] for reload
+  /// behavior when messages are already shown.
+  final MessengerThreadLoadingStyle? threadLoadingStyle;
+
+  /// When the selected conversation is loading and messages are already shown.
+  final MessengerThreadFetchLoadingMode threadFetchLoadingMode;
+
+  /// Replaces the message list during refetch when [threadFetchLoadingMode] is
+  /// [MessengerThreadFetchLoadingMode.replaceMessageList].
+  final WidgetBuilder? threadFetchLoadingBuilder;
+
+  /// When set, invoked before package media upload so the host can replace a
+  /// placeholder conversation id (for example a draft direct chat) with a
+  /// real server id. Return null to abort the send.
+  final Future<String?> Function(String conversationId)?
+      prepareOutgoingConversation;
+
+  /// Called after the full-screen mobile thread route is popped (back), with
+  /// the [conversationId] for the thread that was shown. Hosts should call
+  /// [ChatSession.leaveConversation] (or equivalent) so the socket inbox no
+  /// longer treats that room as active (otherwise inbound messages can still
+  /// emit read receipts for the sender).
+  final void Function(String conversationId)? onMobileThreadClosed;
+
+  /// Optional opt-in slot for an introductory "Suggested people" surface
+  /// (typically a [MessengerSuggestedPeoplePanel]). When non-null and
+  /// [conversations] is empty, the shell renders this builder's widget in
+  /// place of the conversation list pane (mobile and desktop). When null,
+  /// the conversation list and its existing empty placeholder are unchanged.
+  ///
+  /// The third argument is the shell-provided opener: on mobile it runs the
+  /// same direct-chat flow as the conversation list (including navigation to
+  /// the full-screen thread). On desktop it only invokes the host callback.
+  final Widget Function(
+    BuildContext context,
+    List<MessengerUser> users,
+    Future<void> Function(MessengerUser user) openDirectChat,
+  )? suggestedPeopleBuilder;
+
+  /// Shown above the composer while replying to a message (swipe-to-reply).
+  final MessengerComposerReplyDraft? composerReplyDraft;
+
+  /// Host owns draft state; invoked when the user swipes to reply or cancels.
+  final ValueChanged<MessengerComposerReplyDraft?>? onComposerReplyDraftChanged;
+
+  /// Optional [FocusNode] for the thread composer field.
+  final FocusNode? composerFocusNode;
+
+  /// Passed through to each [MessengerMessageBubble] in the thread.
+  final TextStyle? attachmentCaptionTextStyle;
+
   @override
   State<MessengerChatShell> createState() => _MessengerChatShellState();
 }
@@ -217,6 +329,33 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   MessengerMediaPicker? _cachedMediaPicker;
   MessengerAudioRecorder? _cachedMediaRecorder;
 
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !widget.autoScrollThreadToBottom ||
+          widget.messages.isEmpty) {
+        return;
+      }
+      _runThreadScrollToBottom();
+    });
+  }
+
+  void _runThreadScrollToBottom() {
+    if (widget.threadScrollToBottomAnimated) {
+      MessengerThreadScroll.scheduleAnimateToBottom(
+        widget.messagesScrollController,
+        duration: widget.threadScrollToBottomAnimationDuration,
+        curve: widget.threadScrollToBottomAnimationCurve,
+      );
+    } else {
+      MessengerThreadScroll.scheduleJumpToBottom(
+        widget.messagesScrollController,
+      );
+    }
+  }
+
   void _scheduleMobileThreadRefresh() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
@@ -224,6 +363,27 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       }
       _mobileThreadVersion.value++;
     });
+  }
+
+  /// Completes after the next frame, so parent/host [setState]/notifier updates
+  /// can rebuild this widget before we read [MessengerChatShell.selectedConversationId].
+  Future<void> _waitUntilPostFrame() async {
+    final completer = Completer<void>();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!completer.isCompleted) {
+        completer.complete();
+      }
+    });
+    await completer.future;
+  }
+
+  /// Normalized map key for [_pendingMediaByConversation] (trimmed non-empty ids).
+  String? _conversationKey(String? conversationId) {
+    final trimmed = conversationId?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    return trimmed;
   }
 
   @override
@@ -234,7 +394,9 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
             !identical(oldWidget.messages, widget.messages) ||
             !identical(oldWidget.conversations, widget.conversations) ||
             oldWidget.isConversationLoading != widget.isConversationLoading ||
-            oldWidget.loadingConversationId != widget.loadingConversationId;
+            oldWidget.loadingConversationId != widget.loadingConversationId ||
+            oldWidget.composerReplyDraft?.targetMessageId !=
+                widget.composerReplyDraft?.targetMessageId;
     if (shouldRefreshMobileThread) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
@@ -243,6 +405,29 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
         _mobileThreadVersion.value++;
       });
     }
+
+    if (widget.autoScrollThreadToBottom &&
+        _shouldScheduleThreadScrollToBottom(oldWidget)) {
+      _runThreadScrollToBottom();
+    }
+  }
+
+  bool _shouldScheduleThreadScrollToBottom(MessengerChatShell oldWidget) {
+    if (oldWidget.selectedConversationId != widget.selectedConversationId) {
+      return true;
+    }
+    if (oldWidget.isConversationLoading != widget.isConversationLoading) {
+      return true;
+    }
+    final oldMessages = oldWidget.messages;
+    final newMessages = widget.messages;
+    if (oldMessages.length != newMessages.length) {
+      return true;
+    }
+    if (oldMessages.isEmpty) {
+      return false;
+    }
+    return oldMessages.last.id != newMessages.last.id;
   }
 
   @override
@@ -257,33 +442,50 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     String? fallbackConversationId,
     bool forceLoading = false,
   }) {
-    final selectedConversationId =
-        forceLoading && fallbackConversationId != null
-            ? fallbackConversationId
-            : (widget.selectedConversationId ?? fallbackConversationId);
-    final selectedConversation = selectedConversationId == null
-        ? null
-        : widget.conversations
-            .where((item) => item.id == selectedConversationId)
-            .firstOrNull;
+    final hostTrimmed = widget.selectedConversationId?.trim();
+    final fallbackTrimmed = fallbackConversationId?.trim();
+    final hostHasSelection =
+        hostTrimmed != null && hostTrimmed.isNotEmpty;
+    final selectedConversationId = hostHasSelection
+        ? hostTrimmed
+        : (fallbackTrimmed != null && fallbackTrimmed.isNotEmpty
+            ? fallbackTrimmed
+            : null);
+    final selectedConversation = _conversationForShellId(
+          selectedConversationId,
+        ) ??
+        (selectedConversationId != null &&
+                selectedConversationId.trim().isNotEmpty
+            ? MessengerConversation(
+                id: selectedConversationId.trim(),
+                title: 'Chat',
+                subtitle: '',
+                avatarLabel: 'CH',
+                createdAt: DateTime.now(),
+              )
+            : null);
     final isSelectedConversationLoading = selectedConversationId != null &&
         (forceLoading ||
             (widget.isConversationLoading &&
                 (widget.loadingConversationId == null ||
-                    widget.loadingConversationId == selectedConversationId)));
-    final rawThreadMessages =
-        widget.selectedConversationId == selectedConversationId
-            ? _messagesForConversation(widget.selectedConversationId)
-            : const <MessengerChatMessage>[];
-    final threadMessages = isSelectedConversationLoading
-        ? const <MessengerChatMessage>[]
-        : rawThreadMessages;
-    final pendingMedia = selectedConversationId == null
+                    _conversationIdsEqual(
+                      widget.loadingConversationId,
+                      selectedConversationId,
+                    ))));
+    final rawThreadMessages = _conversationIdsEqual(
+      widget.selectedConversationId,
+      selectedConversationId,
+    )
+        ? _messagesForConversation(widget.selectedConversationId)
+        : const <MessengerChatMessage>[];
+    final threadMessages = rawThreadMessages;
+    final pendingMediaKey = _conversationKey(selectedConversationId);
+    final pendingMedia = pendingMediaKey == null
         ? null
-        : _pendingMediaByConversation[selectedConversationId];
+        : _pendingMediaByConversation[pendingMediaKey];
     final hasPendingAttachment = pendingMedia != null;
-    final isMediaSending = selectedConversationId != null &&
-        _mediaSendingConversationIds.contains(selectedConversationId);
+    final isMediaSending = pendingMediaKey != null &&
+        _mediaSendingConversationIds.contains(pendingMediaKey);
     final isPackageRecording = _packageRecording &&
         selectedConversationId != null &&
         selectedConversationId == _recordingConversationId;
@@ -293,8 +495,12 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       onBack: onBack,
       conversation: selectedConversation,
       messages: threadMessages,
+      snapToBottomOnKeyboardInsetChange: widget.autoScrollThreadToBottom,
       isConversationLoading: isSelectedConversationLoading,
       loadingMessagesBuilder: widget.loadingMessagesBuilder,
+      threadLoadingStyle: widget.threadLoadingStyle,
+      threadFetchLoadingMode: widget.threadFetchLoadingMode,
+      threadFetchLoadingBuilder: widget.threadFetchLoadingBuilder,
       contentTransitionDuration: widget.threadTransitionDuration,
       currentUserId: widget.currentUserId,
       composerController: widget.composerController,
@@ -367,6 +573,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       composerFieldContentPadding: widget.composerFieldContentPadding,
       attachmentSheetTitle: widget.attachmentSheetTitle,
       attachmentOptions: widget.attachmentOptions,
+      attachmentOptionTextStyle: widget.attachmentOptionTextStyle,
       onReact: widget.onReact,
       onRemoveReaction: widget.onRemoveReaction,
       onDelete: widget.onDelete,
@@ -387,9 +594,17 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
           ? null
           : () {
               setState(() {
-                _pendingMediaByConversation.remove(selectedConversationId);
+                final k = _conversationKey(selectedConversationId);
+                if (k != null) {
+                  _pendingMediaByConversation.remove(k);
+                }
               });
+              _scheduleMobileThreadRefresh();
             },
+      composerReplyDraft: widget.composerReplyDraft,
+      onComposerReplyDraftChanged: widget.onComposerReplyDraftChanged,
+      composerFocusNode: widget.composerFocusNode,
+      attachmentCaptionTextStyle: widget.attachmentCaptionTextStyle,
     );
   }
 
@@ -410,7 +625,13 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     required String? fallbackConversationId,
     required bool forceLoading,
   }) async {
-    await Navigator.of(context).push(
+    final selected = widget.selectedConversationId?.trim();
+    final fallback = fallbackConversationId?.trim();
+    final mobileClosedConversationId = (selected != null && selected.isNotEmpty)
+        ? selected
+        : (fallback != null && fallback.isNotEmpty ? fallback : '');
+
+    await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (routeContext) => MessengerTheme(
           data: themeData,
@@ -418,26 +639,42 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
             body: SafeArea(
               child: ValueListenableBuilder<int>(
                 valueListenable: _mobileThreadVersion,
-                builder: (_, __, ___) => _buildThread(
-                  isMobile: true,
-                  onBack: () => Navigator.of(routeContext).maybePop(),
-                  fallbackConversationId: fallbackConversationId,
-                  forceLoading: forceLoading &&
-                      widget.selectedConversationId != fallbackConversationId,
-                ),
+                builder: (_, __, ___) {
+                  final hostSel = widget.selectedConversationId?.trim();
+                  final hostHasSelection =
+                      hostSel != null && hostSel.isNotEmpty;
+                  return _buildThread(
+                    isMobile: true,
+                    onBack: () => Navigator.of(routeContext).maybePop(),
+                    fallbackConversationId: fallbackConversationId?.trim(),
+                    forceLoading: forceLoading &&
+                        !hostHasSelection &&
+                        !_conversationIdsEqual(
+                          widget.selectedConversationId,
+                          fallbackConversationId,
+                        ),
+                  );
+                },
               ),
             ),
           ),
         ),
       ),
     );
+    if (!mounted) {
+      return;
+    }
+    if (mobileClosedConversationId.isNotEmpty) {
+      widget.onMobileThreadClosed?.call(mobileClosedConversationId);
+    }
   }
 
   List<MessengerChatMessage> _messagesForConversation(String? conversationId) {
     if (conversationId == null) {
       return widget.messages;
     }
-    final local = _localMessagesByConversation[conversationId] ?? const [];
+    final key = conversationId.trim();
+    final local = _localMessagesByConversation[key] ?? const [];
     if (local.isEmpty) {
       return widget.messages;
     }
@@ -502,9 +739,9 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   }
 
   Future<void> _handleStartRecording(String? conversationId) async {
-    final targetConversationId =
-        conversationId ?? widget.selectedConversationId;
-    if (targetConversationId == null || targetConversationId.isEmpty) {
+    final recordingKey =
+        _conversationKey(conversationId ?? widget.selectedConversationId);
+    if (recordingKey == null) {
       return;
     }
     final orchestrator = _buildOrchestrator();
@@ -522,7 +759,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       }
       setState(() {
         _packageRecording = true;
-        _recordingConversationId = targetConversationId;
+        _recordingConversationId = recordingKey;
       });
       _scheduleMobileThreadRefresh();
     } catch (error) {
@@ -550,11 +787,12 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       if (!mounted) {
         return;
       }
+      final finishKey = _conversationKey(targetConversationId);
       setState(() {
         _packageRecording = false;
         _recordingConversationId = null;
-        if (picked != null) {
-          _pendingMediaByConversation[targetConversationId] = picked;
+        if (picked != null && finishKey != null) {
+          _pendingMediaByConversation[finishKey] = picked;
         }
       });
       _scheduleMobileThreadRefresh();
@@ -604,10 +842,8 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     required VoidCallback fallback,
   }) async {
     final orchestrator = _buildOrchestrator();
-    final conversationId = widget.selectedConversationId;
-    if (orchestrator == null ||
-        conversationId == null ||
-        conversationId.isEmpty) {
+    final pickKey = _conversationKey(widget.selectedConversationId);
+    if (orchestrator == null || pickKey == null) {
       fallback();
       return;
     }
@@ -626,18 +862,47 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       return;
     }
     setState(() {
-      _pendingMediaByConversation[conversationId] = picked!;
+      _pendingMediaByConversation[pickKey] = picked!;
     });
     _scheduleMobileThreadRefresh();
   }
 
   Future<void> _handleSendPressed(String? conversationId) async {
-    final targetConversationId =
-        conversationId ?? widget.selectedConversationId;
-    if (targetConversationId == null || targetConversationId.isEmpty) {
+    final selectionKey =
+        _conversationKey(conversationId ?? widget.selectedConversationId);
+    if (selectionKey == null) {
       return;
     }
-    final pendingMedia = _pendingMediaByConversation[targetConversationId];
+
+    MessengerPickedMedia? pendingMedia =
+        _pendingMediaByConversation[selectionKey];
+    var targetConversationId = selectionKey;
+
+    final prepare = widget.prepareOutgoingConversation;
+    if (prepare != null) {
+      final resolved = await prepare(targetConversationId);
+      if (resolved == null || resolved.trim().isEmpty) {
+        widget.onMediaSendError?.call(
+          'conversation',
+          StateError(
+            'Could not prepare conversation for outgoing message.',
+          ),
+        );
+        return;
+      }
+      targetConversationId = resolved.trim();
+      if (selectionKey != targetConversationId && pendingMedia != null) {
+        final media = pendingMedia;
+        if (mounted) {
+          setState(() {
+            _pendingMediaByConversation.remove(selectionKey);
+            _pendingMediaByConversation[targetConversationId] = media;
+          });
+        }
+      } else if (selectionKey != targetConversationId) {
+        pendingMedia = _pendingMediaByConversation[targetConversationId];
+      }
+    }
     if (_mediaSendingConversationIds.contains(targetConversationId)) {
       return;
     }
@@ -665,6 +930,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       senderLabel: widget.currentUserName,
       type: _toUiType(pendingMedia.messageType),
       content: pendingMedia.file.path,
+      caption: caption.isEmpty ? null : caption,
       createdAt: DateTime.now(),
       isUploading: true,
       uploadProgress: 0,
@@ -677,11 +943,16 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       });
       _scheduleMobileThreadRefresh();
     }
+    final trimmedReplyId =
+        widget.composerReplyDraft?.targetMessageId.trim() ?? '';
+    final replyToMessageId = trimmedReplyId.isEmpty ? null : trimmedReplyId;
+
     try {
       final sent = await orchestrator.uploadAndSend(
         conversationId: targetConversationId,
         media: pendingMedia,
         content: caption,
+        replyToMessageId: replyToMessageId,
         onUploadProgress: (progress) {
           _updateUploadProgress(targetConversationId, pending.id, progress);
           widget.onMediaSendProgress?.call(pending.id, progress);
@@ -695,6 +966,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
           _pendingMediaByConversation.remove(targetConversationId);
         });
         widget.composerController.clear();
+        widget.onComposerReplyDraftChanged?.call(null);
         _scheduleMobileThreadRefresh();
       }
       widget.onMediaMessageSent?.call(sentUi);
@@ -772,6 +1044,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
                   senderLabel: item.senderLabel,
                   type: item.type,
                   content: item.content,
+                  caption: item.caption,
                   createdAt: item.createdAt,
                   isDeleted: item.isDeleted,
                   deliveryStatus: item.deliveryStatus,
@@ -779,6 +1052,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
                   isUploading: true,
                   uploadProgress: progress,
                   senderAvatarUrl: item.senderAvatarUrl,
+                  quotedReply: item.quotedReply,
                 )
               : item,
         )
@@ -803,6 +1077,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
                   senderLabel: item.senderLabel,
                   type: item.type,
                   content: item.content,
+                  caption: item.caption,
                   createdAt: item.createdAt,
                   isDeleted: item.isDeleted,
                   deliveryStatus: item.deliveryStatus,
@@ -810,6 +1085,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
                   isUploading: false,
                   uploadProgress: null,
                   senderAvatarUrl: item.senderAvatarUrl,
+                  quotedReply: item.quotedReply,
                 )
               : item,
         )
@@ -825,9 +1101,24 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   }
 
   MessengerChatMessage _toUiMessage(ChatMessage message) {
-    final content = message.attachments.isNotEmpty
-        ? message.attachments.first.url
-        : message.content;
+    final body = message.content.trim();
+    if (message.attachments.isEmpty) {
+      return MessengerChatMessage(
+        id: message.id,
+        senderId: message.senderId,
+        senderLabel: message.senderId == widget.currentUserId
+            ? widget.currentUserName
+            : (message.sender?.name ?? message.senderId),
+        type: _toUiType(message.type),
+        content: body,
+        createdAt: message.createdAt,
+        deliveryStatus: message.senderId == widget.currentUserId
+            ? MessengerDeliveryStatus.sent
+            : MessengerDeliveryStatus.none,
+        quotedReply: _shellQuotedReply(message),
+      );
+    }
+    final url = message.attachments.first.url.trim();
     return MessengerChatMessage(
       id: message.id,
       senderId: message.senderId,
@@ -835,12 +1126,53 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
           ? widget.currentUserName
           : (message.sender?.name ?? message.senderId),
       type: _toUiType(message.type),
-      content: content,
+      content: url.isNotEmpty ? url : body,
+      caption: url.isNotEmpty && body.isNotEmpty ? body : null,
       createdAt: message.createdAt,
       deliveryStatus: message.senderId == widget.currentUserId
           ? MessengerDeliveryStatus.sent
           : MessengerDeliveryStatus.none,
+      quotedReply: _shellQuotedReply(message),
     );
+  }
+
+  MessengerQuotedMessage? _shellQuotedReply(ChatMessage message) {
+    final r = message.replyTo;
+    if (r == null) {
+      return null;
+    }
+    final id = r.id.trim();
+    if (id.isEmpty) {
+      return null;
+    }
+    final label = r.sender?.name?.trim();
+    return MessengerQuotedMessage(
+      messageId: id,
+      senderLabel: label != null && label.isNotEmpty ? label : r.senderId,
+      preview: _shellReplyToPreview(r),
+      messageType: _toUiType(r.type),
+    );
+  }
+
+  String _shellReplyToPreview(ReplyToMessage r) {
+    final c = r.content.trim();
+    if (c.isNotEmpty) {
+      return c.length > 80 ? '${c.substring(0, 79)}…' : c;
+    }
+    switch (r.type) {
+      case MessageType.image:
+        return 'Photo';
+      case MessageType.video:
+        return 'Video';
+      case MessageType.voice:
+        return 'Voice message';
+      case MessageType.file:
+        return 'File';
+      case MessageType.text:
+      case MessageType.link:
+      case MessageType.other:
+        return 'Message';
+    }
   }
 
   MessengerMessageType _toUiType(MessageType type) {
@@ -877,9 +1209,30 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   }
 
   String? _conversationIdForUser(String userId) {
+    final uid = userId.trim();
     for (final conversation in widget.conversations) {
-      if (conversation.peerUsers.any((peer) => peer.id == userId)) {
-        return conversation.id;
+      if (conversation.peerUsers.any((peer) => peer.id.trim() == uid)) {
+        return conversation.id.trim();
+      }
+    }
+    return null;
+  }
+
+  bool _conversationIdsEqual(String? a, String? b) {
+    if (a == null || b == null) {
+      return false;
+    }
+    return a.trim() == b.trim();
+  }
+
+  MessengerConversation? _conversationForShellId(String? id) {
+    if (id == null || id.trim().isEmpty) {
+      return null;
+    }
+    final t = id.trim();
+    for (final c in widget.conversations) {
+      if (c.id.trim() == t) {
+        return c;
       }
     }
     return null;
@@ -895,12 +1248,193 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     }
   }
 
+  Future<void> _mobileOpenDirectChatAndShowThread(MessengerUser user) async {
+    setState(() => _openingDirectUserId = user.id);
+    await _runOpenDirectChat(user);
+    if (!mounted) {
+      return;
+    }
+    await _waitUntilPostFrame();
+    if (!mounted) {
+      return;
+    }
+    final selected = widget.selectedConversationId?.trim();
+    // After [_waitUntilPostFrame], a non-empty host selection matches the opened DM.
+    final idForRoute = (selected != null && selected.isNotEmpty)
+        ? selected
+        : _conversationIdForUser(user.id);
+    if (idForRoute == null || idForRoute.trim().isEmpty) {
+      return;
+    }
+    await _openThreadRouteInternal(
+      context,
+      themeData: MessengerTheme.of(context),
+      fallbackConversationId: idForRoute,
+      forceLoading: true,
+    );
+  }
+
   Future<void> _runSelectConversation(String conversationId) async {
     try {
       await widget.onSelectConversation(conversationId);
     } catch (_) {
       // Keep navigation smooth; host callback should surface failures.
     }
+  }
+
+  bool get _shouldShowSuggestedPanel =>
+      widget.suggestedPeopleBuilder != null && widget.conversations.isEmpty;
+
+  Widget _suggestedPaneLoadingBody(BuildContext context) {
+    return widget.suggestedPaneLoadingBuilder?.call(context) ??
+        widget.conversationListLoadingBuilder?.call(context) ??
+        const MessengerDefaultInlineLoading();
+  }
+
+  Widget _buildDesktopConversationPane() {
+    if (_shouldShowSuggestedPanel) {
+      if (widget.isListPaneRefreshing) {
+        final theme = MessengerTheme.of(context);
+        return Container(
+          decoration: BoxDecoration(
+            color: theme.surface,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          child: _suggestedPaneLoadingBody(context),
+        );
+      }
+      return widget.suggestedPeopleBuilder!(
+        context,
+        widget.users,
+        (user) async {
+          setState(() => _openingDirectUserId = user.id);
+          try {
+            await widget.onOpenDirectChat(user);
+          } finally {
+            if (mounted) {
+              setState(() => _openingDirectUserId = '');
+            }
+          }
+        },
+      );
+    }
+    return MessengerConversationList(
+      isMobile: false,
+      currentUserName: widget.currentUserName,
+      conversations: widget.conversations,
+      users: widget.users,
+      selectedConversationId: widget.selectedConversationId,
+      openingDirectUserId: _openingDirectUserId,
+      onRefresh: widget.onRefresh,
+      enablePullToRefresh: widget.enablePullToRefresh,
+      isConversationListLoading: widget.isListPaneRefreshing,
+      conversationListLoadingBuilder: widget.conversationListLoadingBuilder,
+      onLogout: widget.onLogout,
+      onOpenDirectChat: (user) async {
+        setState(() => _openingDirectUserId = user.id);
+        await widget.onOpenDirectChat(user);
+        if (mounted) {
+          setState(() => _openingDirectUserId = '');
+        }
+        return;
+      },
+      onSelectConversation: widget.onSelectConversation,
+      searchVisibility: widget.searchVisibility,
+      searchThreshold: widget.searchThreshold,
+      searchHintText: widget.searchHintText,
+      searchInputTextStyle: widget.searchInputTextStyle,
+      searchHintTextStyle: widget.searchHintTextStyle,
+      searchFieldBackgroundColor: widget.searchFieldBackgroundColor,
+      searchFieldContentPadding: widget.searchFieldContentPadding,
+      searchIconColor: widget.searchIconColor,
+      searchFieldBorderRadius: widget.searchFieldBorderRadius,
+      emptyUsersMessage: widget.emptyUsersMessage,
+      emptyConversationsMessage: widget.emptyConversationsMessage,
+      emptyUsersBuilder: widget.emptyUsersBuilder,
+      emptyConversationsBuilder: widget.emptyConversationsBuilder,
+      showStartChatFab: widget.showStartChatFab,
+      showHeaderEditButton: widget.showHeaderEditButton,
+      showHeaderTitle: widget.showHeaderTitle,
+      showHeaderComposeButton: widget.showHeaderComposeButton,
+      startNewChatEmptyBuilder: widget.startNewChatEmptyBuilder,
+      fabBackgroundColor: widget.fabBackgroundColor,
+      fabForegroundColor: widget.fabForegroundColor,
+      fabIcon: widget.fabIcon,
+      fabHeroTag: widget.fabHeroTag,
+      userListPadding: widget.userListPadding,
+      userListItemSpacing: widget.userListItemSpacing,
+      userListItemStyle: widget.userListItemStyle,
+      userListItemBuilder: widget.userListItemBuilder,
+    );
+  }
+
+  Widget _buildMobileConversationPane() {
+    if (_shouldShowSuggestedPanel) {
+      if (widget.isListPaneRefreshing) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+          child: _suggestedPaneLoadingBody(context),
+        );
+      }
+      return widget.suggestedPeopleBuilder!(
+        context,
+        widget.users,
+        _mobileOpenDirectChatAndShowThread,
+      );
+    }
+    return MessengerConversationList(
+      isMobile: true,
+      currentUserName: widget.currentUserName,
+      conversations: widget.conversations,
+      users: widget.users,
+      selectedConversationId: widget.selectedConversationId,
+      openingDirectUserId: _openingDirectUserId,
+      onRefresh: widget.onRefresh,
+      enablePullToRefresh: widget.enablePullToRefresh,
+      isConversationListLoading: widget.isListPaneRefreshing,
+      conversationListLoadingBuilder: widget.conversationListLoadingBuilder,
+      onLogout: widget.onLogout,
+      onOpenDirectChat: _mobileOpenDirectChatAndShowThread,
+      onSelectConversation: (conversationId) async {
+        await _runSelectConversation(conversationId);
+        if (!mounted) {
+          return;
+        }
+        await _openThreadRouteInternal(
+          context,
+          themeData: MessengerTheme.of(context),
+          fallbackConversationId: conversationId,
+          forceLoading: true,
+        );
+      },
+      searchVisibility: widget.searchVisibility,
+      searchThreshold: widget.searchThreshold,
+      searchHintText: widget.searchHintText,
+      searchInputTextStyle: widget.searchInputTextStyle,
+      searchHintTextStyle: widget.searchHintTextStyle,
+      searchFieldBackgroundColor: widget.searchFieldBackgroundColor,
+      searchFieldContentPadding: widget.searchFieldContentPadding,
+      searchIconColor: widget.searchIconColor,
+      searchFieldBorderRadius: widget.searchFieldBorderRadius,
+      emptyUsersMessage: widget.emptyUsersMessage,
+      emptyConversationsMessage: widget.emptyConversationsMessage,
+      emptyUsersBuilder: widget.emptyUsersBuilder,
+      emptyConversationsBuilder: widget.emptyConversationsBuilder,
+      showStartChatFab: widget.showStartChatFab,
+      showHeaderEditButton: widget.showHeaderEditButton,
+      showHeaderTitle: widget.showHeaderTitle,
+      showHeaderComposeButton: widget.showHeaderComposeButton,
+      startNewChatEmptyBuilder: widget.startNewChatEmptyBuilder,
+      fabBackgroundColor: widget.fabBackgroundColor,
+      fabForegroundColor: widget.fabForegroundColor,
+      fabIcon: widget.fabIcon,
+      fabHeroTag: widget.fabHeroTag,
+      userListPadding: widget.userListPadding,
+      userListItemSpacing: widget.userListItemSpacing,
+      userListItemStyle: widget.userListItemStyle,
+      userListItemBuilder: widget.userListItemBuilder,
+    );
   }
 
   @override
@@ -913,51 +1447,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
             children: [
               SizedBox(
                 width: 360,
-                child: MessengerConversationList(
-                  isMobile: false,
-                  currentUserName: widget.currentUserName,
-                  conversations: widget.conversations,
-                  users: widget.users,
-                  selectedConversationId: widget.selectedConversationId,
-                  openingDirectUserId: _openingDirectUserId,
-                  onRefresh: widget.onRefresh,
-                  onLogout: widget.onLogout,
-                  onOpenDirectChat: (user) async {
-                    setState(() => _openingDirectUserId = user.id);
-                    await widget.onOpenDirectChat(user);
-                    if (mounted) {
-                      setState(() => _openingDirectUserId = '');
-                    }
-                    return;
-                  },
-                  onSelectConversation: widget.onSelectConversation,
-                  searchVisibility: widget.searchVisibility,
-                  searchThreshold: widget.searchThreshold,
-                  searchHintText: widget.searchHintText,
-                  searchInputTextStyle: widget.searchInputTextStyle,
-                  searchHintTextStyle: widget.searchHintTextStyle,
-                  searchFieldBackgroundColor: widget.searchFieldBackgroundColor,
-                  searchFieldContentPadding: widget.searchFieldContentPadding,
-                  searchIconColor: widget.searchIconColor,
-                  searchFieldBorderRadius: widget.searchFieldBorderRadius,
-                  emptyUsersMessage: widget.emptyUsersMessage,
-                  emptyConversationsMessage: widget.emptyConversationsMessage,
-                  emptyUsersBuilder: widget.emptyUsersBuilder,
-                  emptyConversationsBuilder: widget.emptyConversationsBuilder,
-                  showStartChatFab: widget.showStartChatFab,
-                  showHeaderEditButton: widget.showHeaderEditButton,
-                  showHeaderTitle: widget.showHeaderTitle,
-                  showHeaderComposeButton: widget.showHeaderComposeButton,
-                  startNewChatEmptyBuilder: widget.startNewChatEmptyBuilder,
-                  fabBackgroundColor: widget.fabBackgroundColor,
-                  fabForegroundColor: widget.fabForegroundColor,
-                  fabIcon: widget.fabIcon,
-                  fabHeroTag: widget.fabHeroTag,
-                  userListPadding: widget.userListPadding,
-                  userListItemSpacing: widget.userListItemSpacing,
-                  userListItemStyle: widget.userListItemStyle,
-                  userListItemBuilder: widget.userListItemBuilder,
-                ),
+                child: _buildDesktopConversationPane(),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -965,87 +1455,12 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
               ),
             ],
           )
-        : MessengerConversationList(
-            isMobile: true,
-            currentUserName: widget.currentUserName,
-            conversations: widget.conversations,
-            users: widget.users,
-            selectedConversationId: widget.selectedConversationId,
-            openingDirectUserId: _openingDirectUserId,
-            onRefresh: widget.onRefresh,
-            onLogout: widget.onLogout,
-            onOpenDirectChat: (user) async {
-              setState(() => _openingDirectUserId = user.id);
-              final fallbackConversationId = _conversationIdForUser(user.id);
-              if (fallbackConversationId == null) {
-                await _runOpenDirectChat(user);
-                if (!mounted) {
-                  return;
-                }
-                await _openThreadRoute(this.context);
-                return;
-              }
-              unawaited(_runOpenDirectChat(user));
-              await _openThreadRouteInternal(
-                this.context,
-                themeData: MessengerTheme.of(this.context),
-                fallbackConversationId: fallbackConversationId,
-                forceLoading: true,
-              );
-              return;
-            },
-            onSelectConversation: (conversationId) async {
-              unawaited(_runSelectConversation(conversationId));
-              await _openThreadRouteInternal(
-                this.context,
-                themeData: MessengerTheme.of(this.context),
-                fallbackConversationId: conversationId,
-                forceLoading: true,
-              );
-              return;
-            },
-            searchVisibility: widget.searchVisibility,
-            searchThreshold: widget.searchThreshold,
-            searchHintText: widget.searchHintText,
-            searchInputTextStyle: widget.searchInputTextStyle,
-            searchHintTextStyle: widget.searchHintTextStyle,
-            searchFieldBackgroundColor: widget.searchFieldBackgroundColor,
-            searchFieldContentPadding: widget.searchFieldContentPadding,
-            searchIconColor: widget.searchIconColor,
-            searchFieldBorderRadius: widget.searchFieldBorderRadius,
-            emptyUsersMessage: widget.emptyUsersMessage,
-            emptyConversationsMessage: widget.emptyConversationsMessage,
-            emptyUsersBuilder: widget.emptyUsersBuilder,
-            emptyConversationsBuilder: widget.emptyConversationsBuilder,
-            showStartChatFab: widget.showStartChatFab,
-            showHeaderEditButton: widget.showHeaderEditButton,
-            showHeaderTitle: widget.showHeaderTitle,
-            showHeaderComposeButton: widget.showHeaderComposeButton,
-            startNewChatEmptyBuilder: widget.startNewChatEmptyBuilder,
-            fabBackgroundColor: widget.fabBackgroundColor,
-            fabForegroundColor: widget.fabForegroundColor,
-            fabIcon: widget.fabIcon,
-            fabHeroTag: widget.fabHeroTag,
-            userListPadding: widget.userListPadding,
-            userListItemSpacing: widget.userListItemSpacing,
-            userListItemStyle: widget.userListItemStyle,
-            userListItemBuilder: widget.userListItemBuilder,
-          );
+        : _buildMobileConversationPane();
 
     if (widget.theme == null) {
       return shell;
     }
 
     return MessengerTheme(data: widget.theme!, child: shell);
-  }
-}
-
-extension _FirstOrNull<E> on Iterable<E> {
-  E? get firstOrNull {
-    if (isEmpty) {
-      return null;
-    }
-
-    return first;
   }
 }

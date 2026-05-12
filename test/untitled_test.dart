@@ -1,15 +1,38 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_messenger_ui/lib/health_messenger_client.dart';
 
 void main() {
+  String jwtWithChatUserId(String chatUserId) {
+    String enc(String raw) =>
+        base64Url.encode(utf8.encode(raw)).replaceAll('=', '');
+    return '${enc('{"alg":"none","typ":"JWT"}')}.${enc('{"chatUserId":"$chatUserId"}')}.sig';
+  }
+
   group('Chat client models', () {
-    test('ChatAuth builds API headers and socket auth payload', () {
+    test('ChatAuth: API-key-only headers omit Bearer', () {
       const auth = ChatAuth(
         apiKey: 'access:secret',
         chatUserId: '42',
       );
 
-      expect(auth.toApiHeaders()['X-Api-Key'], 'access:secret');
+      final headers = auth.toApiHeaders(includeChatUserBearer: false);
+      expect(headers['X-Api-Key'], 'access:secret');
+      expect(headers.containsKey('Authorization'), isFalse);
+    });
+
+    test('ChatAuth: Bearer and socket token when accessToken set', () {
+      const auth = ChatAuth(
+        apiKey: 'access:secret',
+        chatUserId: '42',
+        accessToken: 'jwt.token.here',
+      );
+
+      expect(auth.toApiHeaders()['Authorization'], 'Bearer jwt.token.here');
+      final handshakeHeaders = auth.toSocketHandshakeHeaders();
+      expect(handshakeHeaders['Authorization'], 'Bearer jwt.token.here');
+      expect(handshakeHeaders['auth'], 'Bearer jwt.token.here');
       expect(
         auth.toSocketAuth(),
         {
@@ -17,8 +40,130 @@ void main() {
           'xApiKey': 'access:secret',
           'userId': '42',
           'chatUserId': '42',
+          'token': 'jwt.token.here',
+          'accessToken': 'jwt.token.here',
         },
       );
+    });
+
+    test('ChatAuth: strips Bearer prefix from socket auth token only', () {
+      const auth = ChatAuth(
+        apiKey: 'access:secret',
+        chatUserId: '42',
+        accessToken: 'Bearer jwt.token.here',
+      );
+
+      expect(auth.toApiHeaders()['Authorization'], 'Bearer jwt.token.here');
+      expect(
+        auth.toSocketAuth(),
+        {
+          'apiKey': 'access:secret',
+          'xApiKey': 'access:secret',
+          'userId': '42',
+          'chatUserId': '42',
+          'token': 'jwt.token.here',
+          'accessToken': 'jwt.token.here',
+        },
+      );
+    });
+
+    test('ChatAuth: API-key-only socket connect validation passes', () {
+      const auth = ChatAuth(apiKey: 'access:secret');
+      expect(auth.validateForSocketConnect, returnsNormally);
+    });
+
+    test('ChatAuth: socket connect rejects userId without JWT', () {
+      const auth = ChatAuth(
+        apiKey: 'access:secret',
+        chatUserId: '42',
+      );
+      expect(
+        auth.validateForSocketConnect,
+        throwsA(isA<ChatSocketAuthException>()),
+      );
+    });
+
+    test('ChatAuth: socket connect rejects JWT without userId', () {
+      final auth = ChatAuth(
+        apiKey: 'access:secret',
+        accessToken: jwtWithChatUserId('42'),
+      );
+      expect(
+        auth.validateForSocketConnect,
+        throwsA(isA<ChatSocketAuthException>()),
+      );
+    });
+
+    test('ChatAuth: socket connect rejects mismatched JWT chatUserId', () {
+      final auth = ChatAuth(
+        apiKey: 'access:secret',
+        chatUserId: '42',
+        accessToken: jwtWithChatUserId('99'),
+      );
+      expect(
+        auth.validateForSocketConnect,
+        throwsA(isA<ChatSocketAuthException>()),
+      );
+    });
+
+    test('ChatAuth: socket action rejects API-key-only session', () {
+      const auth = ChatAuth(apiKey: 'access:secret');
+      expect(
+        () => auth.validateForSocketAction('join_conversation'),
+        throwsA(isA<ChatSocketAuthException>()),
+      );
+    });
+
+    test('ChatAuth: socket handshake headers omit auth when no JWT', () {
+      const auth = ChatAuth(
+        apiKey: 'access:secret',
+        chatUserId: '42',
+      );
+      final h = auth.toSocketHandshakeHeaders();
+      expect(h['X-Api-Key'], 'access:secret');
+      expect(h.containsKey('Authorization'), isFalse);
+      expect(h.containsKey('auth'), isFalse);
+    });
+
+    test('TenantUser.fromJson reads accessToken from POST /users payload', () {
+      final user = TenantUser.fromJson({
+        'id': '7',
+        'tenantId': '1',
+        'name': 'A',
+        'email': 'a@b.com',
+        'role': 'CLIENT',
+        'isOnline': false,
+        'createdAt': '2026-01-01T00:00:00.000Z',
+        'accessToken': 'tok',
+        'tokenType': 'Bearer',
+      });
+      expect(user.accessToken, 'tok');
+      expect(user.tokenType, 'Bearer');
+    });
+
+    test('TenantUser.displayName falls back to provider_user_id then id', () {
+      final u1 = TenantUser.fromJson({
+        'id': '42',
+        'tenant_id': '1',
+        'name': '',
+        'email': '',
+        'provider_user_id': 'ext-abc',
+        'role': 'CLIENT',
+        'is_online': false,
+        'created_at': '2026-01-01T00:00:00.000Z',
+      });
+      expect(u1.displayName, 'ext-abc');
+
+      final u2 = TenantUser.fromJson({
+        'id': '99',
+        'tenantId': '1',
+        'name': '',
+        'email': '',
+        'role': 'CLIENT',
+        'isOnline': false,
+        'createdAt': '2026-01-01T00:00:00.000Z',
+      });
+      expect(u2.displayName, 'User 99');
     });
 
     test('ChatMessage parses attachments and reply snapshots', () {
@@ -54,6 +199,21 @@ void main() {
           message.attachments.single.url, 'https://cdn.example.com/file.png');
       expect(message.replyToMessageId, '99');
       expect(message.replyTo?.content, 'original');
+    });
+
+    test('ChatMessage parses editedAt aliases', () {
+      final message = ChatMessage.fromJson({
+        'id': '101',
+        'conversationId': '55',
+        'tenantId': '8',
+        'senderId': '42',
+        'type': 'TEXT',
+        'content': 'edited',
+        'edited_at': '2026-04-23T10:12:00.000Z',
+        'createdAt': '2026-04-23T10:10:00.000Z',
+      });
+
+      expect(message.editedAt?.toIso8601String(), '2026-04-23T10:12:00.000Z');
     });
 
     test('DeliveredReceipt and ReadReceipt parse snake_case keys', () {
@@ -103,6 +263,151 @@ void main() {
         'chatUserId': 'legacy-u',
       });
       expect(typing.userId, 'legacy-u');
+    });
+
+    test('MarkConversationReadResult fromJson', () {
+      final result = MarkConversationReadResult.fromJson({
+        'readCount': 3,
+        'unread': 0,
+      });
+      expect(result.readCount, 3);
+      expect(result.unread, 0);
+    });
+
+    test('DeletedMessageEvent parses userId', () {
+      final deleted = DeletedMessageEvent.fromJson({
+        'messageId': 'm1',
+        'conversationId': 'c1',
+        'deletedAt': '2026-04-23T12:02:00.000Z',
+        'userId': 'u9',
+      });
+      expect(deleted.userId, 'u9');
+    });
+
+    test('MessageEditedEvent fromJson', () {
+      final edited = MessageEditedEvent.fromJson({
+        'conversationId': 'c1',
+        'message': {
+          'id': 'm1',
+          'conversationId': 'c1',
+          'tenantId': 't1',
+          'senderId': 'u1',
+          'type': 'TEXT',
+          'content': 'next',
+          'editedAt': '2026-04-23T12:03:00.000Z',
+          'createdAt': '2026-04-23T12:00:00.000Z',
+        },
+      });
+      expect(edited.conversationId, 'c1');
+      expect(edited.message.content, 'next');
+      expect(edited.message.editedAt, isNotNull);
+    });
+
+    test('ConversationCreatedEvent fromJson', () {
+      final created = ConversationCreatedEvent.fromJson({
+        'conversation': {
+          'id': 'c7',
+          'tenantId': 't1',
+          'type': 'DIRECT',
+          'createdAt': '2026-04-23T12:00:00.000Z',
+          'updatedAt': '2026-04-23T12:00:00.000Z',
+          'participants': [],
+        },
+        'unreadCount': 2,
+      });
+      expect(created.conversation.id, 'c7');
+      expect(created.unreadCount, 2);
+    });
+
+    test('ConversationMessageEvent fromJson', () {
+      final event = ConversationMessageEvent.fromJson({
+        'conversationId': 'c1',
+        'message': {
+          'id': 'm9',
+          'conversationId': 'c1',
+          'tenantId': 't1',
+          'senderId': 'u2',
+          'type': 'TEXT',
+          'content': 'hello',
+          'createdAt': '2026-04-23T12:00:00.000Z',
+        },
+        'unreadCount': 4,
+      });
+      expect(event.conversationId, 'c1');
+      expect(event.message.id, 'm9');
+      expect(event.unreadCount, 4);
+    });
+
+    test('UnreadCountUpdatedEvent fromJson', () {
+      final event = UnreadCountUpdatedEvent.fromJson({
+        'conversationId': 'c1',
+        'userId': 'u1',
+        'unread': 5,
+      });
+      expect(event.conversationId, 'c1');
+      expect(event.userId, 'u1');
+      expect(event.unread, 5);
+    });
+
+    test('UserBadgeUpdatedEvent fromJson', () {
+      final event = UserBadgeUpdatedEvent.fromJson({
+        'usersWithUnreadMessages': 3,
+        'totalUnreadMessages': 7,
+      });
+      expect(event.usersWithUnreadMessages, 3);
+      expect(event.totalUnreadMessages, 7);
+    });
+
+    test(
+        'ConversationParticipant maps chatUserId when nested chatUser omits id',
+        () {
+      final p = ConversationParticipant.fromJson({
+        'id': '70',
+        'conversationId': '33',
+        'chatUserId': '14',
+        'chatUser': {
+          'tenantId': '1',
+          'name': 'Sujan Bhandari',
+          'email': 'sujan@vitafyhealth.com',
+          'status': 'ACTIVE',
+          'isOnline': false,
+        },
+      });
+      expect(p.userId, '14');
+      expect(p.user.id, '14');
+      expect(p.user.username, 'Sujan Bhandari');
+    });
+
+    test('ConversationParticipantUser reads chat_user_id alias', () {
+      final u = ConversationParticipantUser.fromJson({
+        'chat_user_id': '99',
+        'name': 'Alias User',
+      });
+      expect(u.id, '99');
+      expect(u.username, 'Alias User');
+    });
+  });
+
+  group('Socket auth guardrails', () {
+    test('SocketClient.connect rejects partial auth before network', () async {
+      final client = SocketClient(
+        socketUrl: 'https://example.com',
+        config: const ChatServiceConfig(
+          apiBaseUrl: 'https://example.com',
+          socketUrl: 'https://example.com',
+        ),
+      );
+      addTearDown(client.close);
+
+      await expectLater(
+        client.connect(
+          const ChatAuth(
+            apiKey: 'access:secret',
+            chatUserId: '42',
+          ),
+        ),
+        throwsA(isA<ChatSocketAuthException>()),
+      );
     });
   });
 }

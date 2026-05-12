@@ -72,10 +72,7 @@ class HealthMessengerPush {
           ? config.deliveredReceiptRestPath
           : '/${config.deliveredReceiptRestPath}';
     }
-    final headers = <String, String>{
-      ...config.defaultHeaders,
-      ...auth.toApiHeaders(),
-    };
+    final headers = auth.toApiHeaders(extra: config.defaultHeaders);
     await _methodChannel.invokeMethod<void>('syncPushConfig', <String, dynamic>{
       'apiBaseUrl': config.apiBaseUrl,
       'chatApiPath': config.chatApiPath,

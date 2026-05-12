@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 
 import 'chat_auth.dart';
 import 'models/chat_message.dart';
+import 'models/chat_user_registration_payload.dart';
 import 'models/conversation.dart';
 import 'models/tenant_user.dart';
 
@@ -16,16 +17,31 @@ abstract class ChatRepository {
   Future<ChatTenantScope> getTenantScope(ChatAuth auth);
   Future<TenantUser> registerOrGetUser(
     ChatAuth auth, {
-    required String providerId,
-    required String providerUserId,
-    required String email,
+    String? externalTenantId,
+    String? externalUserId,
+    String? providerId,
+    String? providerUserId,
+    String? externalUserRole,
+    String? email,
     String? name,
+    String? profile,
+  });
+
+  /// Batch merge users + create DIRECT (two users, no [groupName]) or GROUP.
+  Future<Conversation> startConversation(
+    ChatAuth auth, {
+    required List<ChatUserRegistrationBody> users,
+    String? groupName,
   });
   Future<List<Conversation>> getConversations(
     ChatAuth auth, {
     String? forUserId,
   });
-  Future<List<TenantUser>> getUsers(ChatAuth auth);
+  Future<List<TenantUser>> getUsers(
+    ChatAuth auth, {
+    int? limit,
+    int? page,
+  });
   Future<ChatMessagesPage> getMessages(
     ChatAuth auth,
     String conversationId, {
@@ -88,6 +104,20 @@ abstract class ChatRepository {
     required String conversationId,
     required String messageId,
   });
+  Future<MarkConversationReadResult> markConversationRead({
+    required String conversationId,
+  });
+  Future<DeleteMessageResult> deleteMessage(
+    ChatAuth auth, {
+    required String conversationId,
+    required String messageId,
+    required String userId,
+  });
+  Future<ChatMessage> editMessage({
+    required String conversationId,
+    required String messageId,
+    required String content,
+  });
 
   Future<DeliveredReceipt> markAsDeliveredRest(
     ChatAuth auth, {
@@ -139,6 +169,12 @@ enum ChatSocketEventType {
   reactionRemoved,
   messageDelivered,
   messageRead,
+  messageDeleted,
+  messageEdited,
+  conversationCreated,
+  conversationMessage,
+  unreadCountUpdated,
+  userBadgeUpdated,
   userTyping,
   userStoppedTyping,
   userOnline,
@@ -153,6 +189,12 @@ class ChatSocketEvent {
     this.removedReaction,
     this.delivered,
     this.receipt,
+    this.deletedMessage,
+    this.editedMessage,
+    this.conversationCreated,
+    this.conversationMessage,
+    this.unreadCountUpdated,
+    this.userBadgeUpdated,
     this.typing,
     this.presence,
     this.error,
@@ -164,9 +206,220 @@ class ChatSocketEvent {
   final RemovedReactionEvent? removedReaction;
   final DeliveredReceipt? delivered;
   final ReadReceipt? receipt;
+  final DeletedMessageEvent? deletedMessage;
+  final MessageEditedEvent? editedMessage;
+  final ConversationCreatedEvent? conversationCreated;
+  final ConversationMessageEvent? conversationMessage;
+  final UnreadCountUpdatedEvent? unreadCountUpdated;
+  final UserBadgeUpdatedEvent? userBadgeUpdated;
   final ChatTypingEvent? typing;
   final ChatPresenceEvent? presence;
   final String? error;
+}
+
+class MarkConversationReadResult {
+  const MarkConversationReadResult({
+    required this.readCount,
+    required this.unread,
+  });
+
+  final int readCount;
+  final int unread;
+
+  factory MarkConversationReadResult.fromJson(Map<String, dynamic> json) {
+    int parseInt(Object? raw) {
+      if (raw is int) {
+        return raw;
+      }
+      if (raw is num) {
+        return raw.toInt();
+      }
+      return int.tryParse(raw?.toString() ?? '') ?? 0;
+    }
+
+    return MarkConversationReadResult(
+      readCount: parseInt(json['readCount']),
+      unread: parseInt(json['unread']),
+    );
+  }
+}
+
+class MessageEditedEvent {
+  const MessageEditedEvent({
+    required this.conversationId,
+    required this.message,
+  });
+
+  final String conversationId;
+  final ChatMessage message;
+
+  factory MessageEditedEvent.fromJson(Map<String, dynamic> json) {
+    final rawMessage = json['message'];
+    return MessageEditedEvent(
+      conversationId: json['conversationId']?.toString() ??
+          json['conversation_id']?.toString() ??
+          '',
+      message: ChatMessage.fromJson(
+        Map<String, dynamic>.from(rawMessage as Map? ?? const {}),
+      ),
+    );
+  }
+}
+
+class ConversationCreatedEvent {
+  const ConversationCreatedEvent({
+    required this.conversation,
+    required this.unreadCount,
+  });
+
+  final Conversation conversation;
+  final int unreadCount;
+
+  factory ConversationCreatedEvent.fromJson(Map<String, dynamic> json) {
+    int parseInt(Object? raw) {
+      if (raw is int) {
+        return raw;
+      }
+      if (raw is num) {
+        return raw.toInt();
+      }
+      return int.tryParse(raw?.toString() ?? '') ?? 0;
+    }
+
+    final rawConversation = json['conversation'];
+    return ConversationCreatedEvent(
+      conversation: Conversation.fromJson(
+        Map<String, dynamic>.from(rawConversation as Map? ?? const {}),
+      ),
+      unreadCount: parseInt(json['unreadCount']),
+    );
+  }
+}
+
+class ConversationMessageEvent {
+  const ConversationMessageEvent({
+    required this.conversationId,
+    required this.message,
+    this.unreadCount,
+    this.unread,
+  });
+
+  final String conversationId;
+  final ChatMessage message;
+  final int? unreadCount;
+  final int? unread;
+
+  factory ConversationMessageEvent.fromJson(Map<String, dynamic> json) {
+    int? parseNullableInt(Object? raw) {
+      if (raw == null) {
+        return null;
+      }
+      if (raw is int) {
+        return raw;
+      }
+      if (raw is num) {
+        return raw.toInt();
+      }
+      return int.tryParse(raw.toString());
+    }
+
+    final rawMessage = json['message'];
+    return ConversationMessageEvent(
+      conversationId: json['conversationId']?.toString() ??
+          json['conversation_id']?.toString() ??
+          '',
+      message: ChatMessage.fromJson(
+        Map<String, dynamic>.from(rawMessage as Map? ?? const {}),
+      ),
+      unreadCount: parseNullableInt(json['unreadCount']),
+      unread: parseNullableInt(json['unread']),
+    );
+  }
+}
+
+class UnreadCountUpdatedEvent {
+  const UnreadCountUpdatedEvent({
+    required this.conversationId,
+    required this.userId,
+    required this.unread,
+  });
+
+  final String conversationId;
+  final String userId;
+  final int unread;
+
+  factory UnreadCountUpdatedEvent.fromJson(Map<String, dynamic> json) {
+    int parseInt(Object? raw) {
+      if (raw is int) {
+        return raw;
+      }
+      if (raw is num) {
+        return raw.toInt();
+      }
+      return int.tryParse(raw?.toString() ?? '') ?? 0;
+    }
+
+    return UnreadCountUpdatedEvent(
+      conversationId: json['conversationId']?.toString() ??
+          json['conversation_id']?.toString() ??
+          '',
+      userId: json['userId']?.toString() ??
+          json['chatUserId']?.toString() ??
+          json['user_id']?.toString() ??
+          '',
+      unread: parseInt(json['unread']),
+    );
+  }
+}
+
+class UserBadgeUpdatedEvent {
+  const UserBadgeUpdatedEvent({
+    required this.usersWithUnreadMessages,
+    this.userId,
+    this.totalMessagesSent,
+    this.totalUnreadMessages,
+    this.conversationsWithUnreadMessages,
+  });
+
+  final int usersWithUnreadMessages;
+  final String? userId;
+  final int? totalMessagesSent;
+  final int? totalUnreadMessages;
+  final int? conversationsWithUnreadMessages;
+
+  factory UserBadgeUpdatedEvent.fromJson(Map<String, dynamic> json) {
+    int parseInt(Object? raw) {
+      if (raw is int) {
+        return raw;
+      }
+      if (raw is num) {
+        return raw.toInt();
+      }
+      return int.tryParse(raw?.toString() ?? '') ?? 0;
+    }
+
+    int? parseNullableInt(Object? raw) {
+      if (raw == null) {
+        return null;
+      }
+      if (raw is int) {
+        return raw;
+      }
+      if (raw is num) {
+        return raw.toInt();
+      }
+      return int.tryParse(raw.toString());
+    }
+
+    return UserBadgeUpdatedEvent(
+      usersWithUnreadMessages: parseInt(json['usersWithUnreadMessages']),
+      userId: json['userId']?.toString(),
+      totalMessagesSent: parseNullableInt(json['totalMessagesSent']),
+      totalUnreadMessages: parseNullableInt(json['totalUnreadMessages']),
+      conversationsWithUnreadMessages:
+          parseNullableInt(json['conversationsWithUnreadMessages']),
+    );
+  }
 }
 
 class ChatTypingEvent {

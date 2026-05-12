@@ -97,6 +97,7 @@ class _ChatLoggingInterceptor extends Interceptor {
     _config.apiLogger?.call(
       'HTTP request',
       data: {
+        'integration': 'REST ${options.method} ${options.path}',
         'method': options.method,
         'path': options.path,
         'query': options.queryParameters,
@@ -113,6 +114,8 @@ class _ChatLoggingInterceptor extends Interceptor {
     _config.apiLogger?.call(
       'HTTP response',
       data: {
+        'integration':
+            'REST ${response.requestOptions.method} ${response.requestOptions.path}',
         'method': response.requestOptions.method,
         'path': response.requestOptions.path,
         'statusCode': response.statusCode,
@@ -130,6 +133,8 @@ class _ChatLoggingInterceptor extends Interceptor {
     _config.apiLogger?.call(
       'HTTP error',
       data: {
+        'integration':
+            'REST ${error.requestOptions.method} ${error.requestOptions.path}',
         'method': error.requestOptions.method,
         'path': error.requestOptions.path,
         'statusCode': statusCode,
@@ -144,8 +149,12 @@ class _ChatLoggingInterceptor extends Interceptor {
 
 Map<String, Object?> _sanitizeHeaders(Map<String, dynamic> headers) {
   return headers.map((key, value) {
-    if (key.toLowerCase() == 'x-api-key' && value is String) {
+    final lower = key.toLowerCase();
+    if (lower == 'x-api-key' && value is String) {
       return MapEntry(key, redactApiKey(value));
+    }
+    if ((lower == 'authorization' || lower == 'auth') && value is String) {
+      return MapEntry(key, redactAuthorizationHeader(value));
     }
     return MapEntry(key, value);
   });

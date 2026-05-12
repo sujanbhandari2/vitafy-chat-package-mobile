@@ -7,13 +7,15 @@ import '../chat_auth.dart';
 import '../chat_repository.dart';
 import '../models/app_role.dart';
 import '../models/chat_message.dart';
+import '../models/chat_user_registration_payload.dart';
 import '../models/conversation.dart';
 import '../models/tenant_user.dart';
 
 /// In-memory [ChatRepository] for widget tests and host app doubles.
 class FakeChatRepository implements ChatRepository {
   FakeChatRepository({
-    ChatTenantScope tenantScope = const ChatTenantScope(tenantId: 'test-tenant'),
+    ChatTenantScope tenantScope =
+        const ChatTenantScope(tenantId: 'test-tenant'),
     TenantUser? registeredUser,
   })  : _tenantScope = tenantScope,
         _user = registeredUser ??
@@ -25,6 +27,8 @@ class FakeChatRepository implements ChatRepository {
               role: AppRole.client,
               isOnline: false,
               createdAt: DateTime.utc(2026),
+              accessToken: 'fake-access-token',
+              tokenType: 'Bearer',
             );
 
   final ChatTenantScope _tenantScope;
@@ -33,8 +37,14 @@ class FakeChatRepository implements ChatRepository {
   final _socketEvents = StreamController<ChatSocketEvent>.broadcast();
   int connectSocketCalls = 0;
   int disconnectSocketCalls = 0;
+  int startConversationCalls = 0;
+  List<ChatUserRegistrationBody>? lastStartConversationUsers;
+  String? lastStartConversationGroupName;
   final List<String> joinConversationLog = <String>[];
   final List<String> leaveConversationLog = <String>[];
+  final List<String> markConversationReadLog = <String>[];
+  final List<String> markAsDeliveredLog = <String>[];
+  final List<String> markAsReadLog = <String>[];
 
   @override
   Stream<ChatSocketEvent> get socketEvents => _socketEvents.stream;
@@ -67,12 +77,36 @@ class FakeChatRepository implements ChatRepository {
   @override
   Future<TenantUser> registerOrGetUser(
     ChatAuth auth, {
-    required String providerId,
-    required String providerUserId,
-    required String email,
+    String? externalTenantId,
+    String? externalUserId,
+    String? providerId,
+    String? providerUserId,
+    String? externalUserRole,
+    String? email,
     String? name,
+    String? profile,
   }) async {
     return _user;
+  }
+
+  @override
+  Future<Conversation> startConversation(
+    ChatAuth auth, {
+    required List<ChatUserRegistrationBody> users,
+    String? groupName,
+  }) async {
+    startConversationCalls++;
+    lastStartConversationUsers = List<ChatUserRegistrationBody>.from(users);
+    lastStartConversationGroupName = groupName;
+    return Conversation.fromJson({
+      'id': 'conv-start',
+      'type': groupName != null && groupName.trim().isNotEmpty ? 'GROUP' : 'DIRECT',
+      'tenantId': _tenantScope.tenantId,
+      'name': groupName,
+      'createdAt': DateTime.now().toIso8601String(),
+      'updatedAt': DateTime.now().toIso8601String(),
+      'participants': <dynamic>[],
+    });
   }
 
   @override
@@ -84,7 +118,11 @@ class FakeChatRepository implements ChatRepository {
   }
 
   @override
-  Future<List<TenantUser>> getUsers(ChatAuth auth) async {
+  Future<List<TenantUser>> getUsers(
+    ChatAuth auth, {
+    int? limit,
+    int? page,
+  }) async {
     return const [];
   }
 
@@ -234,6 +272,7 @@ class FakeChatRepository implements ChatRepository {
     required String conversationId,
     required String messageId,
   }) async {
+    markAsDeliveredLog.add('$conversationId:$messageId');
     return DeliveredReceipt.fromJson({
       'id': 'd-1',
       'messageId': messageId,
@@ -248,12 +287,57 @@ class FakeChatRepository implements ChatRepository {
     required String conversationId,
     required String messageId,
   }) async {
+    markAsReadLog.add('$conversationId:$messageId');
     return ReadReceipt.fromJson({
       'id': 'r-1',
       'messageId': messageId,
       'userId': _user.id,
       'readAt': DateTime.now().toIso8601String(),
       'conversationId': conversationId,
+    });
+  }
+
+  @override
+  Future<MarkConversationReadResult> markConversationRead({
+    required String conversationId,
+  }) async {
+    markConversationReadLog.add(conversationId);
+    return const MarkConversationReadResult(
+      readCount: 0,
+      unread: 0,
+    );
+  }
+
+  @override
+  Future<DeleteMessageResult> deleteMessage(
+    ChatAuth auth, {
+    required String conversationId,
+    required String messageId,
+    required String userId,
+  }) async {
+    return DeleteMessageResult.fromJson({
+      'deleted': true,
+      'messageId': messageId,
+      'conversationId': conversationId,
+      'deletedAt': DateTime.now().toIso8601String(),
+    });
+  }
+
+  @override
+  Future<ChatMessage> editMessage({
+    required String conversationId,
+    required String messageId,
+    required String content,
+  }) async {
+    return ChatMessage.fromJson({
+      'id': messageId,
+      'conversationId': conversationId,
+      'tenantId': _tenantScope.tenantId,
+      'senderId': _user.id,
+      'type': MessageType.text.apiValue,
+      'content': content,
+      'editedAt': DateTime.now().toIso8601String(),
+      'createdAt': DateTime.now().toIso8601String(),
     });
   }
 

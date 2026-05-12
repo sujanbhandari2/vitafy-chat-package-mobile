@@ -99,4 +99,63 @@ void main() {
     expect(find.text('Loading custom'), findsOneWidget);
     expect(find.text('No messages yet.'), findsNothing);
   });
+
+  testWidgets(
+      'MessengerChatThread replaceMessageList hides messages while loading',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerChatThread(
+              conversation: MessengerConversation(
+                id: 'c1',
+                title: 'Test',
+                subtitle: 'Sub',
+                avatarLabel: 'T',
+                createdAt: DateTime.utc(2026),
+              ),
+              messages: [
+                MessengerChatMessage(
+                  id: 'm1',
+                  senderId: 'u1',
+                  senderLabel: 'Alice',
+                  type: MessengerMessageType.text,
+                  content: 'visible-when-idle',
+                  createdAt: DateTime.utc(2026),
+                ),
+              ],
+              isConversationLoading: true,
+              threadFetchLoadingMode:
+                  MessengerThreadFetchLoadingMode.replaceMessageList,
+              currentUserId: 'me',
+              composerController: composer,
+              messagesScrollController: scroll,
+              isSending: false,
+              isRecording: false,
+              onSend: () {},
+              onPickImage: () {},
+              onPickAudio: () {},
+              onStartRecording: () {},
+              onFinishRecording: () {},
+              onCancelRecording: () {},
+              onToggleRecording: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    expect(find.text('visible-when-idle'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+  });
 }

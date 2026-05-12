@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/messenger_attachment.dart';
+import '../models/messenger_message.dart';
 import '../theme/messenger_theme.dart';
 
 class MessengerComposerBar extends StatefulWidget {
@@ -28,6 +29,7 @@ class MessengerComposerBar extends StatefulWidget {
     this.fieldContentPadding,
     this.attachmentSheetTitle = 'Attachments',
     this.attachmentOptions,
+    this.attachmentOptionTextStyle,
     this.typingConversationId,
     this.onTypingStart,
     this.onTypingStop,
@@ -36,6 +38,9 @@ class MessengerComposerBar extends StatefulWidget {
     this.hasPendingAttachment = false,
     this.pendingAttachmentLabel,
     this.onClearPendingAttachment,
+    this.replyDraft,
+    this.onCancelReplyDraft,
+    this.textFieldFocusNode,
   });
 
   final TextEditingController controller;
@@ -58,6 +63,7 @@ class MessengerComposerBar extends StatefulWidget {
   final EdgeInsetsGeometry? fieldContentPadding;
   final String attachmentSheetTitle;
   final List<MessengerAttachmentOption>? attachmentOptions;
+  final TextStyle? attachmentOptionTextStyle;
 
   final String? typingConversationId;
   final Future<void> Function(String conversationId)? onTypingStart;
@@ -67,6 +73,9 @@ class MessengerComposerBar extends StatefulWidget {
   final bool hasPendingAttachment;
   final String? pendingAttachmentLabel;
   final VoidCallback? onClearPendingAttachment;
+  final MessengerComposerReplyDraft? replyDraft;
+  final VoidCallback? onCancelReplyDraft;
+  final FocusNode? textFieldFocusNode;
 
   bool get _typingEnabled =>
       typingConversationId != null &&
@@ -268,7 +277,10 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
               ...items.map(
                 (option) => ListTile(
                   leading: Icon(option.icon),
-                  title: Text(option.label),
+                  title: Text(
+                    option.label,
+                    style: widget.attachmentOptionTextStyle,
+                  ),
                   enabled: option.onTap != null,
                   onTap: option.onTap == null
                       ? null
@@ -301,13 +313,6 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
         label: 'Images',
         icon: Icons.image_outlined,
         onTap: widget.onPickImage,
-      ),
-    );
-    options.add(
-      MessengerAttachmentOption(
-        label: 'Video',
-        icon: Icons.videocam_outlined,
-        onTap: widget.onPickVideo,
       ),
     );
     options.add(
@@ -348,6 +353,80 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (widget.replyDraft != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: (widget.fieldBackgroundColor ??
+                              theme.composerFieldBackground)
+                          .withValues(alpha: 0.9),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: theme.border),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 3,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color:
+                                theme.primary.withValues(alpha: 0.9),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Replying to ${widget.replyDraft!.senderLabel}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: const Color(0xFF0F172A),
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12.5,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                widget.replyDraft!.preview,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: theme.subtleText,
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 12,
+                                  height: 1.25,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (widget.onCancelReplyDraft != null)
+                          GestureDetector(
+                            onTap: widget.isSending
+                                ? null
+                                : widget.onCancelReplyDraft,
+                            child: Icon(
+                              Icons.close_rounded,
+                              size: 18,
+                              color: widget.isSending
+                                  ? theme.mutedText
+                                  : theme.primary,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
               if (widget.isRecording)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
@@ -465,6 +544,7 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
                               label: 'Message composer',
                               textField: true,
                               child: TextField(
+                                focusNode: widget.textFieldFocusNode,
                                 controller: widget.controller,
                                 style: widget.inputTextStyle,
                                 textInputAction: TextInputAction.send,

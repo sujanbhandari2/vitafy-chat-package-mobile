@@ -22,4 +22,32 @@ void main() {
 
     await fake.close();
   });
+
+  test('FakeChatRepository startConversation records users and groupName',
+      () async {
+    final fake = FakeChatRepository();
+    const auth = ChatAuth(apiKey: 'k', chatUserId: '1', accessToken: 'jwt');
+    final users = [
+      const ChatUserRegistrationBody(
+        externalTenantId: 't',
+        externalUserId: 'a',
+        externalUserRole: 'user',
+        email: 'a@b.com',
+      ),
+      const ChatUserRegistrationBody(
+        externalTenantId: 't',
+        externalUserId: 'b',
+        externalUserRole: 'user',
+      ),
+    ];
+    final conv = await fake.startConversation(
+      auth,
+      users: users,
+      groupName: 'Team',
+    );
+    expect(fake.startConversationCalls, 1);
+    expect(fake.lastStartConversationGroupName, 'Team');
+    expect(fake.lastStartConversationUsers?.length, 2);
+    expect(conv.id, 'conv-start');
+  });
 }

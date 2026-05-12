@@ -11,6 +11,7 @@ class MessengerAvatar extends StatelessWidget {
     this.compact = false,
     this.showOnlineIndicator = false,
     this.isOnline = false,
+    this.presenceDotColor,
   });
 
   final String label;
@@ -19,6 +20,10 @@ class MessengerAvatar extends StatelessWidget {
   final bool compact;
   final bool showOnlineIndicator;
   final bool isOnline;
+
+  /// When set, used for the bottom-right dot instead of [isOnline] /
+  /// [MessengerThemeData.onlineIndicator] vs [MessengerThemeData.offlineIndicator].
+  final Color? presenceDotColor;
 
   @override
   Widget build(BuildContext context) {
@@ -59,6 +64,9 @@ class MessengerAvatar extends StatelessWidget {
       return avatar;
     }
 
+    final dotColor = presenceDotColor ??
+        (isOnline ? theme.onlineIndicator : theme.offlineIndicator);
+
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -70,7 +78,7 @@ class MessengerAvatar extends StatelessWidget {
             width: size * 0.26,
             height: size * 0.26,
             decoration: BoxDecoration(
-              color: isOnline ? theme.onlineIndicator : theme.offlineIndicator,
+              color: dotColor,
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2),
             ),

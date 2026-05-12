@@ -27,22 +27,32 @@ final client = ChatClient(
   ),
 );
 
-const auth = ChatAuth(
-  apiKey: '<accessKey>:<secretKey>',
-  chatUserId: '<chatUserId>',
-);
+const apiAuth = ChatAuth(apiKey: '<accessKey>:<secretKey>');
 
 final me = await client.registerOrGetUser(
-  auth,
-  providerId: 'mobile-app',
-  providerUserId: 'user-123',
+  apiAuth,
+  externalTenantId: 'mobile-app',
+  externalUserId: 'user-123',
+  externalUserRole: 'user',
   email: 'user@example.com',
   name: 'Jane Doe',
 );
 
-await client.connect(auth);
-final conversations = await client.getConversations(auth, forUserId: me.id);
-final messagesPage = await client.getMessages(auth, conversations.first.id);
+// After you have a chat-user JWT in [sessionAuth], batch-create users + open a
+// DIRECT (two users, no groupName) or GROUP conversation:
+// await client.startConversation(sessionAuth, users: [ ... ], groupName: 'Team');
+
+final sessionAuth = ChatAuth(
+  apiKey: apiAuth.apiKey,
+  chatUserId: me.id,
+  accessToken: me.accessToken!,
+);
+
+await client.connect(sessionAuth);
+final conversations =
+    await client.getConversations(sessionAuth, forUserId: me.id);
+final messagesPage =
+    await client.getMessages(sessionAuth, conversations.first.id);
 
 await client.joinConversation(conversations.first.id);
 await client.sendMessage(
@@ -63,8 +73,15 @@ import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 // Use the widgets in your UI tree. See the /example app for a full integration.
 ```
 
+## Parity with the Vitafy web widget
+
+For REST + Socket.IO field-by-field alignment with **`vitafy-generic-chat-frontend`**, use the checklist **`vitafy-genric-chat-backend/docs/WIDGET_CLIENT_PARITY.md`** next to this repo when present. **Verification:** run the web widget and your Flutter app against the same API key; compare DevTools **Network** (`POST .../conversations` body) and the socket handshake **`auth`** object with this package’s `socketLogger` output.
+
 ## Notes
-- Default REST routes target `/api/v1/chat` and uploads target `/api/upload/file`.
-- Socket auth sends both `auth.apiKey` and `X-Api-Key`, plus `auth.userId/chatUserId` when provided.
-- `apiLogger` and `socketLogger` are optional named parameters intended for development-time transport debugging.
+- Default REST routes target **`ChatServiceConfig.chatApiPath`** (`/api/v1/chat` by default) and uploads target `/api/upload/file`. If your gateway serves chat user routes under **`/api/v1/users/chat`**, set **`chatApiPath`** to that prefix instead.
+- **`POST …/chat/users`** (registration) is **API-key-only** and sends **`externalTenantId`**, **`externalUserId`**, **`externalUserRole`**, and optional **`email`**, **`name`**, **`profile`** (same shape as **`vitafy-generic-chat-frontend`**). Deprecated **`providerId`** / **`providerUserId`** are still accepted and mapped to the external ids.
+- **`POST …/chat/users/start-conversation`** uses the same **`X-Api-Key`** plus **chat-user Bearer** JWT as other chat REST (not API-key-only).
+- Most other chat REST routes require **`X-Api-Key`** and **`Authorization: Bearer`** using the **`accessToken`** returned by registration; **`GET .../tenant`**, **`POST .../users`**, and **`POST /api/upload/file`** are API-key-only for registration/upload. A full socket session sends the same JWT in **`auth.token` / `auth.accessToken`** (and optionally the `Authorization` header) whenever **`auth.userId`** / **`auth.chatUserId`** is set—prefer **`ChatSession.bootstrap`** so the client wires this automatically.
+- Socket handshake **`auth`** sends **`apiKey`**, **`xApiKey`**, literal **`X-Api-Key`**, optional **`userId`/`chatUserId`**, and **`token`/`accessToken`** when you have a chat-user JWT. Handshake HTTP headers include **`X-Api-Key`**, **`Authorization: Bearer …`**, and a duplicate **`auth`** header with the same Bearer value when a JWT is present (for servers that read `handshake.headers.auth`).
+- `apiLogger` and `socketLogger` are optional named parameters intended for development-time transport debugging. Log payloads include an **`integration`** label (e.g. `REST GET /api/v1/chat/tenant`, `socket.io_connect`, `socket.emit.join_conversation`) and **redacted** credentials: REST logs sanitize `X-Api-Key`, `Authorization`, and `auth` headers; socket connect logs include **`handshakeAuth`** and **`handshakeHeaders`** maps matching the wire shape with secrets redacted.
 - For a full working example, open the `example` app in this package.

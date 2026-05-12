@@ -62,12 +62,14 @@ class ChatMessage {
     required this.replyTo,
     required this.translatedMessage,
     required this.transcribedMessage,
+    required this.editedAt,
     required this.deletedAt,
     required this.createdAt,
     required this.reactions,
     required this.deliveredReceipts,
     required this.readReceipts,
     this.sender,
+    this.deliveryStatus,
   });
 
   final String id;
@@ -81,12 +83,16 @@ class ChatMessage {
   final ReplyToMessage? replyTo;
   final String? translatedMessage;
   final String? transcribedMessage;
+  final DateTime? editedAt;
   final DateTime? deletedAt;
   final DateTime createdAt;
   final List<MessageReaction> reactions;
   final List<DeliveredReceipt> deliveredReceipts;
   final List<ReadReceipt> readReceipts;
   final ChatMessageSender? sender;
+
+  /// Server-provided delivery/read aggregate when present (e.g. SENT, DELIVERED, SEEN).
+  final String? deliveryStatus;
 
   bool get isDeleted => deletedAt != null;
 
@@ -125,6 +131,13 @@ class ChatMessage {
           : null,
       translatedMessage: json['translatedMessage']?.toString(),
       transcribedMessage: json['transcribedMessage']?.toString(),
+      editedAt: json['editedAt'] == null && json['edited_at'] == null
+          ? null
+          : DateTime.parse(
+              json['editedAt']?.toString() ??
+                  json['edited_at']?.toString() ??
+                  DateTime.now().toIso8601String(),
+            ),
       deletedAt: json['deletedAt'] == null
           ? null
           : DateTime.parse(json['deletedAt'].toString()),
@@ -156,6 +169,9 @@ class ChatMessage {
               Map<String, dynamic>.from(json['sender'] as Map),
             )
           : null,
+      deliveryStatus: json['deliveryStatus']?.toString() ??
+          json['delivery_status']?.toString() ??
+          json['status']?.toString(),
     );
   }
 
@@ -166,11 +182,13 @@ class ChatMessage {
     ReplyToMessage? replyTo,
     String? translatedMessage,
     String? transcribedMessage,
+    DateTime? editedAt,
     DateTime? deletedAt,
     bool clearDeletedAt = false,
     List<MessageReaction>? reactions,
     List<DeliveredReceipt>? deliveredReceipts,
     List<ReadReceipt>? readReceipts,
+    String? deliveryStatus,
   }) {
     return ChatMessage(
       id: id,
@@ -184,12 +202,14 @@ class ChatMessage {
       replyTo: replyTo ?? this.replyTo,
       translatedMessage: translatedMessage ?? this.translatedMessage,
       transcribedMessage: transcribedMessage ?? this.transcribedMessage,
+      editedAt: editedAt ?? this.editedAt,
       deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
       createdAt: createdAt,
       reactions: reactions ?? this.reactions,
       deliveredReceipts: deliveredReceipts ?? this.deliveredReceipts,
       readReceipts: readReceipts ?? this.readReceipts,
       sender: sender,
+      deliveryStatus: deliveryStatus ?? this.deliveryStatus,
     );
   }
 }
@@ -394,16 +414,57 @@ class ReadReceipt {
   }
 }
 
+class DeleteMessageResult {
+  const DeleteMessageResult({
+    required this.deleted,
+    required this.messageId,
+    required this.conversationId,
+    this.deletedAt,
+  });
+
+  final bool deleted;
+  final String messageId;
+  final String conversationId;
+  final DateTime? deletedAt;
+
+  factory DeleteMessageResult.fromJson(Map<String, dynamic> json) {
+    bool parseBool(Object? raw) {
+      if (raw is bool) {
+        return raw;
+      }
+      if (raw is num) {
+        return raw != 0;
+      }
+      final v = raw?.toString().trim().toLowerCase();
+      return v == 'true' || v == '1' || v == 'yes';
+    }
+
+    return DeleteMessageResult(
+      deleted: parseBool(json['deleted']),
+      messageId:
+          json['messageId']?.toString() ?? json['message_id']?.toString() ?? '',
+      conversationId: json['conversationId']?.toString() ??
+          json['conversation_id']?.toString() ??
+          '',
+      deletedAt: json['deletedAt'] == null
+          ? null
+          : DateTime.tryParse(json['deletedAt'].toString()),
+    );
+  }
+}
+
 class DeletedMessageEvent {
   const DeletedMessageEvent({
     required this.messageId,
     required this.conversationId,
     required this.deletedAt,
+    this.userId,
   });
 
   final String messageId;
   final String conversationId;
   final DateTime deletedAt;
+  final String? userId;
 
   factory DeletedMessageEvent.fromJson(Map<String, dynamic> json) {
     return DeletedMessageEvent(
@@ -415,6 +476,9 @@ class DeletedMessageEvent {
       deletedAt: DateTime.parse(
         json['deletedAt']?.toString() ?? DateTime.now().toIso8601String(),
       ),
+      userId: json['userId']?.toString() ??
+          json['chatUserId']?.toString() ??
+          json['user_id']?.toString(),
     );
   }
 }

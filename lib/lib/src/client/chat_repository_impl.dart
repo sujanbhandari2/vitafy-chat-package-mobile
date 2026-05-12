@@ -7,6 +7,7 @@ import 'chat_auth.dart';
 import 'chat_repository.dart';
 import 'chat_socket_api.dart';
 import 'models/chat_message.dart';
+import 'models/chat_user_registration_payload.dart';
 import 'models/conversation.dart';
 import 'models/tenant_user.dart';
 
@@ -35,19 +36,41 @@ class BackendChatRepositoryImpl implements ChatRepository {
   @override
   Future<TenantUser> registerOrGetUser(
     ChatAuth auth, {
-    required String providerId,
-    required String providerUserId,
-    required String email,
+    String? externalTenantId,
+    String? externalUserId,
+    String? providerId,
+    String? providerUserId,
+    String? externalUserRole,
+    String? email,
     String? name,
+    String? profile,
   }) async {
     final payload = await _chatApi.registerOrGetUser(
       auth,
+      externalTenantId: externalTenantId,
+      externalUserId: externalUserId,
       providerId: providerId,
       providerUserId: providerUserId,
+      externalUserRole: externalUserRole,
       email: email,
       name: name,
+      profile: profile,
     );
     return TenantUser.fromJson(payload);
+  }
+
+  @override
+  Future<Conversation> startConversation(
+    ChatAuth auth, {
+    required List<ChatUserRegistrationBody> users,
+    String? groupName,
+  }) async {
+    final raw = await _chatApi.postUsersStartConversation(
+      auth,
+      users: users,
+      groupName: groupName,
+    );
+    return parseStartConversationResponse(raw);
   }
 
   @override
@@ -60,8 +83,12 @@ class BackendChatRepositoryImpl implements ChatRepository {
   }
 
   @override
-  Future<List<TenantUser>> getUsers(ChatAuth auth) async {
-    final payload = await _chatApi.getUsers(auth);
+  Future<List<TenantUser>> getUsers(
+    ChatAuth auth, {
+    int? limit,
+    int? page,
+  }) async {
+    final payload = await _chatApi.getUsers(auth, limit: limit, page: page);
     return payload.map(TenantUser.fromJson).toList();
   }
 
@@ -241,6 +268,44 @@ class BackendChatRepositoryImpl implements ChatRepository {
     return _socketApi.markAsRead(
       conversationId: conversationId,
       messageId: messageId,
+    );
+  }
+
+  @override
+  Future<MarkConversationReadResult> markConversationRead({
+    required String conversationId,
+  }) {
+    return _socketApi.markConversationRead(
+      conversationId: conversationId,
+    );
+  }
+
+  @override
+  Future<DeleteMessageResult> deleteMessage(
+    ChatAuth auth, {
+    required String conversationId,
+    required String messageId,
+    required String userId,
+  }) async {
+    final payload = await _chatApi.deleteMessage(
+      auth,
+      conversationId: conversationId,
+      messageId: messageId,
+      userId: userId,
+    );
+    return DeleteMessageResult.fromJson(payload);
+  }
+
+  @override
+  Future<ChatMessage> editMessage({
+    required String conversationId,
+    required String messageId,
+    required String content,
+  }) {
+    return _socketApi.editMessage(
+      conversationId: conversationId,
+      messageId: messageId,
+      content: content,
     );
   }
 

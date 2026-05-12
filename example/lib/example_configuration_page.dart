@@ -15,10 +15,12 @@ class _ExampleConfigurationPageState extends State<ExampleConfigurationPage> {
   late final TextEditingController _apiBaseUrlController;
   late final TextEditingController _socketUrlController;
   late final TextEditingController _apiKeyController;
-  late final TextEditingController _providerIdController;
-  late final TextEditingController _providerUserIdController;
+  late final TextEditingController _externalTenantIdController;
+  late final TextEditingController _externalUserIdController;
+  late final TextEditingController _externalUserRoleController;
   late final TextEditingController _emailController;
   late final TextEditingController _nameController;
+  late final TextEditingController _profileController;
 
   @override
   void initState() {
@@ -27,12 +29,18 @@ class _ExampleConfigurationPageState extends State<ExampleConfigurationPage> {
     _apiBaseUrlController = TextEditingController(text: initialData.apiBaseUrl);
     _socketUrlController = TextEditingController(text: initialData.socketUrl);
     _apiKeyController = TextEditingController(text: initialData.apiKey);
-    _providerIdController = TextEditingController(text: initialData.providerId);
-    _providerUserIdController = TextEditingController(
-      text: initialData.providerUserId,
+    _externalTenantIdController = TextEditingController(
+      text: initialData.externalTenantId,
+    );
+    _externalUserIdController = TextEditingController(
+      text: initialData.externalUserId,
+    );
+    _externalUserRoleController = TextEditingController(
+      text: initialData.externalUserRole,
     );
     _emailController = TextEditingController(text: initialData.email);
     _nameController = TextEditingController(text: initialData.name);
+    _profileController = TextEditingController(text: initialData.profile ?? '');
   }
 
   @override
@@ -40,10 +48,12 @@ class _ExampleConfigurationPageState extends State<ExampleConfigurationPage> {
     _apiBaseUrlController.dispose();
     _socketUrlController.dispose();
     _apiKeyController.dispose();
-    _providerIdController.dispose();
-    _providerUserIdController.dispose();
+    _externalTenantIdController.dispose();
+    _externalUserIdController.dispose();
+    _externalUserRoleController.dispose();
     _emailController.dispose();
     _nameController.dispose();
+    _profileController.dispose();
     super.dispose();
   }
 
@@ -53,17 +63,22 @@ class _ExampleConfigurationPageState extends State<ExampleConfigurationPage> {
       apiBaseUrl: _apiBaseUrlController.text.trim(),
       socketUrl: _socketUrlController.text.trim(),
       apiKey: _apiKeyController.text.trim(),
-      providerId: _providerIdController.text.trim(),
-      providerUserId: _providerUserIdController.text.trim(),
+      externalTenantId: _externalTenantIdController.text.trim(),
+      externalUserId: _externalUserIdController.text.trim(),
+      externalUserRole: _externalUserRoleController.text.trim(),
       email: _emailController.text.trim(),
       name: _nameController.text.trim(),
+      profile: _profileController.text.trim().isEmpty
+          ? null
+          : _profileController.text.trim(),
     );
 
     if (data.apiBaseUrl.isEmpty ||
         data.socketUrl.isEmpty ||
         data.apiKey.isEmpty ||
-        data.providerId.isEmpty ||
-        data.providerUserId.isEmpty ||
+        data.externalTenantId.isEmpty ||
+        data.externalUserId.isEmpty ||
+        data.externalUserRole.isEmpty ||
         data.email.isEmpty) {
       _showSnack('Please fill all required configuration fields.');
       return;
@@ -135,14 +150,19 @@ class _ExampleConfigurationPageState extends State<ExampleConfigurationPage> {
                         width: 360,
                       ),
                       _fieldTile(
-                        label: 'Provider ID',
-                        controller: _providerIdController,
+                        label: 'External tenant ID',
+                        controller: _externalTenantIdController,
                         width: 220,
                       ),
                       _fieldTile(
-                        label: 'Provider User ID',
-                        controller: _providerUserIdController,
+                        label: 'External user ID',
+                        controller: _externalUserIdController,
                         width: 220,
+                      ),
+                      _fieldTile(
+                        label: 'External user role',
+                        controller: _externalUserRoleController,
+                        width: 200,
                       ),
                       _fieldTile(
                         label: 'Email',
@@ -150,9 +170,14 @@ class _ExampleConfigurationPageState extends State<ExampleConfigurationPage> {
                         width: 260,
                       ),
                       _fieldTile(
-                        label: 'Display Name',
+                        label: 'Display name',
                         controller: _nameController,
                         width: 260,
+                      ),
+                      _fieldTile(
+                        label: 'Profile URL (optional)',
+                        controller: _profileController,
+                        width: 320,
                       ),
                     ],
                   ),
@@ -183,7 +208,6 @@ class _ExampleConfigurationPageState extends State<ExampleConfigurationPage> {
         decoration: InputDecoration(
           labelText: label,
           border: const OutlineInputBorder(),
-          isDense: true,
         ),
       ),
     );

@@ -7,6 +7,13 @@ import '../models/messenger_search_visibility.dart';
 import '../models/messenger_user.dart';
 import '../theme/messenger_theme.dart';
 import 'messenger_avatar.dart';
+import 'messenger_default_inline_loading.dart';
+
+/// Avoid treating every row as "opening" when both ids are empty (`'' == ''`).
+bool _isDirectOpenBusyForUser(String openingDirectUserId, String userId) {
+  final open = openingDirectUserId.trim();
+  return open.isNotEmpty && open == userId.trim();
+}
 
 class MessengerUserListItemStyle {
   const MessengerUserListItemStyle({
@@ -65,6 +72,9 @@ class MessengerConversationList extends StatefulWidget {
     required this.selectedConversationId,
     required this.openingDirectUserId,
     required this.onRefresh,
+    this.enablePullToRefresh = true,
+    this.isConversationListLoading = false,
+    this.conversationListLoadingBuilder,
     required this.onLogout,
     required this.onOpenDirectChat,
     required this.onSelectConversation,
@@ -102,7 +112,21 @@ class MessengerConversationList extends StatefulWidget {
   final List<MessengerUser> users;
   final String? selectedConversationId;
   final String openingDirectUserId;
-  final VoidCallback onRefresh;
+  /// Reloads remote data (conversations, users, etc.). Awaited by pull-to-
+  /// refresh and fire-and-forgotten from the header Edit action.
+  final Future<void> Function() onRefresh;
+
+  /// When true (default), the peer list body is wrapped in [RefreshIndicator].
+  final bool enablePullToRefresh;
+
+  /// When true, replaces the peer scroll body with a centered loading indicator
+  /// (see [conversationListLoadingBuilder]).
+  final bool isConversationListLoading;
+
+  /// Custom loading widget for [isConversationListLoading]. Defaults to
+  /// [MessengerDefaultInlineLoading].
+  final WidgetBuilder? conversationListLoadingBuilder;
+
   final VoidCallback onLogout;
   final FutureOr<void> Function(MessengerUser user) onOpenDirectChat;
   final FutureOr<void> Function(String conversationId) onSelectConversation;
@@ -146,12 +170,16 @@ class _PeerListEntry {
     required this.messagePreview,
     required this.hasUnread,
     required this.isInSelectedConversation,
+    this.conversationId,
   });
 
   final MessengerUser user;
   final String messagePreview;
   final bool hasUnread;
   final bool isInSelectedConversation;
+
+  /// When known (peer came from a conversation row), open via [MessengerConversationList.onSelectConversation].
+  final String? conversationId;
 }
 
 class _MessengerConversationListState extends State<MessengerConversationList> {
@@ -210,10 +238,35 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     return conversation.effectiveActivityAt;
   }
 
-  int _compareConversationsByActivity(
+  /// Promoted rows first (newer [MessengerConversation.promotedAt] first);
+  /// cold rows follow in [MessengerConversation.apiRank] order (API list order).
+  int _compareConversationsByOrder(
     MessengerConversation left,
     MessengerConversation right,
   ) {
+    final leftHot = left.promotedAt != null;
+    final rightHot = right.promotedAt != null;
+    if (leftHot != rightHot) {
+      return leftHot ? -1 : 1;
+    }
+    if (leftHot && rightHot) {
+      final t = right.promotedAt!.compareTo(left.promotedAt!);
+      if (t != 0) {
+        return t;
+      }
+      return left.id.compareTo(right.id);
+    }
+    final ar = left.apiRank;
+    final br = right.apiRank;
+    if (ar != null && br != null && ar != br) {
+      return ar.compareTo(br);
+    }
+    if (ar != null && br == null) {
+      return -1;
+    }
+    if (ar == null && br != null) {
+      return 1;
+    }
     final activityCompare = _activityAt(right).compareTo(_activityAt(left));
     if (activityCompare != 0) {
       return activityCompare;
@@ -223,7 +276,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
 
   List<MessengerConversation> _conversationsByActivity() {
     final ordered = [...widget.conversations];
-    ordered.sort(_compareConversationsByActivity);
+    ordered.sort(_compareConversationsByOrder);
     return ordered;
   }
 
@@ -247,10 +300,13 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
 
     final seen = <String>{};
     final orderedUsers = <MessengerUser>[];
+    final userConversationId = <String, String>{};
 
-    void addPeers(Iterable<MessengerUser> peers) {
+    void addPeers(MessengerConversation c, Iterable<MessengerUser> peers) {
       for (final u in peers) {
-        if (seen.add(u.id)) {
+        final uid = u.id.trim();
+        userConversationId.putIfAbsent(uid, () => c.id.trim());
+        if (seen.add(uid)) {
           orderedUsers.add(u);
         }
       }
@@ -258,7 +314,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
 
     final selected = _conversationForId(widget.selectedConversationId);
     for (final c in orderedConversations) {
-      addPeers(c.peerUsers);
+      addPeers(c, c.peerUsers);
     }
 
     return orderedUsers
@@ -269,6 +325,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
             hasUnread: (unreadByUser[u.id] ?? 0) > 0,
             isInSelectedConversation:
                 selected != null && selected.peerUsers.any((p) => p.id == u.id),
+            conversationId: userConversationId[u.id.trim()],
           ),
         )
         .toList(growable: false);
@@ -291,7 +348,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
       final leftConversation = matchForUser(left);
       final rightConversation = matchForUser(right);
       if (leftConversation != null && rightConversation != null) {
-        final compare = _compareConversationsByActivity(
+        final compare = _compareConversationsByOrder(
             leftConversation, rightConversation);
         if (compare != 0) {
           return compare;
@@ -316,6 +373,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
             hasUnread: _legacyHasUnreadForUser(user),
             isInSelectedConversation: selected != null &&
                 _legacyConversationMatchesUser(selected, user),
+            conversationId: matchForUser(user)?.id,
           ),
         )
         .toList(growable: false);
@@ -378,9 +436,19 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
           (e) =>
               e.user.username.toLowerCase().contains(queryLower) ||
               e.user.roleLabel.toLowerCase().contains(queryLower) ||
+              e.user.id.toLowerCase().contains(queryLower) ||
               e.messagePreview.toLowerCase().contains(queryLower),
         )
         .toList(growable: false);
+  }
+
+  Future<void> _onPeerListEntryTap(_PeerListEntry entry) async {
+    final convId = entry.conversationId;
+    if (convId != null && convId.trim().isNotEmpty) {
+      await widget.onSelectConversation(convId);
+      return;
+    }
+    await widget.onOpenDirectChat(entry.user);
   }
 
   Widget _buildMainUserListItem(BuildContext context, _PeerListEntry entry) {
@@ -388,11 +456,14 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
       user: entry.user,
       isSelected: false,
       hasUnread: entry.hasUnread,
-      isOpening: widget.openingDirectUserId == entry.user.id,
+      isOpening: _isDirectOpenBusyForUser(
+        widget.openingDirectUserId,
+        entry.user.id,
+      ),
       messagePreview:
           entry.messagePreview.isEmpty ? null : entry.messagePreview,
       onTap: () {
-        widget.onOpenDirectChat(entry.user);
+        unawaited(_onPeerListEntryTap(entry));
       },
     );
 
@@ -429,7 +500,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
             alignment: Alignment.centerLeft,
             child: widget.showHeaderEditButton
                 ? TextButton(
-                    onPressed: widget.onRefresh,
+                    onPressed: () => unawaited(widget.onRefresh()),
                     child: Text(
                       'Edit',
                       style: TextStyle(
@@ -530,18 +601,13 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
           const SizedBox(height: 8),
         ],
         Expanded(
-          child: filteredEntries.isEmpty
-              ? _buildEmptyPeerList(context)
-              : ListView.separated(
-                  padding: widget.userListPadding,
-                  itemCount: filteredEntries.length,
-                  separatorBuilder: (_, __) =>
-                      SizedBox(height: widget.userListItemSpacing),
-                  itemBuilder: (context, index) {
-                    final entry = filteredEntries[index];
-                    return _buildMainUserListItem(context, entry);
-                  },
-                ),
+          child: widget.isConversationListLoading
+              ? KeyedSubtree(
+                  key: const ValueKey('conversationListLoading'),
+                  child: widget.conversationListLoadingBuilder?.call(context) ??
+                      const MessengerDefaultInlineLoading(),
+                )
+              : _buildPeerScrollBody(context, filteredEntries),
         ),
       ],
     );
@@ -584,6 +650,51 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
           ),
         ),
       ],
+    );
+  }
+
+  Future<void> _onPullRefresh() => widget.onRefresh();
+
+  Widget _buildPeerScrollBody(
+    BuildContext context,
+    List<_PeerListEntry> filteredEntries,
+  ) {
+    final Widget scrollable;
+    if (filteredEntries.isEmpty) {
+      scrollable = LayoutBuilder(
+        builder: (ctx, constraints) => SingleChildScrollView(
+          physics: widget.enablePullToRefresh
+              ? const AlwaysScrollableScrollPhysics()
+              : const ClampingScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: _buildEmptyPeerList(context),
+          ),
+        ),
+      );
+    } else {
+      scrollable = ListView.separated(
+        primary: false,
+        physics: widget.enablePullToRefresh
+            ? const AlwaysScrollableScrollPhysics()
+            : null,
+        padding: widget.userListPadding,
+        itemCount: filteredEntries.length,
+        separatorBuilder: (_, __) =>
+            SizedBox(height: widget.userListItemSpacing),
+        itemBuilder: (context, index) {
+          final entry = filteredEntries[index];
+          return _buildMainUserListItem(context, entry);
+        },
+      );
+    }
+
+    if (!widget.enablePullToRefresh) {
+      return scrollable;
+    }
+    return RefreshIndicator(
+      onRefresh: _onPullRefresh,
+      child: scrollable,
     );
   }
 
@@ -732,13 +843,15 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final q = _query.toLowerCase();
     final filteredUsers = _query.isEmpty
         ? widget.sortedUsers
         : widget.sortedUsers
             .where(
               (user) =>
-                  user.username.toLowerCase().contains(_query) ||
-                  user.roleLabel.toLowerCase().contains(_query),
+                  user.username.toLowerCase().contains(q) ||
+                  user.roleLabel.toLowerCase().contains(q) ||
+                  user.id.toLowerCase().contains(q),
             )
             .toList(growable: false);
 
@@ -834,10 +947,15 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
                             final user = filteredUsers[index];
                             return _DirectUserTile(
                               user: user,
-                              isOpening: widget.openingDirectUserId == user.id,
+                              isOpening: _isDirectOpenBusyForUser(
+                                widget.openingDirectUserId,
+                                user.id,
+                              ),
                               onTap: () {
+                                final open = widget.onOpenDirectChat;
+                                final u = user;
                                 Navigator.of(context).pop();
-                                widget.onOpenDirectChat(user);
+                                open(u);
                               },
                               showChatButton: true,
                               isSelected: false,
@@ -889,8 +1007,9 @@ class _DirectUserTile extends StatelessWidget {
       fontSize: 13.5,
     ).merge(style.titleStyle);
     final subtitleStyle = TextStyle(
-      color: theme.subtleText,
+      color: hasUnread ? const Color(0xFF374151) : theme.subtleText,
       fontSize: 11.5,
+      fontWeight: hasUnread ? FontWeight.w700 : FontWeight.w500,
     ).merge(style.subtitleStyle);
     final defaultBorder = BorderSide(color: theme.border);
     final defaultSelectedBorder =
@@ -913,32 +1032,16 @@ class _DirectUserTile extends StatelessWidget {
       padding: style.padding,
       child: Row(
         children: [
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              MessengerAvatar(
-                label: _initials(user.username),
-                imageUrl: user.avatarUrl,
-                compact: true,
-                size: 34,
-                showOnlineIndicator: true,
-                isOnline: user.isOnline,
-              ),
-              if (hasUnread)
-                Positioned(
-                  right: -1,
-                  bottom: -1,
-                  child: Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: style.unreadDotColor ?? theme.primary,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 2),
-                    ),
-                  ),
-                ),
-            ],
+          MessengerAvatar(
+            label: _initials(user.username),
+            imageUrl: user.avatarUrl,
+            compact: true,
+            size: 34,
+            showOnlineIndicator: true,
+            isOnline: user.isOnline,
+            presenceDotColor: hasUnread
+                ? (style.unreadDotColor ?? theme.onlineIndicator)
+                : null,
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -1000,7 +1103,11 @@ class _DirectUserTile extends StatelessWidget {
 }
 
 String _displayName(String username) {
-  return username
+  final trimmed = username.trim();
+  if (trimmed.isEmpty) {
+    return 'User';
+  }
+  return trimmed
       .split(RegExp(r'[_-]'))
       .where((part) => part.isNotEmpty)
       .map((part) => part[0].toUpperCase() + part.substring(1))
@@ -1008,9 +1115,10 @@ String _displayName(String username) {
 }
 
 String _initials(String username) {
-  final chunks = _displayName(
-    username,
-  ).split(' ').where((part) => part.isNotEmpty).toList();
+  final chunks = _displayName(username)
+      .split(' ')
+      .where((part) => part.isNotEmpty)
+      .toList();
   if (chunks.isEmpty) {
     return 'U';
   }

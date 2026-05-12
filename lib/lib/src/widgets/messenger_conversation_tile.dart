@@ -28,6 +28,10 @@ class MessengerConversationTile extends StatelessWidget {
         ? DateFormat('h:mm a').format(date)
         : DateFormat('M/d/yy').format(date);
 
+    final hasUnread = conversation.unreadCount > 0;
+    final showPresenceDot =
+        hasUnread || conversation.isOnline != null;
+
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
@@ -42,32 +46,15 @@ class MessengerConversationTile extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                MessengerAvatar(
-                  label: conversation.avatarLabel,
-                  imageUrl: conversation.avatarUrl,
-                  compact: true,
-                  size: 44,
-                  showOnlineIndicator: conversation.isOnline != null,
-                  isOnline: conversation.isOnline ?? false,
-                ),
-                if (conversation.unreadCount > 0)
-                  Positioned(
-                    right: -1,
-                    bottom: -1,
-                    child: Container(
-                      width: 11,
-                      height: 11,
-                      decoration: BoxDecoration(
-                        color: theme.primary,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 2),
-                      ),
-                    ),
-                  ),
-              ],
+            MessengerAvatar(
+              label: conversation.avatarLabel,
+              imageUrl: conversation.avatarUrl,
+              compact: true,
+              size: 44,
+              showOnlineIndicator: showPresenceDot,
+              isOnline: conversation.isOnline ?? false,
+              presenceDotColor:
+                  hasUnread ? theme.onlineIndicator : null,
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -81,7 +68,7 @@ class MessengerConversationTile extends StatelessWidget {
                         child: Text(
                           conversation.title,
                           style: TextStyle(
-                            fontWeight: conversation.unreadCount > 0
+                            fontWeight: hasUnread
                                 ? FontWeight.w700
                                 : FontWeight.w600,
                             fontSize: 15,
@@ -103,12 +90,12 @@ class MessengerConversationTile extends StatelessWidget {
                   Text(
                     conversation.subtitle,
                     style: TextStyle(
-                      color: conversation.unreadCount > 0
+                      color: hasUnread
                           ? const Color(0xFF374151)
                           : theme.subtleText,
                       fontSize: 12.8,
-                      fontWeight: conversation.unreadCount > 0
-                          ? FontWeight.w600
+                      fontWeight: hasUnread
+                          ? FontWeight.w700
                           : FontWeight.w500,
                     ),
                     overflow: TextOverflow.ellipsis,

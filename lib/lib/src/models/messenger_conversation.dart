@@ -13,6 +13,8 @@ class MessengerConversation {
     this.avatarUrl,
     this.isOnline,
     this.peerUsers = const [],
+    this.apiRank,
+    this.promotedAt,
   });
 
   final String id;
@@ -26,6 +28,12 @@ class MessengerConversation {
   final String? avatarUrl;
   final bool? isOnline;
   final List<MessengerUser> peerUsers;
+
+  /// Index from the last REST `getConversations` response (0 = first from API).
+  final int? apiRank;
+
+  /// When non-null, this row is sorted above cold rows; newer [promotedAt] first.
+  final DateTime? promotedAt;
 
   DateTime get effectiveActivityAt => lastActivityAt ?? createdAt;
 }

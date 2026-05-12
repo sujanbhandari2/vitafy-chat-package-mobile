@@ -61,6 +61,51 @@ class ChatSocketApi {
             receipt: ReadReceipt.fromJson(_mapPayload(socketEvent.payload)),
           );
           break;
+        case SocketEventType.messageDeleted:
+          yield ChatSocketEvent(
+            type: ChatSocketEventType.messageDeleted,
+            deletedMessage:
+                DeletedMessageEvent.fromJson(_mapPayload(socketEvent.payload)),
+          );
+          break;
+        case SocketEventType.messageEdited:
+          yield ChatSocketEvent(
+            type: ChatSocketEventType.messageEdited,
+            editedMessage:
+                MessageEditedEvent.fromJson(_mapPayload(socketEvent.payload)),
+          );
+          break;
+        case SocketEventType.conversationCreated:
+          yield ChatSocketEvent(
+            type: ChatSocketEventType.conversationCreated,
+            conversationCreated: ConversationCreatedEvent.fromJson(
+              _mapPayload(socketEvent.payload),
+            ),
+          );
+          break;
+        case SocketEventType.conversationMessage:
+          yield ChatSocketEvent(
+            type: ChatSocketEventType.conversationMessage,
+            conversationMessage: ConversationMessageEvent.fromJson(
+              _mapPayload(socketEvent.payload),
+            ),
+          );
+          break;
+        case SocketEventType.unreadCountUpdated:
+          yield ChatSocketEvent(
+            type: ChatSocketEventType.unreadCountUpdated,
+            unreadCountUpdated: UnreadCountUpdatedEvent.fromJson(
+              _mapPayload(socketEvent.payload),
+            ),
+          );
+          break;
+        case SocketEventType.userBadgeUpdated:
+          yield ChatSocketEvent(
+            type: ChatSocketEventType.userBadgeUpdated,
+            userBadgeUpdated: UserBadgeUpdatedEvent.fromJson(
+                _mapPayload(socketEvent.payload)),
+          );
+          break;
         case SocketEventType.userTyping:
           yield ChatSocketEvent(
             type: ChatSocketEventType.userTyping,
@@ -204,6 +249,46 @@ class ChatSocketApi {
         'messageId': messageId,
       },
       (data) => ReadReceipt.fromJson(_mapPayload(data)),
+    );
+  }
+
+  Future<MarkConversationReadResult> markConversationRead({
+    required String conversationId,
+  }) {
+    return _socketClient.emitWithAck<MarkConversationReadResult>(
+      'mark_conversation_read',
+      {'conversationId': conversationId},
+      (data) => MarkConversationReadResult.fromJson(_mapPayload(data)),
+    );
+  }
+
+  Future<DeletedMessageEvent> deleteMessage({
+    required String conversationId,
+    required String messageId,
+  }) {
+    return _socketClient.emitWithAck<DeletedMessageEvent>(
+      'delete_message',
+      {
+        'conversationId': conversationId,
+        'messageId': messageId,
+      },
+      (data) => DeletedMessageEvent.fromJson(_mapPayload(data)),
+    );
+  }
+
+  Future<ChatMessage> editMessage({
+    required String conversationId,
+    required String messageId,
+    required String content,
+  }) {
+    return _socketClient.emitWithAck<ChatMessage>(
+      'edit_message',
+      {
+        'conversationId': conversationId,
+        'messageId': messageId,
+        'content': content,
+      },
+      (data) => ChatMessage.fromJson(_mapPayload(data)),
     );
   }
 

@@ -6,6 +6,7 @@ import 'chat_auth.dart';
 import 'chat_config.dart';
 import 'chat_exceptions.dart';
 import 'models/chat_message.dart';
+import 'models/chat_user_registration_payload.dart';
 
 class ChatApi {
   ChatApi(this._dio, this._config);
@@ -25,7 +26,7 @@ class ChatApi {
     return _guard(() async {
       final response = await _dio.get(
         _chatUri('tenant'),
-        options: _authOptions(auth),
+        options: _authOptionsApiKeyOnly(auth),
       );
       return _asMap(_unwrapData(response.data));
     });
@@ -33,20 +34,61 @@ class ChatApi {
 
   Future<Map<String, dynamic>> registerOrGetUser(
     ChatAuth auth, {
-    required String providerId,
-    required String providerUserId,
-    required String email,
+    String? externalTenantId,
+    String? externalUserId,
+    @Deprecated('Use externalTenantId') String? providerId,
+    @Deprecated('Use externalUserId') String? providerUserId,
+    String? externalUserRole,
+    String? email,
     String? name,
+    String? profile,
   }) {
     return _guard(() async {
+      final body = ChatUserRegistrationBody.resolve(
+        externalTenantId: externalTenantId,
+        externalUserId: externalUserId,
+        providerId: providerId,
+        providerUserId: providerUserId,
+        externalUserRole: externalUserRole,
+        email: email,
+        name: name,
+        profile: profile,
+      );
       final response = await _dio.post(
         _chatUri('users'),
-        options: _authOptions(auth),
-        data: {
-          'providerId': providerId,
-          'providerUserId': providerUserId,
-          'email': email,
-          if (name != null && name.trim().isNotEmpty) 'name': name,
+        options: _authOptionsApiKeyOnly(auth),
+        data: body.toRegistrationJson(),
+      );
+
+      return _asMap(_unwrapData(response.data));
+    });
+  }
+
+  /// `POST …/users/start-conversation` (Vitafy: API key + chat-user Bearer).
+  Future<Map<String, dynamic>> postUsersStartConversation(
+    ChatAuth auth, {
+    required List<ChatUserRegistrationBody> users,
+    String? groupName,
+  }) {
+    return _guard(() async {
+      if (users.isEmpty) {
+        throw ArgumentError('startConversation requires a non-empty users list.');
+      }
+      for (var i = 0; i < users.length; i++) {
+        final u = users[i];
+        if (u.externalTenantId.trim().isEmpty || u.externalUserId.trim().isEmpty) {
+          throw ArgumentError(
+            'startConversation: users[$i] is missing externalTenantId or externalUserId.',
+          );
+        }
+      }
+      final response = await _dio.post(
+        _chatUri('users/start-conversation'),
+        options: _authOptionsChatUser(auth),
+        data: <String, dynamic>{
+          'users': users.map((u) => u.toRegistrationJson()).toList(),
+          if (groupName != null && groupName.trim().isNotEmpty)
+            'groupName': groupName.trim(),
         },
       );
 
@@ -61,7 +103,7 @@ class ChatApi {
     return _guard(() async {
       final response = await _dio.get(
         _chatUri('conversations'),
-        options: _authOptions(auth),
+        options: _authOptionsChatUser(auth),
         queryParameters: {
           if (forUserId != null && forUserId.trim().isNotEmpty)
             'forUserId': forUserId,
@@ -71,11 +113,19 @@ class ChatApi {
     });
   }
 
-  Future<List<Map<String, dynamic>>> getUsers(ChatAuth auth) {
+  Future<List<Map<String, dynamic>>> getUsers(
+    ChatAuth auth, {
+    int? limit,
+    int? page,
+  }) {
     return _guard(() async {
       final response = await _dio.get(
         _chatUri('users'),
-        options: _authOptions(auth),
+        options: _authOptionsChatUser(auth),
+        queryParameters: <String, dynamic>{
+          if (limit != null) 'limit': limit,
+          if (page != null) 'page': page,
+        },
       );
       return _asMapList(_unwrapData(response.data));
     });
@@ -90,7 +140,7 @@ class ChatApi {
     return _guard(() async {
       final response = await _dio.get(
         _chatUri('conversations/$conversationId/messages'),
-        options: _authOptions(auth),
+        options: _authOptionsChatUser(auth),
         queryParameters: {'page': page, 'pageSize': pageSize},
       );
 
@@ -105,14 +155,17 @@ class ChatApi {
     List<String>? participantIds,
   }) {
     return _guard(() async {
+      final normalizedParticipants =
+          _normalizeParticipantIds(participantIds, fieldName: 'participantIds');
       final response = await _dio.post(
         _chatUri('conversations'),
-        options: _authOptions(auth),
+        options: _authOptionsChatUser(auth),
         data: {
           'type': type,
           if (creatorUserId != null && creatorUserId.trim().isNotEmpty)
-            'creatorUserId': creatorUserId,
-          if (participantIds != null) 'participantIds': participantIds,
+            'creatorUserId': creatorUserId.trim(),
+          if (normalizedParticipants != null)
+            'participantIds': normalizedParticipants,
         },
       );
 
@@ -129,7 +182,7 @@ class ChatApi {
     return _guard(() async {
       final response = await _dio.post(
         _chatUri('conversations/$conversationId/participants'),
-        options: _authOptions(auth),
+        options: _authOptionsChatUser(auth),
         data: {
           'userId': userId,
           if (actorUserId != null && actorUserId.trim().isNotEmpty)
@@ -163,7 +216,7 @@ class ChatApi {
 
       final response = await _dio.post(
         _normalizePath(_config.uploadPath),
-        options: _authOptions(
+        options: _authOptionsApiKeyOnly(
           auth,
           includeDefaultHeaders: false,
         ),
@@ -195,7 +248,7 @@ class ChatApi {
     return _guard(() async {
       final response = await _dio.post(
         _chatUri('conversations/$conversationId/messages'),
-        options: _authOptions(auth),
+        options: _authOptionsChatUser(auth),
         data: {
           'senderId': senderId,
           'type': type.apiValue,
@@ -212,6 +265,22 @@ class ChatApi {
     });
   }
 
+  Future<Map<String, dynamic>> deleteMessage(
+    ChatAuth auth, {
+    required String conversationId,
+    required String messageId,
+    required String userId,
+  }) {
+    return _guard(() async {
+      final response = await _dio.delete(
+        _chatUri('conversations/$conversationId/messages/$messageId'),
+        options: _authOptionsChatUser(auth),
+        queryParameters: {'userId': userId},
+      );
+      return _asMap(_unwrapData(response.data));
+    });
+  }
+
   Future<Map<String, dynamic>> markMessageDeliveredRest(
     ChatAuth auth, {
     required String conversationId,
@@ -224,7 +293,7 @@ class ChatApi {
     return _guard(() async {
       final response = await _dio.post<Map<String, dynamic>>(
         _chatUri(suffix),
-        options: _authOptions(auth),
+        options: _authOptionsChatUser(auth),
         data: const <String, dynamic>{},
       );
       return _asMap(_unwrapData(response.data));
@@ -243,21 +312,42 @@ class ChatApi {
     return _guard(() async {
       final response = await _dio.post<Map<String, dynamic>>(
         _chatUri(suffix),
-        options: _authOptions(auth),
+        options: _authOptionsChatUser(auth),
         data: const <String, dynamic>{},
       );
       return _asMap(_unwrapData(response.data));
     });
   }
 
-  Options _authOptions(
+  Options _authOptionsApiKeyOnly(
     ChatAuth auth, {
     bool includeDefaultHeaders = true,
     String? contentType,
   }) {
     return Options(
       headers: auth.toApiHeaders(
-        includeDefaultHeaders ? _config.defaultHeaders : const {},
+        extra: includeDefaultHeaders ? _config.defaultHeaders : const {},
+        includeChatUserBearer: false,
+      ),
+      contentType: contentType,
+    );
+  }
+
+  Options _authOptionsChatUser(
+    ChatAuth auth, {
+    bool includeDefaultHeaders = true,
+    String? contentType,
+  }) {
+    if (!auth.hasChatUserAccessToken) {
+      throw const ChatUnexpectedResponseException(
+        message:
+            'ChatAuth.accessToken is required for this request. Use session auth after POST /chat/users or supply the JWT from that response.',
+      );
+    }
+    return Options(
+      headers: auth.toApiHeaders(
+        extra: includeDefaultHeaders ? _config.defaultHeaders : const {},
+        includeChatUserBearer: true,
       ),
       contentType: contentType,
     );
@@ -284,19 +374,53 @@ class ChatApi {
   }
 
   dynamic _unwrapData(dynamic raw) {
-    if (raw is Map<String, dynamic> && raw.containsKey('data')) {
+    // Dio / platform JSON may use Map<dynamic, dynamic>, so avoid `is Map<String, dynamic>`.
+    if (raw is Map && raw.containsKey('data')) {
       return raw['data'];
     }
     return raw;
   }
 
   Map<String, dynamic> _asMap(dynamic value) {
-    return Map<String, dynamic>.from(value as Map);
+    if (value is Map) {
+      return Map<String, dynamic>.from(value);
+    }
+    throw StateError('Expected JSON object, got ${value.runtimeType}');
   }
 
   List<Map<String, dynamic>> _asMapList(dynamic value) {
     return (value as List<dynamic>)
-        .map((item) => Map<String, dynamic>.from(item as Map))
+        .map((item) => _asMap(item))
         .toList();
+  }
+
+  /// Vitafy `POST .../conversations`: each id must be `ChatUser.id` as a digit string
+  /// (same as `vitafy-generic-chat-frontend` `createDirectConversation`).
+  static List<String>? _normalizeParticipantIds(
+    List<String>? raw, {
+    required String fieldName,
+  }) {
+    if (raw == null) {
+      return null;
+    }
+    final out = <String>[];
+    for (final entry in raw) {
+      final id = entry.trim();
+      if (id.isEmpty) {
+        continue;
+      }
+      if (!RegExp(r'^\d+$').hasMatch(id)) {
+        throw ChatUnexpectedResponseException(
+          message:
+              '$fieldName must contain only ChatUser.id values (decimal digit strings from GET/POST /chat/users). '
+              'Got invalid value: "$id"',
+        );
+      }
+      out.add(id);
+    }
+    if (out.isEmpty) {
+      return null;
+    }
+    return out;
   }
 }
