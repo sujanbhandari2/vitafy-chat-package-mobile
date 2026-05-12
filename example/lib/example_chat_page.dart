@@ -83,6 +83,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   /// Shown on [MessengerSuggestedPeoplePanel] rows while opening a direct chat.
   String _suggestedPeopleOpeningUserId = '';
   String _suggestedPeopleSearchQuery = '';
+  bool _isCreatingSuggestedGroup = false;
 
   /// Until [ChatSession.bootstrap] completes, badge listenable has no inbox.
   final ValueNotifier<Map<String, int>> _preBootstrapUnread =
@@ -168,7 +169,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
             if (selfEmail.isNotEmpty && email == selfEmail) {
               return false;
             }
-            if (selfProviderId.isNotEmpty && a.userId.trim() == selfProviderId) {
+            if (selfProviderId.isNotEmpty &&
+                a.userId.trim() == selfProviderId) {
               return false;
             }
             return true;
@@ -505,6 +507,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         _selectedConversationId = null;
         _suggestedPeopleOpeningUserId = '';
         _suggestedPeopleSearchQuery = '';
+        _isCreatingSuggestedGroup = false;
       });
       bootstrappingSession = null;
 
@@ -883,8 +886,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     }
     final tenant = widget.initialData.externalTenantId.trim();
     final roleRaw = (match.chatUserRole ?? match.type).trim().toLowerCase();
-    final role =
-        roleRaw.isNotEmpty ? roleRaw : kChatUserDefaultExternalRole;
+    final role = roleRaw.isNotEmpty ? roleRaw : kChatUserDefaultExternalRole;
     return ChatUserRegistrationBody(
       externalTenantId: tenant,
       externalUserId: match.userId.trim(),
@@ -967,6 +969,105 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     } finally {
       if (mounted) {
         setState(() => _suggestedPeopleOpeningUserId = '');
+      }
+    }
+  }
+
+  Future<void> _createSuggestedGroup(List<MessengerUser> selectedUsers) async {
+    final currentUser = _currentUser;
+    final session = _session;
+    final client = _client;
+    final auth = _sessionAuth;
+    if (session == null || currentUser == null) {
+      _showSnack('Bootstrap the package flow first.');
+      throw StateError('Package flow is not bootstrapped.');
+    }
+    if (client == null || auth == null) {
+      _showSnack('Session auth is not ready yet.');
+      throw StateError('Session auth is not ready.');
+    }
+
+    final uniqueUsers = <MessengerUser>[];
+    final seenIds = <String>{};
+    for (final user in selectedUsers) {
+      final id = user.id.trim();
+      if (id.isEmpty || !seenIds.add(id)) {
+        continue;
+      }
+      uniqueUsers.add(user);
+    }
+
+    if (uniqueUsers.length < 2) {
+      _showSnack('Select at least 2 people to create a group.');
+      throw StateError('At least 2 users are required for group creation.');
+    }
+
+    if (mounted) {
+      setState(() => _isCreatingSuggestedGroup = true);
+    }
+
+    try {
+      late final Conversation created;
+
+      if (_useDummyAssociatedUsers) {
+        final selfBody = _registrationBodyForSignedInUser();
+        final peerBodies = <ChatUserRegistrationBody>[];
+        for (final user in uniqueUsers) {
+          final peerBody = _registrationBodyForDummyAssociatedPeer(user);
+          if (peerBody == null) {
+            _showSnack('Unknown suggested person; refresh and try again.');
+            throw StateError('Could not resolve group member ${user.id}.');
+          }
+          peerBodies.add(peerBody);
+        }
+
+        _appendLog(
+          'Creating group via startConversation',
+          data: {
+            'peerExternalUserIds':
+                peerBodies.map((body) => body.externalUserId).toList(),
+          },
+        );
+
+        created = await client.startConversation(
+          auth,
+          users: [selfBody, ...peerBodies],
+        );
+      } else {
+        final participantIds =
+            uniqueUsers.map((user) => user.id.trim()).toList(growable: false);
+        _appendLog(
+          'Creating group via createConversation',
+          data: {
+            'creatorUserId': currentUser.id,
+            'participantIds': participantIds,
+          },
+        );
+        created = await client.createConversation(
+          auth,
+          type: 'GROUP',
+          creatorUserId: currentUser.id.trim(),
+          participantIds: participantIds,
+        );
+      }
+
+      await _refreshConversations();
+      await _selectConversation(created.id);
+    } catch (error, stackTrace) {
+      _appendLog(
+        'createSuggestedGroup failed',
+        data: {
+          'error': error.toString(),
+          'stackTrace': stackTrace.toString(),
+        },
+      );
+      if (error is! StateError) {
+        _showSnack('Could not create group (see logs).');
+      }
+      rethrow;
+    } finally {
+      if (mounted) {
+        setState(() => _isCreatingSuggestedGroup = false);
       }
     }
   }
@@ -1277,6 +1378,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       _selectedConversationId = null;
       _suggestedPeopleOpeningUserId = '';
       _suggestedPeopleSearchQuery = '';
+      _isCreatingSuggestedGroup = false;
       _statusText = 'Logged out.';
     });
     _appendLog('Disconnected client session, returning to configuration');
@@ -1830,6 +1932,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       createdAt: conversation.createdAt,
       lastActivityAt: lastActivityAt,
       isGlobal: conversation.isGlobal,
+      isGroup: conversation.type.toUpperCase() == 'GROUP',
       unreadCount: unreadMap[conversation.id] ?? 0,
       avatarUrl: others.length == 1 ? others.first.user.avatarUrl : null,
       isOnline: others.any((participant) => participant.user.isOnline),
@@ -2438,11 +2541,16 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           onLogout: () => unawaited(_logoutToConfiguration()),
                           onSelectConversation: _selectConversation,
                           onOpenDirectChat: _openDirectChat,
-                          suggestedPeopleBuilder: (context, users, openDirectChat) =>
-                              MessengerSuggestedPeoplePanel(
+                          onCreateGroupSelected: _createSuggestedGroup,
+                          isCreatingGroup: _isCreatingSuggestedGroup,
+                          suggestedPeopleBuilder:
+                              (context, users, openDirectChat) =>
+                                  MessengerSuggestedPeoplePanel(
                             users: users,
                             openingUserId: _suggestedPeopleOpeningUserId,
                             onUserSelected: openDirectChat,
+                            onCreateGroupSelected: _createSuggestedGroup,
+                            isCreatingGroup: _isCreatingSuggestedGroup,
                             onPullToRefresh: () => _refreshAll(),
                             showSearchField: true,
                             searchQuery: _suggestedPeopleSearchQuery,
