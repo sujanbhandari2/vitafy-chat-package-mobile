@@ -72,11 +72,13 @@ class ChatApi {
   }) {
     return _guard(() async {
       if (users.isEmpty) {
-        throw ArgumentError('startConversation requires a non-empty users list.');
+        throw ArgumentError(
+            'startConversation requires a non-empty users list.');
       }
       for (var i = 0; i < users.length; i++) {
         final u = users[i];
-        if (u.externalTenantId.trim().isEmpty || u.externalUserId.trim().isEmpty) {
+        if (u.externalTenantId.trim().isEmpty ||
+            u.externalUserId.trim().isEmpty) {
           throw ArgumentError(
             'startConversation: users[$i] is missing externalTenantId or externalUserId.',
           );
@@ -151,6 +153,7 @@ class ChatApi {
   Future<Map<String, dynamic>> createConversation(
     ChatAuth auth, {
     required String type,
+    String? title,
     String? creatorUserId,
     List<String>? participantIds,
   }) {
@@ -162,10 +165,33 @@ class ChatApi {
         options: _authOptionsChatUser(auth),
         data: {
           'type': type,
+          if (title != null && title.trim().isNotEmpty) 'name': title.trim(),
           if (creatorUserId != null && creatorUserId.trim().isNotEmpty)
             'creatorUserId': creatorUserId.trim(),
           if (normalizedParticipants != null)
             'participantIds': normalizedParticipants,
+        },
+      );
+
+      return _asMap(_unwrapData(response.data));
+    });
+  }
+
+  Future<Map<String, dynamic>> updateConversation(
+    ChatAuth auth, {
+    required String conversationId,
+    String? title,
+    String? actorUserId,
+  }) {
+    return _guard(() async {
+      final trimmedTitle = title?.trim() ?? '';
+      final response = await _dio.patch(
+        _chatUri('conversations/$conversationId'),
+        options: _authOptionsChatUser(auth),
+        data: {
+          'name': trimmedTitle.isEmpty ? null : trimmedTitle,
+          if (actorUserId != null && actorUserId.trim().isNotEmpty)
+            'actorUserId': actorUserId.trim(),
         },
       );
 
@@ -281,6 +307,31 @@ class ChatApi {
     });
   }
 
+  Future<void> deleteConversation(
+    ChatAuth auth, {
+    required String conversationId,
+    String? actorUserId,
+  }) {
+    return _guard(() async {
+      await _dio.delete(
+        _chatUri('conversations/$conversationId'),
+        options: _authOptionsChatUser(auth),
+        queryParameters: <String, dynamic>{
+          if (actorUserId != null && actorUserId.trim().isNotEmpty)
+            'actorUserId': actorUserId.trim(),
+          if (actorUserId != null && actorUserId.trim().isNotEmpty)
+            'userId': actorUserId.trim(),
+        },
+        data: <String, dynamic>{
+          if (actorUserId != null && actorUserId.trim().isNotEmpty)
+            'actorUserId': actorUserId.trim(),
+          if (actorUserId != null && actorUserId.trim().isNotEmpty)
+            'userId': actorUserId.trim(),
+        },
+      );
+    });
+  }
+
   Future<Map<String, dynamic>> markMessageDeliveredRest(
     ChatAuth auth, {
     required String conversationId,
@@ -389,9 +440,7 @@ class ChatApi {
   }
 
   List<Map<String, dynamic>> _asMapList(dynamic value) {
-    return (value as List<dynamic>)
-        .map((item) => _asMap(item))
-        .toList();
+    return (value as List<dynamic>).map((item) => _asMap(item)).toList();
   }
 
   /// Vitafy `POST .../conversations`: each id must be `ChatUser.id` as a digit string

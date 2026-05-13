@@ -16,7 +16,7 @@ class ExampleBootstrapFormData {
         socketUrl = 'https://api-generic-chat.vitafyhealth.com',
         apiKey =
             'vfk_ak_U2FMapguEUmJMK9B7mUMlA:ohxHIA84Wi4pjuHZNP6HSm45fY3Q7y3nKXtDABedXK0',
-        externalTenantId = '7EB541E4-91A9-4DEB-BB7E-55813D3CA140',
+        externalTenantId = 'DEV_7EB541E4-91A9-4DEB-BB7E-55813D3CA140',
         externalUserId = 'surya bhai legend',
         externalUserRole = 'user',
         email = 'Sujan@example.com',

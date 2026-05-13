@@ -38,7 +38,8 @@ void main() {
     expect(find.text('secret'), findsNothing);
   });
 
-  testWidgets('shows delete action only when canDelete is true', (tester) async {
+  testWidgets('shows delete action only when canDelete is true',
+      (tester) async {
     var deleteCalls = 0;
     await tester.pumpWidget(
       MaterialApp(
@@ -56,7 +57,8 @@ void main() {
                   },
                 ),
                 MessengerMessageBubble(
-                  message: makeMessage(content: 'Blocked delete', senderId: 'other'),
+                  message:
+                      makeMessage(content: 'Blocked delete', senderId: 'other'),
                   isMine: false,
                   canDelete: false,
                   onDelete: () {},
@@ -188,7 +190,9 @@ void main() {
     final purpleIcon = tester.widget<Icon>(
       find.byWidgetPredicate(
         (w) =>
-            w is Icon && w.icon == Icons.delete_forever_rounded && w.color == Colors.purple,
+            w is Icon &&
+            w.icon == Icons.delete_forever_rounded &&
+            w.color == Colors.purple,
       ),
     );
     expect(purpleIcon.icon, Icons.delete_forever_rounded);
@@ -220,5 +224,89 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Delete message'), findsNothing);
     expect(find.text('React'), findsNothing);
+  });
+
+  testWidgets(
+      'default theme uses blue outgoing bubble and white incoming bubble',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: Column(
+              children: [
+                MessengerMessageBubble(
+                  message: makeMessage(content: 'Mine'),
+                  isMine: true,
+                ),
+                MessengerMessageBubble(
+                  message: makeMessage(
+                    content: 'Theirs',
+                    senderId: 'other',
+                  ),
+                  isMine: false,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final decoratedContainers = tester
+        .widgetList<Container>(find.byType(Container))
+        .where((widget) => widget.decoration is BoxDecoration)
+        .toList(growable: false);
+    final colors = decoratedContainers
+        .map((widget) => (widget.decoration! as BoxDecoration).color)
+        .whereType<Color>()
+        .toList(growable: false);
+
+    expect(colors, contains(const Color(0xFF1B74E4)));
+    expect(colors, contains(Colors.white));
+  });
+
+  testWidgets('seen delivery state uses high-contrast status chip',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerMessageBubble(
+              message: MessengerChatMessage(
+                id: 'seen-1',
+                senderId: 'me',
+                senderLabel: 'Me',
+                type: MessengerMessageType.text,
+                content: 'Seen message',
+                createdAt: DateTime.utc(2026),
+                deliveryStatus: MessengerDeliveryStatus.seen,
+              ),
+              isMine: true,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final chipFinder = find.byWidgetPredicate(
+      (widget) =>
+          widget is Container &&
+          widget.decoration is BoxDecoration &&
+          (widget.decoration! as BoxDecoration).shape == BoxShape.circle,
+    );
+
+    expect(chipFinder, findsWidgets);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Icon &&
+            widget.icon == Icons.done_all &&
+            widget.color == const Color(0xFF1B74E4),
+      ),
+      findsOneWidget,
+    );
   });
 }

@@ -69,5 +69,19 @@ void main() {
 
       expect(c.latestMessage, isNull);
     });
+
+    test('falls back to name when title is absent', () {
+      final c = Conversation.fromJson({
+        'id': 'group-1',
+        'tenantId': 't',
+        'type': 'GROUP',
+        'name': 'Care team',
+        'createdAt': DateTime.utc(2026).toIso8601String(),
+        'updatedAt': DateTime.utc(2026).toIso8601String(),
+        'participants': <dynamic>[],
+      });
+
+      expect(c.title, 'Care team');
+    });
   });
 }

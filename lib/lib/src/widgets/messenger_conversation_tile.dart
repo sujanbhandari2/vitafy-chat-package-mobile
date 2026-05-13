@@ -21,7 +21,7 @@ class MessengerConversationTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
     final now = DateTime.now();
-    final date = conversation.createdAt;
+    final date = conversation.effectiveActivityAt;
     final isToday =
         now.year == date.year && now.month == date.month && now.day == date.day;
     final timestamp = isToday
@@ -29,8 +29,7 @@ class MessengerConversationTile extends StatelessWidget {
         : DateFormat('M/d/yy').format(date);
 
     final hasUnread = conversation.unreadCount > 0;
-    final showPresenceDot =
-        hasUnread || conversation.isOnline != null;
+    final showPresenceDot = hasUnread || conversation.isOnline != null;
 
     return InkWell(
       onTap: onTap,
@@ -53,8 +52,7 @@ class MessengerConversationTile extends StatelessWidget {
               size: 44,
               showOnlineIndicator: showPresenceDot,
               isOnline: conversation.isOnline ?? false,
-              presenceDotColor:
-                  hasUnread ? theme.onlineIndicator : null,
+              presenceDotColor: hasUnread ? theme.onlineIndicator : null,
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -68,9 +66,8 @@ class MessengerConversationTile extends StatelessWidget {
                         child: Text(
                           conversation.title,
                           style: TextStyle(
-                            fontWeight: hasUnread
-                                ? FontWeight.w700
-                                : FontWeight.w600,
+                            fontWeight:
+                                hasUnread ? FontWeight.w700 : FontWeight.w600,
                             fontSize: 15,
                           ),
                           overflow: TextOverflow.ellipsis,
@@ -94,9 +91,7 @@ class MessengerConversationTile extends StatelessWidget {
                           ? const Color(0xFF374151)
                           : theme.subtleText,
                       fontSize: 12.8,
-                      fontWeight: hasUnread
-                          ? FontWeight.w700
-                          : FontWeight.w500,
+                      fontWeight: hasUnread ? FontWeight.w700 : FontWeight.w500,
                     ),
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,

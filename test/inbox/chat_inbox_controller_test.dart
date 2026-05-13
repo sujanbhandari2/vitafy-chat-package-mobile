@@ -172,7 +172,8 @@ void main() {
       await connection.close();
     });
 
-    test('seedFromConversations assigns apiRank and clears promotions', () async {
+    test('seedFromConversations assigns apiRank and preserves live promotions',
+        () async {
       final fake = FakeChatRepository();
       final client = ChatClient(
         config: const ChatServiceConfig(
@@ -189,7 +190,8 @@ void main() {
       );
 
       controller.bumpConversation('a');
-      expect(controller.conversationOrder.value.promotedAt.containsKey('a'), isTrue);
+      expect(controller.conversationOrder.value.promotedAt.containsKey('a'),
+          isTrue);
 
       controller.seedFromConversations([
         Conversation.fromJson({
@@ -213,11 +215,31 @@ void main() {
       expect(controller.conversationOrder.value.apiRank, {'x': 0, 'y': 1});
       expect(controller.conversationOrder.value.promotedAt, isEmpty);
 
+      controller.bumpConversation('x');
+      expect(controller.conversationOrder.value.promotedAt.containsKey('x'),
+          isTrue);
+
+      controller.seedFromConversations([
+        Conversation.fromJson({
+          'id': 'x',
+          'tenantId': 't',
+          'type': 'DIRECT',
+          'createdAt': DateTime.utc(2026).toIso8601String(),
+          'updatedAt': DateTime.utc(2026, 1, 2).toIso8601String(),
+          'participants': [],
+        }),
+      ]);
+
+      expect(controller.conversationOrder.value.apiRank, {'x': 0});
+      expect(controller.conversationOrder.value.promotedAt.keys, {'x'});
+
       await controller.dispose();
       await connection.close();
     });
 
-    test('seedFromConversations derives unread from messageStatus and force-clears active', () async {
+    test(
+        'seedFromConversations derives unread from messageStatus and force-clears active',
+        () async {
       final fake = FakeChatRepository();
       final client = ChatClient(
         config: const ChatServiceConfig(
@@ -264,7 +286,8 @@ void main() {
       ]);
 
       expect(controller.unreadByConversation.value['unread-room'], 1);
-      expect(controller.unreadByConversation.value.containsKey('open'), isFalse);
+      expect(
+          controller.unreadByConversation.value.containsKey('open'), isFalse);
 
       await controller.dispose();
       await connection.close();

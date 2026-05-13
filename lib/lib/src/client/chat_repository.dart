@@ -52,8 +52,15 @@ abstract class ChatRepository {
   Future<Conversation> createConversation(
     ChatAuth auth, {
     String type,
+    String? title,
     String? creatorUserId,
     List<String>? participantIds,
+  });
+  Future<Conversation> updateConversation(
+    ChatAuth auth, {
+    required String conversationId,
+    String? title,
+    String? actorUserId,
   });
   Future<ConversationParticipant> addParticipant(
     ChatAuth auth, {
@@ -112,6 +119,11 @@ abstract class ChatRepository {
     required String conversationId,
     required String messageId,
     required String userId,
+  });
+  Future<void> deleteConversation(
+    ChatAuth auth, {
+    required String conversationId,
+    String? actorUserId,
   });
   Future<ChatMessage> editMessage({
     required String conversationId,

@@ -145,7 +145,7 @@ class Conversation {
       id: json['id']?.toString() ?? '',
       tenantId: json['tenantId']?.toString() ?? '',
       type: json['type']?.toString() ?? 'DIRECT',
-      title: json['title']?.toString(),
+      title: (json['title'] ?? json['name'])?.toString(),
       createdBy: json['createdBy']?.toString(),
       createdAt: DateTime.parse(
         json['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
@@ -247,10 +247,9 @@ class ConversationParticipant {
     );
     // Many APIs omit `id` on nested `chatUser` but send `chatUserId` on the
     // participant row — needed for stable user ids (e.g. UI peer deduplication).
-    final participantChatUserId =
-        json['chatUserId']?.toString().trim() ??
-            json['userId']?.toString().trim() ??
-            '';
+    final participantChatUserId = json['chatUserId']?.toString().trim() ??
+        json['userId']?.toString().trim() ??
+        '';
     final nestedId = userMap['id']?.toString().trim() ?? '';
     if (nestedId.isEmpty && participantChatUserId.isNotEmpty) {
       userMap['id'] = participantChatUserId;
@@ -287,9 +286,10 @@ class ConversationParticipantUser {
 
   factory ConversationParticipantUser.fromJson(Map<String, dynamic> json) {
     final rawRole = json['role']?.toString();
-    final idStr = _firstNonEmpty(json, const ['id', 'chatUserId', 'chat_user_id'])
-            ?.trim() ??
-        '';
+    final idStr =
+        _firstNonEmpty(json, const ['id', 'chatUserId', 'chat_user_id'])
+                ?.trim() ??
+            '';
     final label = _participantLabelFromJson(json, idStr);
     return ConversationParticipantUser(
       id: idStr,

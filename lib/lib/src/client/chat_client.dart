@@ -106,14 +106,30 @@ class ChatClient {
   Future<Conversation> createConversation(
     ChatAuth auth, {
     String type = 'DIRECT',
+    String? title,
     String? creatorUserId,
     List<String>? participantIds,
   }) {
     return repository.createConversation(
       auth,
       type: type,
+      title: title,
       creatorUserId: creatorUserId,
       participantIds: participantIds,
+    );
+  }
+
+  Future<Conversation> updateConversation(
+    ChatAuth auth, {
+    required String conversationId,
+    String? title,
+    String? actorUserId,
+  }) {
+    return repository.updateConversation(
+      auth,
+      conversationId: conversationId,
+      title: title,
+      actorUserId: actorUserId,
     );
   }
 
@@ -292,6 +308,18 @@ class ChatClient {
       conversationId: conversationId,
       messageId: messageId,
       userId: userId,
+    );
+  }
+
+  Future<void> deleteConversation(
+    ChatAuth auth, {
+    required String conversationId,
+    String? actorUserId,
+  }) {
+    return repository.deleteConversation(
+      auth,
+      conversationId: conversationId,
+      actorUserId: actorUserId,
     );
   }
 

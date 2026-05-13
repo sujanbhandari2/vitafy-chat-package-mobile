@@ -236,14 +236,14 @@ void main() {
     expect(find.text('bob'), findsOneWidget);
     expect(find.text('carol'), findsOneWidget);
 
-    await tester.enterText(find.byType(TextFormField), 'nur');
+    await tester.enterText(find.byType(TextField), 'nur');
     await tester.pumpAndSettle();
 
     expect(find.text('alice'), findsNothing);
     expect(find.text('bob'), findsNothing);
     expect(find.text('carol'), findsOneWidget);
 
-    await tester.enterText(find.byType(TextFormField), 'bo');
+    await tester.enterText(find.byType(TextField), 'bo');
     await tester.pumpAndSettle();
 
     expect(find.text('alice'), findsNothing);
@@ -275,6 +275,86 @@ void main() {
 
     expect(find.text('No matches'), findsOneWidget);
   });
+
+  testWidgets('group mode selects users, hides them, and allows removal',
+      (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        MessengerSuggestedPeoplePanel(
+          users: const [alice, bob, carol],
+          onUserSelected: (_) {},
+          onCreateGroupSelected: (_) async {},
+          showSearchField: true,
+          searchQuery: '',
+          onSearchQueryChanged: (_) {},
+        ),
+      ),
+    );
+
+    expect(find.text('New group'), findsOneWidget);
+    await tester.tap(find.text('New group'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Group mode'), findsOneWidget);
+    expect(find.text('Selected people (0)'), findsOneWidget);
+
+    await tester.tap(find.text('bob'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Selected people (1)'), findsOneWidget);
+    expect(find.text('bob'), findsOneWidget);
+
+    final addIcons = find.byIcon(Icons.add_circle_outline_rounded);
+    expect(addIcons, findsNWidgets(2));
+
+    final closeButtons = find.byIcon(Icons.close_rounded);
+    expect(closeButtons, findsWidgets);
+    await tester.tap(closeButtons.first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Selected people (0)'), findsOneWidget);
+    expect(find.byIcon(Icons.add_circle_outline_rounded), findsNWidgets(3));
+  });
+
+  testWidgets(
+    'group mode create callback uses selection order and bypasses direct open',
+    (tester) async {
+      final created = <MessengerUser>[];
+      var openedDirectChats = 0;
+
+      await tester.pumpWidget(
+        wrap(
+          MessengerSuggestedPeoplePanel(
+            users: const [alice, bob, carol],
+            onUserSelected: (_) => openedDirectChats++,
+            onCreateGroupSelected: (selected) async {
+              created
+                ..clear()
+                ..addAll(selected);
+            },
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('New group'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('carol'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('alice'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Selected people (2)'), findsOneWidget);
+
+      await tester.tap(find.text('Create group'));
+      await tester.pumpAndSettle();
+
+      expect(openedDirectChats, 0);
+      expect(created.map((user) => user.id).toList(), ['u3', 'u1']);
+      expect(find.text('New group'), findsOneWidget);
+      expect(find.text('Selected people (2)'), findsNothing);
+    },
+  );
 
   testWidgets(
     'shell renders suggestedPeopleBuilder when conversations are empty',

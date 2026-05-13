@@ -31,7 +31,8 @@ class ChatInboxController {
     int receiptDedupeCacheSize = 512,
   })  : _client = client,
         _currentUserId = currentUserId,
-        _conversationMessageIds = _BoundedStringSet(maxSize: conversationMessageIdCacheSize),
+        _conversationMessageIds =
+            _BoundedStringSet(maxSize: conversationMessageIdCacheSize),
         _deliveredEmitted = _BoundedStringSet(maxSize: receiptDedupeCacheSize),
         _readEmitted = _BoundedStringSet(maxSize: receiptDedupeCacheSize) {
     _eventsSubscription = _client.events.listen(
@@ -110,7 +111,8 @@ class ChatInboxController {
       currentUserId: _currentUserId,
       activeConversationId: _activeConversationId,
     );
-    _promotedAt.clear();
+    final liveIds = list.map((item) => item.id.trim()).toSet();
+    _promotedAt.removeWhere((key, _) => !liveIds.contains(key));
     _apiRank
       ..clear()
       ..addEntries(

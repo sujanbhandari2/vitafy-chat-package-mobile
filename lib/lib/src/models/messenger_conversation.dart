@@ -9,6 +9,7 @@ class MessengerConversation {
     required this.createdAt,
     this.lastActivityAt,
     this.isGlobal = false,
+    this.isGroup = false,
     this.unreadCount = 0,
     this.avatarUrl,
     this.isOnline,
@@ -24,6 +25,7 @@ class MessengerConversation {
   final DateTime createdAt;
   final DateTime? lastActivityAt;
   final bool isGlobal;
+  final bool isGroup;
   final int unreadCount;
   final String? avatarUrl;
   final bool? isOnline;
