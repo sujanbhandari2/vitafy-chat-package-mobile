@@ -848,4 +848,83 @@ void main() {
       ['a', 'b'],
     );
   });
+
+  testWidgets(
+      'start-new-chat sheet updates when directory loads while sheet is open',
+      (tester) async {
+    final harnessKey = GlobalKey<_StartNewChatSheetLiveHarnessState>();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _StartNewChatSheetLiveHarness(key: harnessKey),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add_rounded));
+    await tester.pump();
+
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+    expect(find.text('alice_after_load'), findsNothing);
+
+    harnessKey.currentState!.applyLoadedUser();
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Alice After Load'), findsWidgets);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+
+    await tester.tapAt(const Offset(4, 4));
+    await tester.pumpAndSettle();
+    expect(find.text('Start New Chat'), findsNothing);
+  });
+}
+
+class _StartNewChatSheetLiveHarness extends StatefulWidget {
+  const _StartNewChatSheetLiveHarness({super.key});
+
+  @override
+  State<_StartNewChatSheetLiveHarness> createState() =>
+      _StartNewChatSheetLiveHarnessState();
+}
+
+class _StartNewChatSheetLiveHarnessState extends State<_StartNewChatSheetLiveHarness> {
+  static const _alice =
+      MessengerUser(id: 'x', username: 'alice_after_load', roleLabel: '');
+
+  List<MessengerUser> _users = const [];
+  bool _directoryLoading = true;
+
+  void applyLoadedUser() {
+    setState(() {
+      _users = const [_alice];
+      _directoryLoading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MessengerTheme(
+      data: const MessengerThemeData(),
+      child: Scaffold(
+        body: SizedBox(
+          height: 520,
+          width: 360,
+          child: MessengerConversationList(
+            currentUserName: 'me',
+            conversations: const [],
+            users: _users,
+            selectedConversationId: null,
+            openingDirectUserId: '',
+            onRefresh: () async {},
+            onLogout: () {},
+            onOpenDirectChat: (_) async {},
+            onSelectConversation: (_) async {},
+            searchVisibility: MessengerSearchVisibility.never,
+            startNewChatUsersLoading: _directoryLoading,
+          ),
+        ),
+      ),
+    );
+  }
 }

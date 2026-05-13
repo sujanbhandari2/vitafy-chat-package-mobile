@@ -210,9 +210,48 @@ class _PeerListEntry {
   final String? conversationId;
 }
 
+/// Live snapshot for the Start New Chat modal while it is open — updated from
+/// [MessengerConversationList.didUpdateWidget] so hosts can finish loading
+/// users after the sheet is shown.
+class _StartNewChatSheetLiveData {
+  const _StartNewChatSheetLiveData({
+    required this.sortedUsers,
+    required this.isUsersLoading,
+    required this.openingDirectUserId,
+    required this.isCreatingGroup,
+  });
+
+  final List<MessengerUser> sortedUsers;
+  final bool isUsersLoading;
+  final String openingDirectUserId;
+  final bool isCreatingGroup;
+}
+
 class _MessengerConversationListState extends State<MessengerConversationList> {
   final TextEditingController _searchController = TextEditingController();
   String _query = '';
+
+  ValueNotifier<_StartNewChatSheetLiveData>? _startNewChatSheetLive;
+
+  List<MessengerUser> _sortedUsersForStartNewChatSheet() {
+    final sorted = [...widget.users]
+      ..sort((a, b) {
+        if (a.isOnline == b.isOnline) {
+          return a.username.toLowerCase().compareTo(b.username.toLowerCase());
+        }
+        return a.isOnline ? -1 : 1;
+      });
+    return sorted;
+  }
+
+  _StartNewChatSheetLiveData _buildStartNewChatSheetLiveData() {
+    return _StartNewChatSheetLiveData(
+      sortedUsers: _sortedUsersForStartNewChatSheet(),
+      isUsersLoading: widget.startNewChatUsersLoading,
+      openingDirectUserId: widget.openingDirectUserId,
+      isCreatingGroup: widget.isCreatingGroup,
+    );
+  }
 
   @override
   void initState() {
@@ -221,7 +260,24 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
   }
 
   @override
+  void didUpdateWidget(covariant MessengerConversationList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final live = _startNewChatSheetLive;
+    if (live != null) {
+      final next = _buildStartNewChatSheetLiveData();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _startNewChatSheetLive != live) {
+          return;
+        }
+        live.value = next;
+      });
+    }
+  }
+
+  @override
   void dispose() {
+    _startNewChatSheetLive?.dispose();
+    _startNewChatSheetLive = null;
     _searchController.removeListener(_handleSearchChange);
     _searchController.dispose();
     super.dispose();
@@ -732,42 +788,41 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     final searchContentPadding = widget.searchFieldContentPadding;
     final searchRadius = widget.searchFieldBorderRadius ?? 12;
 
-    final sortedUsers = [...widget.users]..sort((a, b) {
-        if (a.isOnline == b.isOnline) {
-          return a.username.toLowerCase().compareTo(b.username.toLowerCase());
-        }
-        return a.isOnline ? -1 : 1;
-      });
+    _startNewChatSheetLive?.dispose();
+    _startNewChatSheetLive =
+        ValueNotifier(_buildStartNewChatSheetLiveData());
 
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (sheetContext) => _StartNewChatBottomSheet(
-        sortedUsers: sortedUsers,
-        searchBackgroundColor: searchBg,
-        searchIconColor: searchIconColor,
-        searchHintStyle: searchHintStyle,
-        searchContentPadding: searchContentPadding,
-        searchBorderRadius: searchRadius,
-        searchInputTextStyle: widget.searchInputTextStyle,
-        searchHintText: widget.searchHintText,
-        emptyUsersBuilder: widget.emptyUsersBuilder,
-        emptyUsersMessage: widget.emptyUsersMessage,
-        openingDirectUserId: widget.openingDirectUserId,
-        onOpenDirectChat: widget.onOpenDirectChat,
-        onCreateGroupSelected: widget.onCreateGroupSelected,
-        onCreateGroupRequested: widget.onCreateGroupRequested,
-        isCreatingGroup: widget.isCreatingGroup,
-        groupNameInputBehavior: widget.groupNameInputBehavior,
-        groupNameFieldLabelText: widget.groupNameFieldLabelText,
-        groupNameFieldHintText: widget.groupNameFieldHintText,
-        groupNameRequiredErrorText: widget.groupNameRequiredErrorText,
-        isUsersLoading: widget.startNewChatUsersLoading,
-      ),
-    );
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        builder: (sheetContext) => _StartNewChatBottomSheet(
+          sheetLive: _startNewChatSheetLive!,
+          searchBackgroundColor: searchBg,
+          searchIconColor: searchIconColor,
+          searchHintStyle: searchHintStyle,
+          searchContentPadding: searchContentPadding,
+          searchBorderRadius: searchRadius,
+          searchInputTextStyle: widget.searchInputTextStyle,
+          searchHintText: widget.searchHintText,
+          emptyUsersBuilder: widget.emptyUsersBuilder,
+          emptyUsersMessage: widget.emptyUsersMessage,
+          onOpenDirectChat: widget.onOpenDirectChat,
+          onCreateGroupSelected: widget.onCreateGroupSelected,
+          onCreateGroupRequested: widget.onCreateGroupRequested,
+          groupNameInputBehavior: widget.groupNameInputBehavior,
+          groupNameFieldLabelText: widget.groupNameFieldLabelText,
+          groupNameFieldHintText: widget.groupNameFieldHintText,
+          groupNameRequiredErrorText: widget.groupNameRequiredErrorText,
+        ),
+      );
+    } finally {
+      _startNewChatSheetLive?.dispose();
+      _startNewChatSheetLive = null;
+    }
   }
 
   bool _shouldShowSearch() {
@@ -825,7 +880,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
 
 class _StartNewChatBottomSheet extends StatefulWidget {
   const _StartNewChatBottomSheet({
-    required this.sortedUsers,
+    required this.sheetLive,
     required this.searchBackgroundColor,
     required this.searchIconColor,
     required this.searchHintStyle,
@@ -835,19 +890,16 @@ class _StartNewChatBottomSheet extends StatefulWidget {
     required this.searchHintText,
     required this.emptyUsersBuilder,
     required this.emptyUsersMessage,
-    required this.openingDirectUserId,
     required this.onOpenDirectChat,
     this.onCreateGroupSelected,
     this.onCreateGroupRequested,
-    this.isCreatingGroup = false,
     this.groupNameInputBehavior = MessengerGroupNameInputBehavior.hidden,
     this.groupNameFieldLabelText = 'Group name',
     this.groupNameFieldHintText = 'Enter a group name',
     this.groupNameRequiredErrorText = 'Enter a group name to continue.',
-    this.isUsersLoading = false,
   });
 
-  final List<MessengerUser> sortedUsers;
+  final ValueNotifier<_StartNewChatSheetLiveData> sheetLive;
   final Color searchBackgroundColor;
   final Color searchIconColor;
   final TextStyle searchHintStyle;
@@ -857,18 +909,15 @@ class _StartNewChatBottomSheet extends StatefulWidget {
   final String searchHintText;
   final WidgetBuilder? emptyUsersBuilder;
   final String emptyUsersMessage;
-  final String openingDirectUserId;
   final FutureOr<void> Function(MessengerUser user) onOpenDirectChat;
   final FutureOr<void> Function(List<MessengerUser> selectedUsers)?
       onCreateGroupSelected;
   final FutureOr<void> Function(MessengerGroupCreateRequest request)?
       onCreateGroupRequested;
-  final bool isCreatingGroup;
   final MessengerGroupNameInputBehavior groupNameInputBehavior;
   final String groupNameFieldLabelText;
   final String groupNameFieldHintText;
   final String groupNameRequiredErrorText;
-  final bool isUsersLoading;
 
   @override
   State<_StartNewChatBottomSheet> createState() =>
@@ -907,10 +956,17 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
 
   @override
   Widget build(BuildContext context) {
+    return ValueListenableBuilder<_StartNewChatSheetLiveData>(
+      valueListenable: widget.sheetLive,
+      builder: (context, data, _) => _buildSheet(context, data),
+    );
+  }
+
+  Widget _buildSheet(BuildContext context, _StartNewChatSheetLiveData data) {
     final q = _query.toLowerCase();
     final filteredUsers = _query.isEmpty
-        ? widget.sortedUsers
-        : widget.sortedUsers
+        ? data.sortedUsers
+        : data.sortedUsers
             .where(
               (user) =>
                   user.username.toLowerCase().contains(q) ||
@@ -918,7 +974,7 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
                   user.id.toLowerCase().contains(q),
             )
             .toList(growable: false);
-    final selectedUsers = _selectedUsers();
+    final selectedUsers = _selectedUsersFrom(data.sortedUsers);
     final visibleUsers = _isGroupSelectionMode
         ? filteredUsers
             .where((user) => !_selectedUserIds.contains(user.id.trim()))
@@ -929,7 +985,7 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
     final screenH = MediaQuery.sizeOf(context).height;
     final maxSheetHeight = screenH * 0.88;
     final theme = MessengerTheme.of(context);
-    final groupBusy = widget.isCreatingGroup;
+    final groupBusy = data.isCreatingGroup;
 
     return Padding(
       padding: EdgeInsets.only(bottom: viewInsets.bottom),
@@ -1007,7 +1063,7 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
                     ),
                   ],
                   const SizedBox(height: 12),
-                  _buildSelectedUsersCard(theme, selectedUsers),
+                  _buildSelectedUsersCard(theme, selectedUsers, groupBusy),
                 ],
                 const SizedBox(height: 10),
                 MessengerListSearchField(
@@ -1092,7 +1148,7 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
                 ],
                 const SizedBox(height: 10),
                 Expanded(
-                  child: widget.isUsersLoading && visibleUsers.isEmpty
+                  child: data.isUsersLoading && visibleUsers.isEmpty
                       ? const MessengerDefaultInlineLoading()
                       : visibleUsers.isEmpty
                           ? Align(
@@ -1127,7 +1183,7 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
                                   user: user,
                                   isOpening: !_isGroupSelectionMode &&
                                       _isDirectOpenBusyForUser(
-                                        widget.openingDirectUserId,
+                                        data.openingDirectUserId,
                                         user.id,
                                       ),
                                   onTap: _isGroupSelectionMode
@@ -1195,9 +1251,9 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
     });
   }
 
-  List<MessengerUser> _selectedUsers() {
+  List<MessengerUser> _selectedUsersFrom(List<MessengerUser> sortedUsers) {
     final byId = <String, MessengerUser>{
-      for (final user in widget.sortedUsers) user.id.trim(): user,
+      for (final user in sortedUsers) user.id.trim(): user,
     };
     return _selectedUserIds
         .map((id) => byId[id.trim()])
@@ -1210,7 +1266,7 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
     final callback = widget.onCreateGroupSelected;
     if ((requestCallback == null && callback == null) ||
         selectedUsers.length < 2 ||
-        widget.isCreatingGroup) {
+        widget.sheetLive.value.isCreatingGroup) {
       return;
     }
     final trimmedGroupName = _groupNameController.text.trim();
@@ -1241,6 +1297,7 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
   Widget _buildSelectedUsersCard(
     MessengerThemeData theme,
     List<MessengerUser> selectedUsers,
+    bool isCreatingGroup,
   ) {
     return Container(
       padding: const EdgeInsets.all(12),
@@ -1278,7 +1335,7 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
                   .map(
                     (user) => _SelectedBottomSheetUserChip(
                       user: user,
-                      onRemove: widget.isCreatingGroup
+                      onRemove: isCreatingGroup
                           ? null
                           : () => _removeSelectedUser(user.id),
                     ),
