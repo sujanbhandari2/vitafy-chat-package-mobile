@@ -20,6 +20,8 @@ class MessengerMessageBubble extends StatefulWidget {
     this.onReact,
     this.onRemoveReaction,
     this.onDelete,
+    this.canEdit = false,
+    this.onEdit,
     this.onMarkSeen,
     this.enableReactions = true,
     this.reactionOptions = const ['👍', '❤️', '😂', '😮', '😢', '🙏'],
@@ -30,6 +32,7 @@ class MessengerMessageBubble extends StatefulWidget {
     ),
     this.onSwipeToReply,
     this.attachmentCaptionTextStyle,
+    this.packageDialogTheme,
   });
 
   final MessengerChatMessage message;
@@ -40,6 +43,9 @@ class MessengerMessageBubble extends StatefulWidget {
   final Future<void> Function(String messageId, String reactionType)?
       onRemoveReaction;
   final VoidCallback? onDelete;
+  /// When set with [canEdit], long-press shows an "Edit message" action (text only).
+  final VoidCallback? onEdit;
+  final bool canEdit;
   final VoidCallback? onMarkSeen;
   final bool enableReactions;
   final List<String> reactionOptions;
@@ -50,11 +56,18 @@ class MessengerMessageBubble extends StatefulWidget {
   /// video, file, voice). Omitted fields keep theme-derived defaults.
   final TextStyle? attachmentCaptionTextStyle;
 
+  /// Merged with [Theme.of] for package dialogs opened from this bubble
+  /// (e.g. image preview). See [MessengerChatShell.packageDialogTheme].
+  final ThemeData? packageDialogTheme;
+
   @override
   State<MessengerMessageBubble> createState() => _MessengerMessageBubbleState();
 }
 
 class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
+  bool _messageActionsSheetOpen = false;
+  bool _messageSheetClosingOnce = false;
+
   @override
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
@@ -143,6 +156,7 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
                                   mutedColor: timeColor,
                                   attachmentCaptionStyle:
                                       attachmentCaptionStyle,
+                                  packageDialogTheme: widget.packageDialogTheme,
                                 ),
                               ),
                               const SizedBox(height: 4),
@@ -254,7 +268,9 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
         widget.enableReactions &&
         widget.onReact != null;
     final canDelete = widget.canDelete && widget.onDelete != null;
-    final hasAnyAction = canReact || canDelete;
+    final canEdit =
+        widget.canEdit && widget.onEdit != null && !widget.message.isDeleted;
+    final hasAnyAction = canReact || canDelete || canEdit;
     if (!hasAnyAction) {
       return;
     }
@@ -314,6 +330,41 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
                 ),
               ),
             ],
+            if (canEdit)
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    widget.onEdit?.call();
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.edit_outlined,
+                          size: 22,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Edit message',
+                          style: widget.deleteActionTextStyle.merge(
+                            TextStyle(
+                              color: Theme.of(context).colorScheme.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             if (canDelete)
               Material(
                 color: Colors.transparent,
@@ -577,12 +628,14 @@ class _MessageContent extends StatelessWidget {
     required this.textColor,
     required this.mutedColor,
     required this.attachmentCaptionStyle,
+    this.packageDialogTheme,
   });
 
   final MessengerChatMessage message;
   final Color textColor;
   final Color mutedColor;
   final TextStyle attachmentCaptionStyle;
+  final ThemeData? packageDialogTheme;
 
   Widget _attachmentCaptionIfAny() {
     final cap = message.caption?.trim() ?? '';
@@ -748,8 +801,12 @@ class _MessageContent extends StatelessWidget {
     showDialog<void>(
       context: context,
       barrierColor: Colors.black.withValues(alpha: 0.92),
-      builder: (dialogContext) {
-        final imageWidget = isNetwork
+      builder: (dialogContext) => wrapMessengerPackageDialogTheme(
+        ambientContext: context,
+        packageDialogTheme: packageDialogTheme,
+        child: Builder(
+          builder: (context) {
+            final imageWidget = isNetwork
             ? Image.network(
                 source,
                 fit: BoxFit.contain,
@@ -804,7 +861,9 @@ class _MessageContent extends StatelessWidget {
             ],
           ),
         );
-      },
+          },
+        ),
+      ),
     );
   }
 }

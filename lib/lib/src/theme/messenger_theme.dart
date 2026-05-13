@@ -11,12 +11,12 @@ class MessengerThemeData {
     this.mutedText = const Color(0xFF9CA3AF),
     this.searchBackground = const Color(0xFFF3F4F6),
     this.threadBackgroundMobile = const Color(0xFFF2F2F7),
-    this.bubbleMine = Colors.white,
-    this.bubbleOther = const Color(0xFF1B74E4),
-    this.bubbleMineText = const Color(0xFF111827),
-    this.bubbleOtherText = Colors.white,
-    this.bubbleMineTime = const Color(0xFF6B7280),
-    this.bubbleOtherTime = Colors.white70,
+    this.bubbleMine = const Color(0xFF1B74E4),
+    this.bubbleOther = Colors.white,
+    this.bubbleMineText = Colors.white,
+    this.bubbleOtherText = const Color(0xFF111827),
+    this.bubbleMineTime = Colors.white70,
+    this.bubbleOtherTime = const Color(0xFF6B7280),
     this.composerFieldBackground = const Color(0xFFF1F3F5),
     this.onlineIndicator = const Color(0xFF10B981),
     this.offlineIndicator = const Color(0xFF9CA3AF),
@@ -116,4 +116,22 @@ class MessengerTheme extends InheritedWidget {
 
   @override
   bool updateShouldNotify(MessengerTheme oldWidget) => data != oldWidget.data;
+}
+
+/// Wraps [child] for package-owned dialogs: applies the host [Theme], then
+/// [packageDialogTheme] when non-null. Pass a full [ThemeData] from
+/// `Theme.of(context).copyWith(dialogTheme: …)` so the inner theme stays
+/// complete (field-wise overrides are not merged across [ThemeData]).
+Widget wrapMessengerPackageDialogTheme({
+  required BuildContext ambientContext,
+  required ThemeData? packageDialogTheme,
+  required Widget child,
+}) {
+  if (packageDialogTheme == null) {
+    return child;
+  }
+  return Theme(
+    data: Theme.of(ambientContext),
+    child: Theme(data: packageDialogTheme, child: child),
+  );
 }

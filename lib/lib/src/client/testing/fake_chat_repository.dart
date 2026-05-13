@@ -40,6 +40,10 @@ class FakeChatRepository implements ChatRepository {
   int startConversationCalls = 0;
   List<ChatUserRegistrationBody>? lastStartConversationUsers;
   String? lastStartConversationGroupName;
+  String? lastCreatedConversationTitle;
+  String? lastUpdatedConversationId;
+  String? lastUpdatedConversationTitle;
+  String? lastDeletedConversationId;
   final List<String> joinConversationLog = <String>[];
   final List<String> leaveConversationLog = <String>[];
   final List<String> markConversationReadLog = <String>[];
@@ -100,7 +104,8 @@ class FakeChatRepository implements ChatRepository {
     lastStartConversationGroupName = groupName;
     return Conversation.fromJson({
       'id': 'conv-start',
-      'type': groupName != null && groupName.trim().isNotEmpty ? 'GROUP' : 'DIRECT',
+      'type':
+          groupName != null && groupName.trim().isNotEmpty ? 'GROUP' : 'DIRECT',
       'tenantId': _tenantScope.tenantId,
       'name': groupName,
       'createdAt': DateTime.now().toIso8601String(),
@@ -145,13 +150,36 @@ class FakeChatRepository implements ChatRepository {
   Future<Conversation> createConversation(
     ChatAuth auth, {
     String type = 'DIRECT',
+    String? title,
     String? creatorUserId,
     List<String>? participantIds,
   }) async {
+    lastCreatedConversationTitle = title;
     return Conversation.fromJson({
       'id': 'conv-1',
       'type': type,
       'tenantId': _tenantScope.tenantId,
+      if (title != null && title.trim().isNotEmpty) 'title': title.trim(),
+      'createdAt': DateTime.now().toIso8601String(),
+      'updatedAt': DateTime.now().toIso8601String(),
+      'participants': <dynamic>[],
+    });
+  }
+
+  @override
+  Future<Conversation> updateConversation(
+    ChatAuth auth, {
+    required String conversationId,
+    String? title,
+    String? actorUserId,
+  }) async {
+    lastUpdatedConversationId = conversationId;
+    lastUpdatedConversationTitle = title;
+    return Conversation.fromJson({
+      'id': conversationId,
+      'type': 'GROUP',
+      'tenantId': _tenantScope.tenantId,
+      if (title != null && title.trim().isNotEmpty) 'title': title.trim(),
       'createdAt': DateTime.now().toIso8601String(),
       'updatedAt': DateTime.now().toIso8601String(),
       'participants': <dynamic>[],
@@ -321,6 +349,15 @@ class FakeChatRepository implements ChatRepository {
       'conversationId': conversationId,
       'deletedAt': DateTime.now().toIso8601String(),
     });
+  }
+
+  @override
+  Future<void> deleteConversation(
+    ChatAuth auth, {
+    required String conversationId,
+    String? actorUserId,
+  }) async {
+    lastDeletedConversationId = conversationId;
   }
 
   @override

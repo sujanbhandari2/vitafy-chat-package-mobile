@@ -68,6 +68,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   bool _isBootstrapping = false;
   bool _isSocketConnected = false;
   bool _isRefreshing = false;
+  bool _isConversationListLoading = false;
+  bool _isSuggestedUsersLoading = false;
   bool _isSending = false;
   bool _isRecording = false;
   int _pendingReactionRequests = 0;
@@ -599,41 +601,22 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
     setState(() {
       _isRefreshing = true;
+      _isConversationListLoading = true;
+      _isSuggestedUsersLoading = !_useDummyAssociatedUsers;
       _statusText = 'Refreshing package data...';
     });
 
     try {
-      // In dummy-users mode the suggested-people panel renders entirely from
-      // [kDummyAssociatedUsers]; the live `getUsers` fetch is only needed for
-      // sender-name / avatar lookups on tenant messages, so do it in the
-      // background instead of blocking the list pane.
-      final usersFuture = _useDummyAssociatedUsers
-          ? Future<List<TenantUser>>.value(const <TenantUser>[])
-          : client.getUsers(auth);
-
-      final results = await Future.wait<Object?>([
-        usersFuture,
-        client.getConversations(
-          auth,
-          forUserId: chatUserId,
-        ),
-      ]);
+      final conversations = await client.getConversations(
+        auth,
+        forUserId: chatUserId,
+      );
 
       if (!mounted) {
         return;
       }
 
-      final users = results[0]! as List<TenantUser>;
-      final conversations = results[1]! as List<Conversation>;
-
-      final selectedCurrentUser =
-          users.where((user) => user.id == _currentUser?.id).firstOrNull;
-
       setState(() {
-        if (!_useDummyAssociatedUsers) {
-          _users = users;
-        }
-        _currentUser = selectedCurrentUser ?? _currentUser ?? users.firstOrNull;
         _conversations = conversations;
         if (_selectedConversationId != null &&
             !_isDraftConversationId(_selectedConversationId) &&
@@ -642,14 +625,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
             )) {
           _selectedConversationId = null;
         }
-        // Suggested people + conversations are now in state, so clear the
-        // list-pane spinner immediately. Message loading and the lazy
-        // `getUsers` fetch below run in the background so the shell can
-        // render the people list right away.
-        _isRefreshing = false;
-        _statusText = _isSocketConnected
-            ? 'Data refreshed from the package client.'
-            : 'Data refreshed (REST-only, socket disconnected).';
+        _isConversationListLoading = false;
       });
 
       _session?.inbox.seedFromConversations(conversations);
@@ -665,7 +641,47 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       }
 
       if (_useDummyAssociatedUsers) {
+        if (mounted) {
+          setState(() {
+            _statusText = _isSocketConnected
+                ? 'Data refreshed from the package client.'
+                : 'Data refreshed (REST-only, socket disconnected).';
+          });
+        }
         unawaited(_fetchTenantUsersInBackground(client, auth));
+        return;
+      }
+
+      try {
+        final users = await client.getUsers(auth);
+        if (!mounted) {
+          return;
+        }
+        final selectedCurrentUser =
+            users.where((user) => user.id == _currentUser?.id).firstOrNull;
+
+        setState(() {
+          _users = users;
+          _currentUser =
+              selectedCurrentUser ?? _currentUser ?? users.firstOrNull;
+          _isSuggestedUsersLoading = false;
+          _statusText = _isSocketConnected
+              ? 'Data refreshed from the package client.'
+              : 'Data refreshed (REST-only, socket disconnected).';
+        });
+      } catch (error, stackTrace) {
+        _appendLog(
+          'Refresh users failed',
+          data: {'error': error.toString(), 'stackTrace': stackTrace.toString()},
+        );
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _isSuggestedUsersLoading = false;
+          _statusText = 'User directory refresh failed: $error';
+        });
+        _showSnack('Could not refresh user directory.');
       }
     } catch (error, stackTrace) {
       _appendLog(
@@ -680,9 +696,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       });
       _showSnack('Refresh failed.');
     } finally {
-      if (mounted && _isRefreshing) {
+      if (mounted) {
         setState(() {
           _isRefreshing = false;
+          _isConversationListLoading = false;
+          _isSuggestedUsersLoading = false;
         });
       }
     }
@@ -3152,8 +3170,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           composerFocusNode: _composerFocusNode,
                           currentUserId: _currentUser?.id ?? '',
                           currentUserName: currentUserName,
-                          isListPaneRefreshing:
-                              _isRefreshing || _isBootstrapping,
+                          isConversationListLoading:
+                              _isConversationListLoading || _isBootstrapping,
+                          startNewChatUsersLoading: _isSuggestedUsersLoading,
                           conversations: _mapConversations(
                             unreadMap,
                             orderSnapshot,
@@ -3197,6 +3216,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                             ),
                             noSearchResultsText:
                                 'No people match "$_suggestedPeopleSearchQuery".',
+                            isLoading: _isSuggestedUsersLoading,
                           ),
                           onEditGroupConversation: _editGroupConversation,
                           onAddPeopleToGroupConversation:

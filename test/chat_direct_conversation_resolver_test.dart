@@ -93,6 +93,7 @@ class _DirectResolverFake extends FakeChatRepository {
   Future<Conversation> createConversation(
     ChatAuth auth, {
     String type = 'DIRECT',
+    String? title,
     String? creatorUserId,
     List<String>? participantIds,
   }) async {

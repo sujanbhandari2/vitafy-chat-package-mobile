@@ -5,7 +5,8 @@ import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 void main() {
   testWidgets('peer list orders by latest activity, not selected conversation',
       (tester) async {
-    const alice = MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
+    const alice =
+        MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
     const bob = MessengerUser(id: 'b', username: 'bob_smith', roleLabel: '');
 
     MessengerConversation conv(
@@ -64,8 +65,9 @@ void main() {
     );
   });
 
-  testWidgets('cold list follows apiRank over lastActivityAt', (tester) async {
-    const alice = MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
+  testWidgets('cold list follows latest activity over apiRank', (tester) async {
+    const alice =
+        MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
     const bob = MessengerUser(id: 'b', username: 'bob_smith', roleLabel: '');
 
     MessengerConversation conv(
@@ -119,13 +121,74 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
+      tester.getTopLeft(find.text('Bob Smith')).dy,
+      lessThan(tester.getTopLeft(find.text('Alice Jones')).dy),
+    );
+  });
+
+  testWidgets('apiRank breaks ties when activity matches', (tester) async {
+    const alice =
+        MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
+    const bob = MessengerUser(id: 'b', username: 'bob_smith', roleLabel: '');
+
+    MessengerConversation conv(
+      String id,
+      List<MessengerUser> peers,
+      int apiRank,
+    ) {
+      return MessengerConversation(
+        id: id,
+        title: id,
+        subtitle: 'Last from $id',
+        avatarLabel: 'X',
+        createdAt: DateTime.utc(2026, 1, 1),
+        lastActivityAt: DateTime.utc(2026, 1, 20),
+        peerUsers: peers,
+        apiRank: apiRank,
+      );
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 640,
+              width: 400,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: [
+                  conv('c1', [alice], 0),
+                  conv('c2', [bob], 1),
+                ],
+                users: const [alice, bob],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(
       tester.getTopLeft(find.text('Alice Jones')).dy,
       lessThan(tester.getTopLeft(find.text('Bob Smith')).dy),
     );
   });
 
   testWidgets('promoted conversation sorts above cold apiRank', (tester) async {
-    const alice = MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
+    const alice =
+        MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
     const bob = MessengerUser(id: 'b', username: 'bob_smith', roleLabel: '');
 
     await tester.pumpWidget(
@@ -186,7 +249,8 @@ void main() {
   });
 
   testWidgets('tapping non-top row opens that exact user', (tester) async {
-    const alice = MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
+    const alice =
+        MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
     const bob = MessengerUser(id: 'b', username: 'bob_smith', roleLabel: '');
     const cara = MessengerUser(id: 'c', username: 'cara_doe', roleLabel: '');
     String? openedConversationId;
@@ -255,6 +319,57 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(openedConversationId, 'c3');
+  });
+
+  testWidgets('group conversation renders as a single conversation row',
+      (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice_jones');
+    const bob = MessengerUser(id: 'b', username: 'bob_smith');
+    const cara = MessengerUser(id: 'c', username: 'cara_doe');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 420,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: [
+                  MessengerConversation(
+                    id: 'g1',
+                    title: 'Care team',
+                    subtitle: 'Group hello',
+                    avatarLabel: 'CT',
+                    createdAt: DateTime.utc(2026),
+                    isGroup: true,
+                    peerUsers: const [alice, bob, cara],
+                  ),
+                ],
+                users: const [alice, bob, cara],
+                selectedConversationId: 'g1',
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Care team'), findsOneWidget);
+    expect(find.text('Alice Jones'), findsNothing);
+    expect(find.text('Bob Smith'), findsNothing);
+    expect(find.text('Cara Doe'), findsNothing);
   });
 
   testWidgets('empty peer list shows default start-new-chat hint',
@@ -326,7 +441,8 @@ void main() {
   });
 
   testWidgets('falls back to users when peerUsers are missing', (tester) async {
-    const alice = MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
+    const alice =
+        MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
 
     await tester.pumpWidget(
       MaterialApp(
@@ -370,7 +486,8 @@ void main() {
 
   testWidgets('custom style params are applied to default user card',
       (tester) async {
-    const alice = MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
+    const alice =
+        MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
 
     await tester.pumpWidget(
       MaterialApp(
@@ -421,7 +538,8 @@ void main() {
 
   testWidgets('custom user list item builder overrides default tile',
       (tester) async {
-    const alice = MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
+    const alice =
+        MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
 
     await tester.pumpWidget(
       MaterialApp(
@@ -537,8 +655,197 @@ void main() {
     );
 
     await tester.pump();
-    expect(find.byKey(const ValueKey('conversationListLoading')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('conversationListLoading')), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
     expect(find.text('alice'), findsNothing);
+  });
+
+  testWidgets('start-new-chat bottom sheet supports group creation',
+      (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice_jones');
+    const bob = MessengerUser(id: 'b', username: 'bob_smith');
+    const cara = MessengerUser(id: 'c', username: 'cara_doe');
+    List<String> createdIds = const [];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 520,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [alice, bob, cara],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onCreateGroupSelected: (selectedUsers) async {
+                  createdIds = selectedUsers
+                      .map((user) => user.id)
+                      .toList(growable: false);
+                },
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showHeaderComposeButton: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.add_rounded));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Start New Chat'), findsOneWidget);
+    expect(find.text('New group'), findsOneWidget);
+
+    await tester.tap(find.text('New group'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Selected people (0)'), findsOneWidget);
+    await tester.tap(find.text('Add').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Selected people (2)'), findsOneWidget);
+
+    await tester.tap(find.text('Create group'));
+    await tester.pumpAndSettle();
+
+    expect(createdIds, ['a', 'b']);
+    expect(find.text('Start New Chat'), findsNothing);
+  });
+
+  testWidgets('group rows are interleaved by latest activity', (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice_jones');
+    final groupConversation = MessengerConversation(
+      id: 'g1',
+      title: 'care_team',
+      subtitle: 'Older group update',
+      avatarLabel: 'CT',
+      createdAt: DateTime.utc(2026, 1, 1),
+      lastActivityAt: DateTime.utc(2026, 1, 5),
+      isGroup: true,
+      peerUsers: const [],
+    );
+    final directConversation = MessengerConversation(
+      id: 'd1',
+      title: 'alice_jones',
+      subtitle: 'Latest direct update',
+      avatarLabel: 'AJ',
+      createdAt: DateTime.utc(2026, 1, 1),
+      lastActivityAt: DateTime.utc(2026, 1, 20),
+      peerUsers: const [alice],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 520,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: [groupConversation, directConversation],
+                users: const [alice],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getTopLeft(find.text('Alice Jones')).dy,
+      lessThan(tester.getTopLeft(find.text('Care Team')).dy),
+    );
+  });
+
+  testWidgets('required group name blocks create until provided',
+      (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice_jones');
+    const bob = MessengerUser(id: 'b', username: 'bob_smith');
+    MessengerGroupCreateRequest? request;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 520,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [alice, bob],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onCreateGroupRequested: (value) async {
+                  request = value;
+                },
+                groupNameInputBehavior:
+                    MessengerGroupNameInputBehavior.required,
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showHeaderComposeButton: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add_rounded));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New group'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Create group'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Enter a group name to continue.'), findsOneWidget);
+    expect(request, isNull);
+
+    await tester.enterText(find.byType(TextField).first, 'Clinical Team');
+    await tester.tap(find.text('Create group'));
+    await tester.pumpAndSettle();
+
+    expect(request, isNotNull);
+    expect(request!.groupName, 'Clinical Team');
+    expect(
+      request!.selectedUsers.map((user) => user.id).toList(growable: false),
+      ['a', 'b'],
+    );
   });
 }

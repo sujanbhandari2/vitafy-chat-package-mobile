@@ -125,14 +125,32 @@ class BackendChatRepositoryImpl implements ChatRepository {
   Future<Conversation> createConversation(
     ChatAuth auth, {
     String type = 'DIRECT',
+    String? title,
     String? creatorUserId,
     List<String>? participantIds,
   }) async {
     final payload = await _chatApi.createConversation(
       auth,
       type: type,
+      title: title,
       creatorUserId: creatorUserId,
       participantIds: participantIds,
+    );
+    return Conversation.fromJson(payload);
+  }
+
+  @override
+  Future<Conversation> updateConversation(
+    ChatAuth auth, {
+    required String conversationId,
+    String? title,
+    String? actorUserId,
+  }) async {
+    final payload = await _chatApi.updateConversation(
+      auth,
+      conversationId: conversationId,
+      title: title,
+      actorUserId: actorUserId,
     );
     return Conversation.fromJson(payload);
   }
@@ -306,6 +324,19 @@ class BackendChatRepositoryImpl implements ChatRepository {
       conversationId: conversationId,
       messageId: messageId,
       content: content,
+    );
+  }
+
+  @override
+  Future<void> deleteConversation(
+    ChatAuth auth, {
+    required String conversationId,
+    String? actorUserId,
+  }) {
+    return _chatApi.deleteConversation(
+      auth,
+      conversationId: conversationId,
+      actorUserId: actorUserId,
     );
   }
 

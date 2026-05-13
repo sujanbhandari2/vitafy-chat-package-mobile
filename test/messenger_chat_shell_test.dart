@@ -2,6 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 
+Finder _packageDeleteChatConfirmButton() {
+  return find.descendant(
+    of: find.byType(AlertDialog),
+    matching: find.widgetWithText(FilledButton, 'Delete'),
+  );
+}
+
 void main() {
   testWidgets('MessengerChatShell shows empty conversations placeholder',
       (tester) async {
@@ -218,6 +225,67 @@ void main() {
     expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsOneWidget);
     expect(_HostShellHarnessState.openDirectCallCount, 1);
     expect(_HostShellHarnessState.latestSelectedConversationId, 'c2');
+  });
+
+  testWidgets('mobile create-group from picker opens created conversation',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    const existingUser = MessengerUser(id: 'u1', username: 'alice_jones');
+    const bob = MessengerUser(id: 'u2', username: 'bob');
+    const cara = MessengerUser(id: 'u3', username: 'cara');
+    final c1 = MessengerConversation(
+      id: 'c1',
+      title: 'Alice Jones',
+      subtitle: 'Hello',
+      avatarLabel: 'A',
+      createdAt: DateTime.utc(2026),
+      peerUsers: const [existingUser],
+    );
+    final groupConversation = MessengerConversation(
+      id: 'g1',
+      title: 'Bob, Cara',
+      subtitle: 'New group',
+      avatarLabel: 'BC',
+      createdAt: DateTime.utc(2026),
+      peerUsers: const [bob, cara],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: _GroupCreateHarness(
+            composer: composer,
+            scroll: scroll,
+            initialConversations: [c1],
+            users: const [existingUser, bob, cara],
+            createdConversation: groupConversation,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.edit_square));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New group'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create group'));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsOneWidget);
+    expect(_GroupCreateHarnessState.latestSelectedConversationId, 'g1');
   });
 
   testWidgets(
@@ -615,7 +683,7 @@ void main() {
   });
 
   testWidgets(
-      'isListPaneRefreshing shows inline spinner replacing conversation list',
+      'isConversationListLoading shows inline spinner replacing conversation list',
       (tester) async {
     final composer = TextEditingController();
     final scroll = ScrollController();
@@ -635,7 +703,7 @@ void main() {
               child: MessengerChatShell(
                 currentUserId: 'me',
                 currentUserName: 'Me',
-                isListPaneRefreshing: true,
+                isConversationListLoading: true,
                 conversations: const [],
                 users: const [
                   MessengerUser(id: 'u1', username: 'alice'),
@@ -672,7 +740,7 @@ void main() {
   });
 
   testWidgets(
-      'isListPaneRefreshing with suggested slot shows inline spinner not panel',
+      'isConversationListLoading with suggested slot shows full-pane spinner',
       (tester) async {
     final composer = TextEditingController();
     final scroll = ScrollController();
@@ -692,7 +760,7 @@ void main() {
               child: MessengerChatShell(
                 currentUserId: 'me',
                 currentUserName: 'Me',
-                isListPaneRefreshing: true,
+                isConversationListLoading: true,
                 conversations: const [],
                 users: const [
                   MessengerUser(id: 'u1', username: 'alice'),
@@ -727,6 +795,188 @@ void main() {
     await tester.pump();
     expect(find.text('Suggested people'), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsWidgets);
+  });
+
+  testWidgets(
+      'deprecated isListPaneRefreshing alone still loads conversation list '
+      'but does not replace suggested slot',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 600,
+              width: 960,
+              child: MessengerChatShell(
+                currentUserId: 'me',
+                currentUserName: 'Me',
+                // ignore: deprecated_member_use
+                isListPaneRefreshing: true,
+                isConversationListLoading: false,
+                conversations: const [],
+                users: const [
+                  MessengerUser(id: 'u1', username: 'alice'),
+                ],
+                selectedConversationId: null,
+                messages: const [],
+                composerController: composer,
+                messagesScrollController: scroll,
+                isSending: false,
+                isRecording: false,
+                onRefresh: () async {},
+                onLogout: () {},
+                onSelectConversation: (_) async {},
+                onOpenDirectChat: (_) async {},
+                onSend: () {},
+                onPickImage: () {},
+                onPickAudio: () {},
+                onToggleRecording: () {},
+                desktopBreakpoint: 400,
+                suggestedPeopleBuilder: (context, users, _) =>
+                    MessengerSuggestedPeoplePanel(
+                  users: users,
+                  onUserSelected: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    expect(find.text('Suggested people'), findsOneWidget);
+    expect(find.text('alice'), findsOneWidget);
+    expect(find.byKey(const ValueKey('conversationListLoading')), findsNothing);
+  });
+
+  testWidgets(
+      'suggestedPeopleBuilder with isLoading uses panel spinner not list-pane key',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 600,
+              width: 960,
+              child: MessengerChatShell(
+                currentUserId: 'me',
+                currentUserName: 'Me',
+                isConversationListLoading: false,
+                conversations: const [],
+                users: const [],
+                selectedConversationId: null,
+                messages: const [],
+                composerController: composer,
+                messagesScrollController: scroll,
+                isSending: false,
+                isRecording: false,
+                onRefresh: () async {},
+                onLogout: () {},
+                onSelectConversation: (_) async {},
+                onOpenDirectChat: (_) async {},
+                onSend: () {},
+                onPickImage: () {},
+                onPickAudio: () {},
+                onToggleRecording: () {},
+                desktopBreakpoint: 400,
+                suggestedPeopleBuilder: (context, users, _) =>
+                    MessengerSuggestedPeoplePanel(
+                  users: users,
+                  isLoading: true,
+                  onUserSelected: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    expect(find.text('Suggested people'), findsOneWidget);
+    expect(find.byKey(const ValueKey('conversationListLoading')), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+  });
+
+  testWidgets(
+      'isConversationListLoading with non-empty inbox replaces list only',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    final conversation = MessengerConversation(
+      id: 'c1',
+      title: 'Alice',
+      subtitle: 'Hello',
+      avatarLabel: 'A',
+      createdAt: DateTime.utc(2026),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 600,
+              width: 960,
+              child: MessengerChatShell(
+                currentUserId: 'me',
+                currentUserName: 'Me',
+                isConversationListLoading: true,
+                conversations: [conversation],
+                users: const [
+                  MessengerUser(id: 'u1', username: 'alice'),
+                ],
+                selectedConversationId: 'c1',
+                messages: const [],
+                composerController: composer,
+                messagesScrollController: scroll,
+                isSending: false,
+                isRecording: false,
+                onRefresh: () async {},
+                onLogout: () {},
+                onSelectConversation: (_) async {},
+                onOpenDirectChat: (_) async {},
+                onSend: () {},
+                onPickImage: () {},
+                onPickAudio: () {},
+                onToggleRecording: () {},
+                desktopBreakpoint: 400,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    expect(
+        find.byKey(const ValueKey('conversationListLoading')), findsOneWidget);
+    expect(find.text('Suggested people'), findsNothing);
   });
 
   testWidgets('attachment sheet applies custom option label style',
@@ -795,6 +1045,379 @@ void main() {
     expect(label.style?.fontWeight, optionStyle.fontWeight);
     expect(label.style?.color, optionStyle.color);
   });
+  testWidgets('group thread header exposes action menu callbacks',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    const alice = MessengerUser(id: 'u1', username: 'alice_jones');
+    final conversation = MessengerConversation(
+      id: 'g1',
+      title: 'Care Team',
+      subtitle: 'Hello',
+      avatarLabel: 'CT',
+      createdAt: DateTime.utc(2026),
+      isGroup: true,
+      peerUsers: const [alice],
+    );
+
+    var editCount = 0;
+    var addPeopleCount = 0;
+    var deleteCount = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              width: 1200,
+              child: MessengerChatShell(
+                currentUserId: 'me',
+                currentUserName: 'Me',
+                conversations: [conversation],
+                users: const [alice],
+                selectedConversationId: 'g1',
+                messages: const [],
+                composerController: composer,
+                messagesScrollController: scroll,
+                isSending: false,
+                isRecording: false,
+                onRefresh: () async {},
+                onLogout: () {},
+                onSelectConversation: (_) async {},
+                onOpenDirectChat: (_) async {},
+                onEditGroupConversation: (_) async => editCount++,
+                onAddPeopleToGroupConversation: (_) async => addPeopleCount++,
+                onDeleteConversation: (_) async => deleteCount++,
+                onSend: () {},
+                onPickImage: () {},
+                onPickAudio: () {},
+                onToggleRecording: () {},
+                desktopBreakpoint: 400,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_vert_rounded));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit'), findsWidgets);
+    expect(find.text('Add people'), findsOneWidget);
+    expect(find.text('Delete chat'), findsOneWidget);
+
+    await tester.tap(find.text('Add people'));
+    await tester.pumpAndSettle();
+    expect(editCount, 0);
+    expect(addPeopleCount, 1);
+    expect(deleteCount, 0);
+  });
+
+  testWidgets('direct thread header shows delete without group edit actions',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    const bob = MessengerUser(id: 'u2', username: 'bob');
+    final conversation = MessengerConversation(
+      id: 'd1',
+      title: 'Direct Bob',
+      subtitle: 'Hello',
+      avatarLabel: 'B',
+      createdAt: DateTime.utc(2026),
+      isGroup: false,
+      peerUsers: const [bob],
+    );
+
+    var editCount = 0;
+    var addPeopleCount = 0;
+    var deleteCount = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              width: 1200,
+              child: MessengerChatShell(
+                currentUserId: 'me',
+                currentUserName: 'Me',
+                conversations: [conversation],
+                users: const [bob],
+                selectedConversationId: 'd1',
+                messages: const [],
+                composerController: composer,
+                messagesScrollController: scroll,
+                isSending: false,
+                isRecording: false,
+                onRefresh: () async {},
+                onLogout: () {},
+                onSelectConversation: (_) async {},
+                onOpenDirectChat: (_) async {},
+                onEditGroupConversation: (_) async => editCount++,
+                onAddPeopleToGroupConversation: (_) async => addPeopleCount++,
+                onDeleteConversation: (_) async => deleteCount++,
+                onSend: () {},
+                onPickImage: () {},
+                onPickAudio: () {},
+                onToggleRecording: () {},
+                desktopBreakpoint: 400,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_vert_rounded).last);
+    await tester.pumpAndSettle();
+    expect(find.text('Add people'), findsNothing);
+    expect(find.text('Delete chat'), findsOneWidget);
+
+    await tester.tap(find.text('Delete chat'));
+    await tester.pumpAndSettle();
+    await tester.tap(_packageDeleteChatConfirmButton());
+    await tester.pumpAndSettle();
+    expect(deleteCount, 1);
+    expect(editCount, 0);
+    expect(addPeopleCount, 0);
+  });
+
+  testWidgets('mobile thread route pops when conversation is deleted',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: _MobileDeleteThreadHarness(
+              composer: composer,
+              scroll: scroll,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Alice Jones'));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.more_vert_rounded));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete chat'));
+    await tester.pumpAndSettle();
+    await tester.tap(_packageDeleteChatConfirmButton());
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsNothing);
+  });
+
+  testWidgets(
+      'mobile thread pops after delete without host removing conversation',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: _MobileDeleteThreadNoListUpdateHarness(
+              composer: composer,
+              scroll: scroll,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Alice Jones'));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.more_vert_rounded));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete chat'));
+    await tester.pumpAndSettle();
+    await tester.tap(_packageDeleteChatConfirmButton());
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsNothing);
+  });
+}
+
+/// Delete succeeds but host does not mutate [conversations] / selection; the
+/// package must still close the pushed mobile thread.
+class _MobileDeleteThreadNoListUpdateHarness extends StatefulWidget {
+  const _MobileDeleteThreadNoListUpdateHarness({
+    required this.composer,
+    required this.scroll,
+  });
+
+  final TextEditingController composer;
+  final ScrollController scroll;
+
+  @override
+  State<_MobileDeleteThreadNoListUpdateHarness> createState() =>
+      _MobileDeleteThreadNoListUpdateHarnessState();
+}
+
+class _MobileDeleteThreadNoListUpdateHarnessState
+    extends State<_MobileDeleteThreadNoListUpdateHarness> {
+  static const MessengerUser _peer =
+      MessengerUser(id: 'u1', username: 'alice_jones');
+
+  static final MessengerConversation _c1 = MessengerConversation(
+    id: 'c1',
+    title: 'Alice Jones',
+    subtitle: 'Hi',
+    avatarLabel: 'A',
+    createdAt: DateTime.utc(2026),
+    peerUsers: const [_peer],
+  );
+
+  late List<MessengerConversation> conversations;
+  String? selectedConversationId;
+
+  @override
+  void initState() {
+    super.initState();
+    conversations = [_c1];
+    selectedConversationId = _c1.id;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: MessengerChatShell(
+        currentUserId: 'me',
+        currentUserName: 'Me',
+        conversations: conversations,
+        users: const [_peer],
+        selectedConversationId: selectedConversationId,
+        messages: const [],
+        composerController: widget.composer,
+        messagesScrollController: widget.scroll,
+        isSending: false,
+        isRecording: false,
+        onRefresh: () async {},
+        onLogout: () {},
+        onSelectConversation: (id) async {
+          setState(() => selectedConversationId = id);
+        },
+        onOpenDirectChat: (_) async {},
+        onDeleteConversation: (_) async {
+          await Future<void>.delayed(Duration.zero);
+        },
+        onSend: () {},
+        onPickImage: () {},
+        onPickAudio: () {},
+        onToggleRecording: () {},
+      ),
+    );
+  }
+}
+
+class _MobileDeleteThreadHarness extends StatefulWidget {
+  const _MobileDeleteThreadHarness({
+    required this.composer,
+    required this.scroll,
+  });
+
+  final TextEditingController composer;
+  final ScrollController scroll;
+
+  @override
+  State<_MobileDeleteThreadHarness> createState() =>
+      _MobileDeleteThreadHarnessState();
+}
+
+class _MobileDeleteThreadHarnessState extends State<_MobileDeleteThreadHarness> {
+  static const MessengerUser _peer =
+      MessengerUser(id: 'u1', username: 'alice_jones');
+
+  static final MessengerConversation _c1 = MessengerConversation(
+    id: 'c1',
+    title: 'Alice Jones',
+    subtitle: 'Hi',
+    avatarLabel: 'A',
+    createdAt: DateTime.utc(2026),
+    peerUsers: const [_peer],
+  );
+
+  late List<MessengerConversation> conversations;
+  String? selectedConversationId;
+
+  @override
+  void initState() {
+    super.initState();
+    conversations = [_c1];
+    selectedConversationId = _c1.id;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: MessengerChatShell(
+        currentUserId: 'me',
+        currentUserName: 'Me',
+        conversations: conversations,
+        users: const [_peer],
+        selectedConversationId: selectedConversationId,
+        messages: const [],
+        composerController: widget.composer,
+        messagesScrollController: widget.scroll,
+        isSending: false,
+        isRecording: false,
+        onRefresh: () async {},
+        onLogout: () {},
+        onSelectConversation: (id) async {
+          setState(() => selectedConversationId = id);
+        },
+        onOpenDirectChat: (_) async {},
+        onDeleteConversation: (_) async {
+          setState(() {
+            conversations = [];
+            selectedConversationId = null;
+          });
+        },
+        onSend: () {},
+        onPickImage: () {},
+        onPickAudio: () {},
+        onToggleRecording: () {},
+      ),
+    );
+  }
 }
 
 class _ThrowingMediaPicker implements MessengerMediaPicker {
@@ -838,7 +1461,8 @@ class _DeferredOpenDirectHarness extends StatefulWidget {
       _DeferredOpenDirectHarnessState();
 }
 
-class _DeferredOpenDirectHarnessState extends State<_DeferredOpenDirectHarness> {
+class _DeferredOpenDirectHarnessState
+    extends State<_DeferredOpenDirectHarness> {
   static String? latestOpenedConversationId;
 
   late List<MessengerConversation> conversations;
@@ -952,6 +1576,83 @@ class _HostShellHarnessState extends State<_HostShellHarness> {
         },
         onOpenDirectChat: (_) async {
           openDirectCallCount++;
+          setState(() {
+            selectedConversationId = widget.createdConversation.id;
+            conversations = [
+              ...conversations,
+              widget.createdConversation,
+            ];
+          });
+          latestSelectedConversationId = widget.createdConversation.id;
+        },
+        onSend: () {},
+        onPickImage: () {},
+        onPickAudio: () {},
+        onToggleRecording: () {},
+      ),
+    );
+  }
+}
+
+class _GroupCreateHarness extends StatefulWidget {
+  const _GroupCreateHarness({
+    required this.composer,
+    required this.scroll,
+    required this.initialConversations,
+    required this.users,
+    required this.createdConversation,
+  });
+
+  final TextEditingController composer;
+  final ScrollController scroll;
+  final List<MessengerConversation> initialConversations;
+  final List<MessengerUser> users;
+  final MessengerConversation createdConversation;
+
+  @override
+  State<_GroupCreateHarness> createState() => _GroupCreateHarnessState();
+}
+
+class _GroupCreateHarnessState extends State<_GroupCreateHarness> {
+  static String? latestSelectedConversationId;
+
+  late List<MessengerConversation> conversations;
+  String? selectedConversationId;
+
+  @override
+  void initState() {
+    super.initState();
+    conversations = [...widget.initialConversations];
+    selectedConversationId = conversations.first.id;
+    latestSelectedConversationId = selectedConversationId;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: MessengerChatShell(
+        currentUserId: 'me',
+        currentUserName: 'Me',
+        conversations: conversations,
+        users: widget.users,
+        selectedConversationId: selectedConversationId,
+        messages: const [],
+        composerController: widget.composer,
+        messagesScrollController: widget.scroll,
+        isSending: false,
+        isRecording: false,
+        onRefresh: () async {},
+        onLogout: () {},
+        onSelectConversation: (id) async {
+          setState(() => selectedConversationId = id);
+          latestSelectedConversationId = id;
+        },
+        onOpenDirectChat: (_) async {},
+        onCreateGroupSelected: (_) async {
+          await Future<void>.delayed(Duration.zero);
+          if (!mounted) {
+            return;
+          }
           setState(() {
             selectedConversationId = widget.createdConversation.id;
             conversations = [

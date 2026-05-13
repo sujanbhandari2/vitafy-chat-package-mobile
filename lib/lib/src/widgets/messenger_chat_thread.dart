@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -52,6 +54,8 @@ class MessengerChatThread extends StatefulWidget {
     this.onDelete,
     this.onMarkSeen,
     this.canDeleteMessage,
+    this.onEditMessage,
+    this.canEditMessage,
     this.enableReactions = true,
     this.reactionOptions = const ['👍', '❤️', '😂', '😮', '😢', '🙏'],
     this.showDateSeparators = true,
@@ -78,6 +82,11 @@ class MessengerChatThread extends StatefulWidget {
     this.composerFocusNode,
     this.attachmentCaptionTextStyle,
     this.attachmentOptionTextStyle,
+    this.onEditGroupConversation,
+    this.onAddPeopleToGroupConversation,
+    this.onDeleteConversation,
+    this.onDismissMobileThreadAfterConversationDelete,
+    this.packageDialogTheme,
   });
 
   final MessengerConversation? conversation;
@@ -111,6 +120,8 @@ class MessengerChatThread extends StatefulWidget {
   final Future<void> Function(String messageId)? onDelete;
   final Future<void> Function(String messageId)? onMarkSeen;
   final bool Function(MessengerChatMessage message)? canDeleteMessage;
+  final Future<void> Function(String messageId, String newText)? onEditMessage;
+  final bool Function(MessengerChatMessage message)? canEditMessage;
   final bool enableReactions;
   final List<String> reactionOptions;
   final bool showDateSeparators;
@@ -157,6 +168,21 @@ class MessengerChatThread extends StatefulWidget {
 
   /// Overrides text styling for + sheet options (Camera, Images, etc).
   final TextStyle? attachmentOptionTextStyle;
+
+  final FutureOr<void> Function(MessengerConversation conversation)?
+      onEditGroupConversation;
+  final FutureOr<void> Function(MessengerConversation conversation)?
+      onAddPeopleToGroupConversation;
+  final FutureOr<void> Function(MessengerConversation conversation)?
+      onDeleteConversation;
+
+  /// After a successful delete from the package confirmation dialog on a
+  /// pushed mobile thread, dismisses that full-screen route (one level back).
+  final VoidCallback? onDismissMobileThreadAfterConversationDelete;
+
+  /// Merged with [Theme.of] for package modal dialogs in this thread.
+  /// Provided by [MessengerChatShell.packageDialogTheme].
+  final ThemeData? packageDialogTheme;
 
   @override
   State<MessengerChatThread> createState() => _MessengerChatThreadState();
@@ -222,12 +248,21 @@ class _MessengerChatThreadState extends State<MessengerChatThread> {
             children: [
               if (showDate) _DateSeparator(date: message.createdAt),
               MessengerMessageBubble(
+                packageDialogTheme: widget.packageDialogTheme,
                 deleteActionTextStyle: Theme.of(context).textTheme.bodyMedium!,
                 attachmentCaptionTextStyle: widget.attachmentCaptionTextStyle,
                 message: message,
                 isMine: mine,
                 currentUserId: widget.currentUserId,
                 canDelete: widget.canDeleteMessage?.call(message) ?? mine,
+                canEdit: widget.canEditMessage?.call(message) ?? false,
+                onEdit: widget.onEditMessage == null
+                    ? null
+                    : () {
+                        final id = message.id;
+                        final text = message.content;
+                        unawaited(widget.onEditMessage!(id, text));
+                      },
                 onReact: widget.onReact == null
                     ? null
                     : (reaction) => widget.onReact!(message.id, reaction),
@@ -344,6 +379,12 @@ class _MessengerChatThreadState extends State<MessengerChatThread> {
           isMobile: widget.isMobile,
           conversation: widget.conversation,
           onBack: widget.onBack,
+          onEditGroupConversation: widget.onEditGroupConversation,
+          onAddPeopleToGroupConversation: widget.onAddPeopleToGroupConversation,
+          onDeleteConversation: widget.onDeleteConversation,
+          onDismissMobileThreadAfterConversationDelete:
+              widget.onDismissMobileThreadAfterConversationDelete,
+          packageDialogTheme: widget.packageDialogTheme,
         ),
         Expanded(
           child: ClipRect(
@@ -470,24 +511,260 @@ class _RemoteTypingStrip extends StatelessWidget {
   }
 }
 
-class _ThreadHeader extends StatelessWidget {
+class _MessengerDeleteChatDialog extends StatefulWidget {
+  const _MessengerDeleteChatDialog({
+    required this.conversationTitle,
+    required this.onDeleteConfirmed,
+    this.onDismissMobileThreadAfterDelete,
+  });
+
+  final String conversationTitle;
+  final Future<void> Function() onDeleteConfirmed;
+  final VoidCallback? onDismissMobileThreadAfterDelete;
+
+  @override
+  State<_MessengerDeleteChatDialog> createState() =>
+      _MessengerDeleteChatDialogState();
+}
+
+class _MessengerDeleteChatDialogState extends State<_MessengerDeleteChatDialog> {
+  bool _deleting = false;
+
+  Future<void> _onDeletePressed() async {
+    setState(() => _deleting = true);
+    try {
+      await widget.onDeleteConfirmed();
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context, rootNavigator: true).pop();
+      widget.onDismissMobileThreadAfterDelete?.call();
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _deleting = false);
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      messenger?.showSnackBar(
+        const SnackBar(content: Text('Could not delete the chat.')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: !_deleting,
+      child: AlertDialog(
+        title: const Text('Delete chat'),
+        content: Text(
+          'Delete "${widget.conversationTitle}"? This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: _deleting
+                ? null
+                : () => Navigator.of(context, rootNavigator: true).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
+            onPressed: _deleting ? null : _onDeletePressed,
+            child: _deleting
+                ? SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Theme.of(context).colorScheme.onError,
+                    ),
+                  )
+                : const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum _ThreadHeaderOverflowAction {
+  editGroup,
+  addPeople,
+  deleteChat,
+}
+
+class _ThreadHeader extends StatefulWidget {
   const _ThreadHeader({
     required this.isMobile,
     required this.conversation,
     this.onBack,
+    this.onEditGroupConversation,
+    this.onAddPeopleToGroupConversation,
+    this.onDeleteConversation,
+    this.onDismissMobileThreadAfterConversationDelete,
+    this.packageDialogTheme,
   });
 
   final bool isMobile;
   final MessengerConversation? conversation;
   final VoidCallback? onBack;
+  final FutureOr<void> Function(MessengerConversation conversation)?
+      onEditGroupConversation;
+  final FutureOr<void> Function(MessengerConversation conversation)?
+      onAddPeopleToGroupConversation;
+  final FutureOr<void> Function(MessengerConversation conversation)?
+      onDeleteConversation;
+  final VoidCallback? onDismissMobileThreadAfterConversationDelete;
+  final ThemeData? packageDialogTheme;
+
+  @override
+  State<_ThreadHeader> createState() => _ThreadHeaderState();
+}
+
+class _ThreadHeaderState extends State<_ThreadHeader> {
+  /// Prevents stacking host dialogs/sheets when [PopupMenuButton.onSelected]
+  /// is not awaited and the user opens the overflow menu again while an async
+  /// host callback (e.g. delete confirmation) is still in flight.
+  bool _overflowActionInFlight = false;
+
+  bool _showMenu(MessengerConversation? c) {
+    if (c == null) {
+      return false;
+    }
+    if (widget.onDeleteConversation != null) {
+      return true;
+    }
+    if (!c.isGroup) {
+      return false;
+    }
+    return widget.onEditGroupConversation != null ||
+        widget.onAddPeopleToGroupConversation != null;
+  }
+
+  List<PopupMenuEntry<_ThreadHeaderOverflowAction>> _menuItems(
+    BuildContext context,
+    MessengerConversation c,
+  ) {
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final menuStyle = TextStyle(
+      fontSize: 14,
+      fontWeight: FontWeight.w500,
+      color: onSurface,
+    );
+    final deleteStyle = TextStyle(
+      fontSize: 14,
+      fontWeight: FontWeight.w600,
+      color: Theme.of(context).colorScheme.error,
+    );
+    final items = <PopupMenuEntry<_ThreadHeaderOverflowAction>>[];
+    if (c.isGroup && widget.onEditGroupConversation != null) {
+      items.add(
+        PopupMenuItem(
+          value: _ThreadHeaderOverflowAction.editGroup,
+          child: Text('Edit', style: menuStyle),
+        ),
+      );
+    }
+    if (c.isGroup && widget.onAddPeopleToGroupConversation != null) {
+      items.add(
+        PopupMenuItem(
+          value: _ThreadHeaderOverflowAction.addPeople,
+          child: Text('Add people', style: menuStyle),
+        ),
+      );
+    }
+    if (widget.onDeleteConversation != null) {
+      items.add(
+        PopupMenuItem(
+          value: _ThreadHeaderOverflowAction.deleteChat,
+          child: Text('Delete chat', style: deleteStyle),
+        ),
+      );
+    }
+    return items;
+  }
+
+  Future<void> _showDeleteChatConfirmation(MessengerConversation c) async {
+    final delete = widget.onDeleteConversation;
+    if (delete == null) {
+      return;
+    }
+    final rawTitle = c.title.trim();
+    final label = rawTitle.isEmpty ? 'this chat' : rawTitle;
+    await showDialog<void>(
+      context: context,
+      useRootNavigator: true,
+      builder: (dialogContext) => wrapMessengerPackageDialogTheme(
+        ambientContext: context,
+        packageDialogTheme: widget.packageDialogTheme,
+        child: _MessengerDeleteChatDialog(
+          conversationTitle: label,
+          onDeleteConfirmed: () async {
+            await Future<void>.sync(() => delete(c));
+          },
+          onDismissMobileThreadAfterDelete:
+              widget.onDismissMobileThreadAfterConversationDelete,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _onMenuSelected(
+    MessengerConversation c,
+    _ThreadHeaderOverflowAction action,
+  ) async {
+    if (_overflowActionInFlight) {
+      return;
+    }
+    _overflowActionInFlight = true;
+    if (mounted) {
+      setState(() {});
+    }
+    try {
+      switch (action) {
+        case _ThreadHeaderOverflowAction.editGroup:
+          await widget.onEditGroupConversation?.call(c);
+          return;
+        case _ThreadHeaderOverflowAction.addPeople:
+          await widget.onAddPeopleToGroupConversation?.call(c);
+          return;
+        case _ThreadHeaderOverflowAction.deleteChat:
+          await _showDeleteChatConfirmation(c);
+          return;
+      }
+    } finally {
+      _overflowActionInFlight = false;
+      if (mounted) {
+        setState(() {});
+      }
+    }
+  }
+
+  Widget? _overflowMenu(BuildContext context, MessengerThemeData theme) {
+    final c = widget.conversation;
+    if (!_showMenu(c) || c == null) {
+      return null;
+    }
+    return PopupMenuButton<_ThreadHeaderOverflowAction>(
+      enabled: !_overflowActionInFlight,
+      icon: Icon(Icons.more_vert_rounded, color: theme.primary),
+      itemBuilder: (menuContext) => _menuItems(menuContext, c),
+      onSelected: (action) => unawaited(_onMenuSelected(c, action)),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
+    final c = widget.conversation;
+    final menu = _overflowMenu(context, theme);
     return Container(
       decoration: BoxDecoration(
         color: theme.surface,
-        borderRadius: isMobile
+        borderRadius: widget.isMobile
             ? null
             : const BorderRadius.only(
                 topLeft: Radius.circular(22),
@@ -495,8 +772,8 @@ class _ThreadHeader extends StatelessWidget {
               ),
         border: Border(bottom: BorderSide(color: theme.border)),
       ),
-      padding: EdgeInsets.fromLTRB(isMobile ? 4 : 12, 8, 8, 8),
-      child: isMobile
+      padding: EdgeInsets.fromLTRB(widget.isMobile ? 4 : 12, 8, 8, 8),
+      child: widget.isMobile
           ? SizedBox(
               height: 48,
               child: Row(
@@ -505,25 +782,25 @@ class _ThreadHeader extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
-                        onPressed: onBack,
+                        onPressed: widget.onBack,
                         icon: const Icon(
                           Icons.arrow_back_ios_new_rounded,
                           size: 20,
                         ),
                       ),
                       MessengerAvatar(
-                        label: conversation?.avatarLabel ?? 'CH',
-                        imageUrl: conversation?.avatarUrl,
+                        label: c?.avatarLabel ?? 'CH',
+                        imageUrl: c?.avatarUrl,
                         compact: true,
                         size: 34,
-                        showOnlineIndicator: conversation?.isOnline != null,
-                        isOnline: conversation?.isOnline ?? false,
+                        showOnlineIndicator: c?.isOnline != null,
+                        isOnline: c?.isOnline ?? false,
                       ),
                     ],
                   ),
                   Expanded(
                     child: Text(
-                      conversation?.title ?? 'No conversation',
+                      c?.title ?? 'No conversation',
                       textAlign: TextAlign.center,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -533,18 +810,19 @@ class _ThreadHeader extends StatelessWidget {
                       ),
                     ),
                   ),
+                  if (menu != null) menu,
                 ],
               ),
             )
           : Row(
               children: [
                 MessengerAvatar(
-                  label: conversation?.avatarLabel ?? 'CH',
-                  imageUrl: conversation?.avatarUrl,
+                  label: c?.avatarLabel ?? 'CH',
+                  imageUrl: c?.avatarUrl,
                   compact: true,
                   size: 34,
-                  showOnlineIndicator: conversation?.isOnline != null,
-                  isOnline: conversation?.isOnline ?? false,
+                  showOnlineIndicator: c?.isOnline != null,
+                  isOnline: c?.isOnline ?? false,
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -552,7 +830,7 @@ class _ThreadHeader extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        conversation?.title ?? 'No conversation',
+                        c?.title ?? 'No conversation',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -563,6 +841,7 @@ class _ThreadHeader extends StatelessWidget {
                     ],
                   ),
                 ),
+                if (menu != null) menu,
               ],
             ),
     );
