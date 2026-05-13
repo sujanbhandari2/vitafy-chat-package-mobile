@@ -234,8 +234,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
   ValueNotifier<_StartNewChatSheetLiveData>? _startNewChatSheetLive;
 
   List<MessengerUser> _sortedUsersForStartNewChatSheet() {
-    final sorted = [...widget.users]
-      ..sort((a, b) {
+    final sorted = [...widget.users]..sort((a, b) {
         if (a.isOnline == b.isOnline) {
           return a.username.toLowerCase().compareTo(b.username.toLowerCase());
         }
@@ -789,8 +788,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     final searchRadius = widget.searchFieldBorderRadius ?? 12;
 
     _startNewChatSheetLive?.dispose();
-    _startNewChatSheetLive =
-        ValueNotifier(_buildStartNewChatSheetLiveData());
+    _startNewChatSheetLive = ValueNotifier(_buildStartNewChatSheetLiveData());
 
     try {
       await showModalBottomSheet<void>(

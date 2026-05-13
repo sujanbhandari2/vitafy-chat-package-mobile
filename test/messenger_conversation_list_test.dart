@@ -888,7 +888,8 @@ class _StartNewChatSheetLiveHarness extends StatefulWidget {
       _StartNewChatSheetLiveHarnessState();
 }
 
-class _StartNewChatSheetLiveHarnessState extends State<_StartNewChatSheetLiveHarness> {
+class _StartNewChatSheetLiveHarnessState
+    extends State<_StartNewChatSheetLiveHarness> {
   static const _alice =
       MessengerUser(id: 'x', username: 'alice_after_load', roleLabel: '');
 
