@@ -920,9 +920,12 @@ TextStyle _mergedAttachmentCaptionStyle({
   required Color textColor,
   TextStyle? override,
 }) {
+  // Keep the caption's color identical to the bubble's body text so a caption
+  // sent alongside an attachment doesn't look faded compared to a plain
+  // text-only message.
   final base = TextStyle(
     fontSize: 13,
-    color: textColor.withValues(alpha: 0.88),
+    color: textColor,
     height: 1.25,
   );
   if (override == null) {
@@ -1483,7 +1486,13 @@ class _MessengerVoicePlayerState extends State<MessengerVoicePlayer> {
     if (!_hasKnownDuration) {
       return '';
     }
-    if (_stage == _VoicePlaybackStage.playing) {
+    // Keep the same remaining-time readout across play/pause so the label
+    // doesn't snap back to the full duration when the user pauses. Only when
+    // playback hasn't started yet (or has just completed/reset to zero) do we
+    // show the full duration as the "initial" label.
+    if (_position > Duration.zero &&
+        (_stage == _VoicePlaybackStage.playing ||
+            _stage == _VoicePlaybackStage.paused)) {
       var remaining = _duration - _position;
       if (remaining < Duration.zero) {
         remaining = Duration.zero;
