@@ -58,6 +58,7 @@ class Conversation {
     this.unreadCount,
     this.latestMessage,
     this.latestMessageId,
+    this.messageState,
     this.messageStatusByUserId = const <String, ConversationMessageStatus>{},
   });
 
@@ -80,6 +81,9 @@ class Conversation {
   /// when the server only ships the embedded message.
   final String? latestMessageId;
 
+  /// Current user's read/delivery pointers from REST list `messageState`.
+  final ConversationMessageStatus? messageState;
+
   /// Per-user read/delivery pointers, keyed by user id.
   ///
   /// Sourced from any of these JSON shapes (first non-empty wins):
@@ -89,24 +93,39 @@ class Conversation {
 
   bool get isGlobal => type.toUpperCase() == 'SUPPORT';
 
+  String? _effectiveLatestMessageId() {
+    final fromField = latestMessageId?.trim();
+    if (fromField != null && fromField.isNotEmpty) {
+      return fromField;
+    }
+    final fromMessage = latestMessage?.id.trim();
+    if (fromMessage != null && fromMessage.isNotEmpty) {
+      return fromMessage;
+    }
+    return null;
+  }
+
   /// True when [userId] has at least one unread message, derived from
-  /// [latestMessageId] vs the user's `lastReadMessageId`.
+  /// latest message id vs `lastReadMessageId` (integer comparison).
   ///
-  /// Returns `false` when [latestMessageId] is missing (caller cannot decide).
+  /// Returns `false` when no latest message id is available.
   bool isUnreadFor(String userId) {
-    final latest = latestMessageId?.trim();
-    if (latest == null || latest.isEmpty) {
+    final latestId = int.tryParse(_effectiveLatestMessageId() ?? '');
+    if (latestId == null) {
       return false;
     }
-    final status = messageStatusByUserId[userId];
-    final lastRead = status?.lastReadMessageId?.trim();
-    if (lastRead == null || lastRead.isEmpty) {
+
+    final status = messageStatusByUserId[userId] ?? messageState;
+    final lastReadRaw = status?.lastReadMessageId?.trim();
+    if (lastReadRaw == null || lastReadRaw.isEmpty) {
       return true;
     }
-    if (lastRead == latest) {
-      return false;
+
+    final lastReadId = int.tryParse(lastReadRaw);
+    if (lastReadId == null) {
+      return true;
     }
-    return _compareMessageIds(lastRead, latest) < 0;
+    return latestId > lastReadId;
   }
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
@@ -159,9 +178,20 @@ class Conversation {
       participants: participants,
       latestMessage: latest,
       latestMessageId: (latestId == null || latestId.isEmpty) ? null : latestId,
+      messageState: _messageStateFromJson(json),
       messageStatusByUserId: _messageStatusFromJson(json, rawParticipants),
     );
   }
+}
+
+ConversationMessageStatus? _messageStateFromJson(Map<String, dynamic> json) {
+  final raw = json['messageState'] ?? json['message_state'];
+  if (raw is! Map) {
+    return null;
+  }
+  return ConversationMessageStatus.fromJson(
+    Map<String, dynamic>.from(raw),
+  );
 }
 
 Map<String, ConversationMessageStatus> _messageStatusFromJson(
@@ -190,7 +220,10 @@ Map<String, ConversationMessageStatus> _messageStatusFromJson(
   for (final raw in rawParticipants) {
     if (raw is! Map) continue;
     final part = Map<String, dynamic>.from(raw);
-    final embedded = part['messageStatus'] ?? part['message_status'];
+    final embedded = part['messageStatus'] ??
+        part['message_status'] ??
+        part['messageState'] ??
+        part['message_state'];
     if (embedded is! Map) continue;
     final embeddedMap = Map<String, dynamic>.from(embedded);
     final pid = (part['chatUserId'] ??
@@ -207,18 +240,6 @@ Map<String, ConversationMessageStatus> _messageStatusFromJson(
   }
 
   return out;
-}
-
-/// Compares two message ids. Numeric ids are compared as ints; otherwise a
-/// lexical comparison is used. Returns negative when [a] < [b], 0 when equal,
-/// positive when [a] > [b].
-int _compareMessageIds(String a, String b) {
-  final ai = int.tryParse(a);
-  final bi = int.tryParse(b);
-  if (ai != null && bi != null) {
-    return ai.compareTo(bi);
-  }
-  return a.compareTo(b);
 }
 
 String? _trimToNull(Object? raw) {

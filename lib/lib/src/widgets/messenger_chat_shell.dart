@@ -12,6 +12,7 @@ import '../models/messenger_message.dart';
 import '../models/messenger_thread_fetch_loading_mode.dart';
 import '../models/messenger_thread_loading_style.dart';
 import '../models/messenger_user.dart';
+import '../models/messenger_user_directory.dart';
 import '../models/messenger_search_visibility.dart';
 import '../models/messenger_attachment.dart';
 import '../models/messenger_typing.dart';
@@ -20,16 +21,9 @@ import '../utils/messenger_thread_scroll.dart';
 import 'messenger_chat_thread.dart';
 import 'messenger_conversation_list.dart';
 import 'messenger_list_search_chrome.dart';
+import 'messenger_suggested_directory_scope.dart';
 import 'messenger_default_inline_loading.dart';
 import 'messenger_media_send_orchestrator.dart';
-
-/// [RouteSettings.name] for the pushed full-screen mobile thread so we can
-/// [Navigator.popUntil] without popping the host chat route above this shell.
-const String _kMobileThreadRouteName = 'health_messenger_ui.mobile_thread';
-
-bool _routeIsNotMobileThreadRoute(Route<dynamic> route) {
-  return route.settings.name != _kMobileThreadRouteName;
-}
 
 class MessengerChatShell extends StatefulWidget {
   const MessengerChatShell({
@@ -46,7 +40,6 @@ class MessengerChatShell extends StatefulWidget {
     required this.isRecording,
     required this.onRefresh,
     this.enablePullToRefresh = true,
-    this.isConversationListLoading = false,
     this.isListPaneRefreshing = false,
     this.conversationListLoadingBuilder,
     this.suggestedPaneLoadingBuilder,
@@ -99,8 +92,6 @@ class MessengerChatShell extends StatefulWidget {
     this.attachmentSheetTitle = 'Attachments',
     this.attachmentOptions,
     this.theme,
-    /// Merged with [Theme.of] around package [AlertDialog]s (e.g. delete chat).
-    this.packageDialogTheme,
     this.desktopBreakpoint = 980,
     this.emptyMessagesMessage = 'No messages yet.',
     this.emptyMessagesBuilder,
@@ -117,6 +108,10 @@ class MessengerChatShell extends StatefulWidget {
     this.showHeaderComposeButton = true,
     this.startNewChatEmptyBuilder,
     this.startNewChatUsersLoading = false,
+    this.suggestedUsers,
+    this.suggestedDirectory,
+    this.startNewChatUsers,
+    this.startNewChatDirectory,
     this.fabBackgroundColor,
     this.fabForegroundColor,
     this.fabIcon,
@@ -147,6 +142,7 @@ class MessengerChatShell extends StatefulWidget {
     this.threadFetchLoadingBuilder,
     this.prepareOutgoingConversation,
     this.onMobileThreadClosed,
+    this.onThreadVisibilityChanged,
     this.suggestedPeopleBuilder,
     this.onEditGroupConversation,
     this.onAddPeopleToGroupConversation,
@@ -178,31 +174,17 @@ class MessengerChatShell extends StatefulWidget {
   /// body in a [RefreshIndicator] that calls [onRefresh].
   final bool enablePullToRefresh;
 
-  /// When true, [MessengerConversationList] replaces its peer scroll body with
-  /// a centered spinner until the conversation list snapshot is ready.
-  ///
-  /// When the inbox is empty and [suggestedPeopleBuilder] is used, this also
-  /// replaces the suggested slot with [suggestedPaneLoadingBuilder] (or the
-  /// default inline loader) **until conversations are resolved** — not while
-  /// tenant users alone are loading; use [MessengerSuggestedPeoplePanel.isLoading]
-  /// for that.
-  final bool isConversationListLoading;
-
-  /// Deprecated: use [isConversationListLoading]. Still OR-ed into conversation
-  /// list body loading for backwards compatibility, but no longer blocks the
-  /// suggested-people builder when only this flag is true.
-  @Deprecated(
-    'Use isConversationListLoading. OR-ed into conversation list loading only.',
-  )
+  /// When true, the list pane shows an in-pane loader: [MessengerConversationList]
+  /// replaces its peer scroll body with a centered spinner, and the suggested
+  /// slot (when shown) does the same unless [suggestedPaneLoadingBuilder] is set.
   final bool isListPaneRefreshing;
 
-  /// Overrides the default centered spinner while conversation list loading is
-  /// active on [MessengerConversationList].
+  /// Overrides the default centered spinner while [isListPaneRefreshing] is true
+  /// on [MessengerConversationList].
   final WidgetBuilder? conversationListLoadingBuilder;
 
   /// Overrides loading UI for the suggested-people slot when
-  /// [isConversationListLoading] is true and the inbox is still empty (waiting
-  /// for the conversation snapshot). Falls back to [conversationListLoadingBuilder],
+  /// [isListPaneRefreshing] is true. Falls back to [conversationListLoadingBuilder],
   /// then [MessengerDefaultInlineLoading].
   final WidgetBuilder? suggestedPaneLoadingBuilder;
 
@@ -259,13 +241,6 @@ class MessengerChatShell extends StatefulWidget {
   final List<MessengerAttachmentOption>? attachmentOptions;
   final TextStyle? attachmentOptionTextStyle;
   final MessengerThemeData? theme;
-
-  /// Optional [ThemeData] nested under the host [Theme] when the package shows
-  /// modal dialogs ([AlertDialog], image preview, etc.). Prefer
-  /// `Theme.of(context).copyWith(dialogTheme: DialogTheme(...))` so the value is
-  /// a complete [ThemeData]; arbitrary field-level merging is not performed.
-  final ThemeData? packageDialogTheme;
-
   final double desktopBreakpoint;
   final String emptyMessagesMessage;
   final WidgetBuilder? emptyMessagesBuilder;
@@ -282,9 +257,26 @@ class MessengerChatShell extends StatefulWidget {
   final bool showHeaderComposeButton;
   final WidgetBuilder? startNewChatEmptyBuilder;
 
-  /// When true and the Start New Chat sheet opens with an empty user list,
-  /// the sheet shows an inline loader instead of the empty-state copy.
+  /// Passed to [MessengerConversationList.startNewChatUsersLoading].
   final bool startNewChatUsersLoading;
+
+  /// Optional user rows for the suggested-people slot when the inbox is empty.
+  /// When null, [users] is passed to [suggestedPeopleBuilder].
+  final List<MessengerUser>? suggestedUsers;
+
+  /// Debounced search and/or pagination for the suggested-people pane.
+  ///
+  /// When non-null, the shell wraps [suggestedPeopleBuilder] output in
+  /// [MessengerSuggestedDirectoryScope].
+  final MessengerSuggestedPeopleDirectory? suggestedDirectory;
+
+  /// Optional directory rows for the Start New Chat sheet only.
+  ///
+  /// When null, the sheet uses [users] (see [MessengerConversationList]).
+  final List<MessengerUser>? startNewChatUsers;
+
+  /// Debounced server search and/or pagination for the Start New Chat sheet.
+  final MessengerStartNewChatDirectory? startNewChatDirectory;
 
   final Color? fabBackgroundColor;
   final Color? fabForegroundColor;
@@ -345,11 +337,19 @@ class MessengerChatShell extends StatefulWidget {
   /// emit read receipts for the sender).
   final void Function(String conversationId)? onMobileThreadClosed;
 
+  /// Called when the message thread UI is shown or hidden.
+  ///
+  /// Wire to [ChatSession.setThreadVisible] so read receipts and
+  /// [markConversationRead] only run while the user can see the thread.
+  final ValueChanged<bool>? onThreadVisibilityChanged;
+
   /// Optional opt-in slot for an introductory "Suggested people" surface
   /// (typically a [MessengerSuggestedPeoplePanel]). When non-null and
   /// [conversations] is empty, the shell renders this builder's widget in
   /// place of the conversation list pane (mobile and desktop). When null,
   /// the conversation list and its existing empty placeholder are unchanged.
+  ///
+  /// The [users] argument is [suggestedUsers] when set, otherwise [users].
   ///
   /// The returned widget is wrapped in [MessengerListSearchChrome] using the
   /// same [searchFieldBackgroundColor], [searchIconColor], [searchHintTextStyle],
@@ -372,17 +372,17 @@ class MessengerChatShell extends StatefulWidget {
   final FutureOr<void> Function(MessengerConversation conversation)?
       onAddPeopleToGroupConversation;
 
-  /// Deletes the conversation (host API, cache, etc.) after the user
-  /// confirms in the package delete dialog shown from the thread header.
+  /// Deletes the conversation (host API, cache, etc.).
   ///
-  /// Do not show a second confirmation dialog in this callback, and do not
-  /// pop the pushed mobile thread route yourself — the thread header shows the
-  /// package confirmation dialog, then dismisses that route after delete
-  /// succeeds so navigation stays a single step back to the conversation list.
+  /// On mobile the thread is a pushed route. After this completes without
+  /// throwing, the shell dismisses that route (via [NavigatorState.pop] or
+  /// [NavigatorState.removeRoute] when a root delete dialog sits above it) so
+  /// the user returns to the inbox without relying on host list/selection timing.
   ///
   /// The shell also closes that route when the opened conversation disappears
   /// from [conversations] and [selectedConversationId] no longer pins it (for
-  /// example sync from another device while not in the delete flow).
+  /// example sync from another device). Do not pop that same route yourself in
+  /// this callback, or navigation can pop twice.
   final FutureOr<void> Function(MessengerConversation conversation)?
       onDeleteConversation;
 
@@ -403,16 +403,6 @@ class MessengerChatShell extends StatefulWidget {
 }
 
 class _MessengerChatShellState extends State<MessengerChatShell> {
-  /// [isConversationListLoading] plus deprecated [isListPaneRefreshing] for the
-  /// conversation list body only.
-  bool get _effectiveConversationListLoading =>
-      widget.isConversationListLoading || widget.isListPaneRefreshing;
-
-  /// Full-pane suggested-slot spinner: only while the conversation snapshot is
-  /// loading, not for tenant-user-only fetches.
-  bool get _suggestedSlotWaitingForConversations =>
-      widget.isConversationListLoading;
-
   String _openingDirectUserId = '';
   final Map<String, List<MessengerChatMessage>> _localMessagesByConversation =
       <String, List<MessengerChatMessage>>{};
@@ -423,11 +413,6 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   /// Ensures at most one auto-[Navigator.maybePop] is scheduled for the
   /// full-screen mobile thread while [ValueListenableBuilder] rebuilds.
   bool _mobileThreadAutoClosePopScheduled = false;
-
-  /// While [onDeleteConversation] runs on mobile, the shell already pops the
-  /// thread when the callback finishes; suppress the list-driven auto-close so
-  /// [Navigator] does not pop twice.
-  bool _suppressMobileThreadAutoCloseOnce = false;
   bool _packageRecording = false;
   String? _recordingConversationId;
   MessengerMediaSendOrchestrator? _cachedMediaOrchestrator;
@@ -436,10 +421,33 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   String? _cachedMediaSenderId;
   MessengerMediaPicker? _cachedMediaPicker;
   MessengerAudioRecorder? _cachedMediaRecorder;
+  bool? _lastReportedThreadVisible;
+
+  void _reportThreadVisibility(bool visible) {
+    if (_lastReportedThreadVisible == visible) {
+      return;
+    }
+    _lastReportedThreadVisible = visible;
+    widget.onThreadVisibilityChanged?.call(visible);
+  }
+
+  bool _hasSelectedConversation() {
+    final id = widget.selectedConversationId?.trim();
+    return id != null && id.isNotEmpty;
+  }
+
+  void _syncDesktopThreadVisibility() {
+    _reportThreadVisibility(_hasSelectedConversation());
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _syncDesktopThreadVisibility();
+      }
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
           !widget.autoScrollThreadToBottom ||
@@ -518,6 +526,21 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
         _shouldScheduleThreadScrollToBottom(oldWidget)) {
       _runThreadScrollToBottom();
     }
+
+    if (oldWidget.selectedConversationId != widget.selectedConversationId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _syncDesktopThreadVisibility();
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _reportThreadVisibility(false);
+    _mobileThreadVersion.dispose();
+    super.dispose();
   }
 
   bool _shouldScheduleThreadScrollToBottom(MessengerChatShell oldWidget) {
@@ -538,16 +561,36 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     return oldMessages.last.id != newMessages.last.id;
   }
 
-  @override
-  void dispose() {
-    _mobileThreadVersion.dispose();
-    super.dispose();
+  /// Pops the pushed mobile thread [Route] without relying on
+  /// [NavigatorState.pop]'s "top route" behavior.
+  ///
+  /// While the package delete confirmation is open it uses
+  /// [showDialog](..., useRootNavigator: true). On hosts where that dialog and
+  /// this thread share the same [Navigator], [Navigator.pop] with the thread
+  /// [BuildContext] still removes the **overlay top** (the dialog). The dialog
+  /// then [pop]s again and can remove the host page (double pop). When the
+  /// thread route is not [ModalRoute.isCurrent], remove it explicitly instead.
+  void _dismissPushedMobileThreadRoute(BuildContext routeContext) {
+    if (!routeContext.mounted) {
+      return;
+    }
+    final route = ModalRoute.of(routeContext);
+    final navigator = Navigator.of(routeContext);
+    if (route == null) {
+      return;
+    }
+    if (route.isCurrent) {
+      navigator.pop();
+      return;
+    }
+    if (route.isActive) {
+      navigator.removeRoute(route);
+    }
   }
 
-  /// When non-null (mobile pushed thread only), wraps [host] so list-driven
-  /// auto-close does not [Navigator.maybePop] while delete is in flight (which
-  /// would stack with the thread dismissal the package performs after the
-  /// confirmation dialog closes).
+  /// When non-null (mobile pushed thread only), delete runs [host] then the
+  /// shell pops that route once so hosts do not need to time [Navigator.pop]
+  /// with [conversations] updates.
   FutureOr<void> Function(MessengerConversation conversation)?
       _wrapDeleteConversationWithMobilePop(
     BuildContext routeContext,
@@ -557,35 +600,27 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       return null;
     }
     return (MessengerConversation c) async {
-      _suppressMobileThreadAutoCloseOnce = true;
+      // Suppress [ValueListenableBuilder]'s auto-[maybePop] when the opened
+      // conversation disappears from [widget.conversations] (same frame as a
+      // successful delete). Otherwise both this handler and the auto-close
+      // schedule a pop: the second [maybePop] can remove the host GoRouter page
+      // (e.g. dashboard) instead of only the pushed thread route.
+      _mobileThreadAutoClosePopScheduled = true;
       try {
         await Future<void>.sync(() => host(c));
-      } finally {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) {
-              return;
-            }
-            setState(() {
-              _suppressMobileThreadAutoCloseOnce = false;
-            });
-          });
-        });
+        if (!routeContext.mounted) {
+          _mobileThreadAutoClosePopScheduled = false;
+          return;
+        }
+        // Dismiss the pushed thread route. See [_dismissPushedMobileThreadRoute]
+        // — plain [Navigator.pop] can remove a root delete dialog instead when
+        // both live on the same navigator (GoRouter shells).
+        _dismissPushedMobileThreadRoute(routeContext);
+      } catch (_) {
+        _mobileThreadAutoClosePopScheduled = false;
+        rethrow;
       }
     };
-  }
-
-  void _scheduleDismissMobileThreadAfterDelete() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        return;
-      }
-      // Remove only our named mobile thread route. [maybePop] can remove the
-      // wrong route if the stack is mid-update; [popUntil] is stable for the
-      // example stack: Configuration → Chat → Thread → (dialog).
-      Navigator.of(context, rootNavigator: true)
-          .popUntil(_routeIsNotMobileThreadRoute);
-    });
   }
 
   Widget _buildThread({
@@ -648,7 +683,6 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       conversation: selectedConversation,
       messages: threadMessages,
       snapToBottomOnKeyboardInsetChange: widget.autoScrollThreadToBottom,
-      packageDialogTheme: widget.packageDialogTheme,
       isConversationLoading: isSelectedConversationLoading,
       loadingMessagesBuilder: widget.loadingMessagesBuilder,
       threadLoadingStyle: widget.threadLoadingStyle,
@@ -768,10 +802,6 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
               mobileRouteContextForDeletePop,
               widget.onDeleteConversation,
             ),
-      onDismissMobileThreadAfterConversationDelete:
-          mobileRouteContextForDeletePop == null
-              ? null
-              : _scheduleDismissMobileThreadAfterDelete,
     );
   }
 
@@ -788,9 +818,9 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
         : (fallback != null && fallback.isNotEmpty ? fallback : '');
 
     _mobileThreadAutoClosePopScheduled = false;
-    await Navigator.of(context, rootNavigator: true).push<void>(
+    _reportThreadVisibility(true);
+    await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        settings: const RouteSettings(name: _kMobileThreadRouteName),
         builder: (routeContext) => MessengerTheme(
           data: themeData,
           child: Scaffold(
@@ -806,29 +836,29 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
                     final stillThere = widget.conversations.any(
                       (c) => c.id.trim() == openedId,
                     );
-                    final hostPinsOpened =
-                        hostHasSelection && hostSel == openedId;
+                    final hostPinsOpened = hostHasSelection &&
+                        hostSel != null &&
+                        hostSel == openedId;
                     if (!stillThere &&
                         !hostPinsOpened &&
-                        !_mobileThreadAutoClosePopScheduled &&
-                        !_suppressMobileThreadAutoCloseOnce) {
+                        !_mobileThreadAutoClosePopScheduled) {
                       // [_mobileThreadVersion] can change several times while the
                       // host updates [conversations] / selection; only one pop.
                       _mobileThreadAutoClosePopScheduled = true;
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) async {
                         if (!routeContext.mounted) {
                           return;
                         }
-                        Navigator.of(routeContext, rootNavigator: true)
-                            .popUntil(_routeIsNotMobileThreadRoute);
+                        _dismissPushedMobileThreadRoute(routeContext);
                       });
                     }
                   }
                   return _buildThread(
                     isMobile: true,
                     mobileRouteContextForDeletePop: routeContext,
-                    onBack: () => Navigator.of(routeContext, rootNavigator: true)
-                        .popUntil(_routeIsNotMobileThreadRoute),
+                    onBack: () {
+                      _dismissPushedMobileThreadRoute(routeContext);
+                    },
                     fallbackConversationId: fallbackConversationId?.trim(),
                     forceLoading: forceLoading &&
                         !hostHasSelection &&
@@ -845,6 +875,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       ),
     );
     _mobileThreadAutoClosePopScheduled = false;
+    _reportThreadVisibility(false);
     if (!mounted) {
       return;
     }
@@ -1545,7 +1576,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
 
   Widget _buildDesktopConversationPane() {
     if (_shouldShowSuggestedPanel) {
-      if (_suggestedSlotWaitingForConversations) {
+      if (widget.isListPaneRefreshing) {
         final theme = MessengerTheme.of(context);
         return Container(
           decoration: BoxDecoration(
@@ -1556,6 +1587,27 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
           child: _suggestedPaneLoadingBody(context),
         );
       }
+      final suggestedList = widget.suggestedUsers ?? widget.users;
+      Widget suggestedBody = widget.suggestedPeopleBuilder!(
+        context,
+        suggestedList,
+        (user) async {
+          setState(() => _openingDirectUserId = user.id);
+          try {
+            await widget.onOpenDirectChat(user);
+          } finally {
+            if (mounted) {
+              setState(() => _openingDirectUserId = '');
+            }
+          }
+        },
+      );
+      if (widget.suggestedDirectory != null) {
+        suggestedBody = MessengerSuggestedDirectoryScope(
+          directory: widget.suggestedDirectory,
+          child: suggestedBody,
+        );
+      }
       return MessengerListSearchChrome.resolve(
         context,
         searchFieldBackgroundColor: widget.searchFieldBackgroundColor,
@@ -1564,20 +1616,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
         searchFieldContentPadding: widget.searchFieldContentPadding,
         searchFieldBorderRadius: widget.searchFieldBorderRadius,
         searchInputTextStyle: widget.searchInputTextStyle,
-        child: widget.suggestedPeopleBuilder!(
-          context,
-          widget.users,
-          (user) async {
-            setState(() => _openingDirectUserId = user.id);
-            try {
-              await widget.onOpenDirectChat(user);
-            } finally {
-              if (mounted) {
-                setState(() => _openingDirectUserId = '');
-              }
-            }
-          },
-        ),
+        child: suggestedBody,
       );
     }
     return MessengerConversationList(
@@ -1589,7 +1628,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       openingDirectUserId: _openingDirectUserId,
       onRefresh: widget.onRefresh,
       enablePullToRefresh: widget.enablePullToRefresh,
-      isConversationListLoading: _effectiveConversationListLoading,
+      isConversationListLoading: widget.isListPaneRefreshing,
       conversationListLoadingBuilder: widget.conversationListLoadingBuilder,
       onLogout: widget.onLogout,
       onOpenDirectChat: (user) async {
@@ -1627,6 +1666,8 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       showHeaderComposeButton: widget.showHeaderComposeButton,
       startNewChatEmptyBuilder: widget.startNewChatEmptyBuilder,
       startNewChatUsersLoading: widget.startNewChatUsersLoading,
+      startNewChatUsers: widget.startNewChatUsers,
+      startNewChatDirectory: widget.startNewChatDirectory,
       fabBackgroundColor: widget.fabBackgroundColor,
       fabForegroundColor: widget.fabForegroundColor,
       fabIcon: widget.fabIcon,
@@ -1640,10 +1681,22 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
 
   Widget _buildMobileConversationPane() {
     if (_shouldShowSuggestedPanel) {
-      if (_suggestedSlotWaitingForConversations) {
+      if (widget.isListPaneRefreshing) {
         return Padding(
           padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
           child: _suggestedPaneLoadingBody(context),
+        );
+      }
+      final suggestedList = widget.suggestedUsers ?? widget.users;
+      Widget suggestedBody = widget.suggestedPeopleBuilder!(
+        context,
+        suggestedList,
+        _mobileOpenDirectChatAndShowThread,
+      );
+      if (widget.suggestedDirectory != null) {
+        suggestedBody = MessengerSuggestedDirectoryScope(
+          directory: widget.suggestedDirectory,
+          child: suggestedBody,
         );
       }
       return MessengerListSearchChrome.resolve(
@@ -1654,11 +1707,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
         searchFieldContentPadding: widget.searchFieldContentPadding,
         searchFieldBorderRadius: widget.searchFieldBorderRadius,
         searchInputTextStyle: widget.searchInputTextStyle,
-        child: widget.suggestedPeopleBuilder!(
-          context,
-          widget.users,
-          _mobileOpenDirectChatAndShowThread,
-        ),
+        child: suggestedBody,
       );
     }
     return MessengerConversationList(
@@ -1670,7 +1719,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       openingDirectUserId: _openingDirectUserId,
       onRefresh: widget.onRefresh,
       enablePullToRefresh: widget.enablePullToRefresh,
-      isConversationListLoading: _effectiveConversationListLoading,
+      isConversationListLoading: widget.isListPaneRefreshing,
       conversationListLoadingBuilder: widget.conversationListLoadingBuilder,
       onLogout: widget.onLogout,
       onOpenDirectChat: _mobileOpenDirectChatAndShowThread,
@@ -1716,6 +1765,8 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       showHeaderComposeButton: widget.showHeaderComposeButton,
       startNewChatEmptyBuilder: widget.startNewChatEmptyBuilder,
       startNewChatUsersLoading: widget.startNewChatUsersLoading,
+      startNewChatUsers: widget.startNewChatUsers,
+      startNewChatDirectory: widget.startNewChatDirectory,
       fabBackgroundColor: widget.fabBackgroundColor,
       fabForegroundColor: widget.fabForegroundColor,
       fabIcon: widget.fabIcon,
@@ -1746,6 +1797,16 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
             ],
           )
         : _buildMobileConversationPane();
+
+    if (isDesktop) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _syncDesktopThreadVisibility();
+        }
+      });
+    } else {
+      _reportThreadVisibility(false);
+    }
 
     if (widget.theme == null) {
       return shell;

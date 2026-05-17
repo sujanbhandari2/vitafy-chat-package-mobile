@@ -140,6 +140,17 @@ class ChatSocketApi {
 
   void disconnect() => _socketClient.disconnect();
 
+  void emitGoingOffline({
+    required String userId,
+    required String reason,
+  }) {
+    // Best-effort event name; server is expected to handle it.
+    _socketClient.emit(
+      'going_offline',
+      {'userId': userId, 'reason': reason},
+    );
+  }
+
   Future<void> joinConversation(String conversationId) {
     return _socketClient.emitWithAck<void>(
       'join_conversation',

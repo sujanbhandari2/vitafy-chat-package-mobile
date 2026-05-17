@@ -2,6 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 
+const _alice = MessengerUser(id: 'u1', username: 'alice');
+const _bob = MessengerUser(id: 'u2', username: 'bob');
+const _carol = MessengerUser(
+  id: 'u3',
+  username: 'carol',
+  roleLabel: 'Nurse',
+);
+
 void main() {
   Widget wrap(Widget child) {
     return MaterialApp(
@@ -12,19 +20,11 @@ void main() {
     );
   }
 
-  const alice = MessengerUser(id: 'u1', username: 'alice');
-  const bob = MessengerUser(id: 'u2', username: 'bob');
-  const carol = MessengerUser(
-    id: 'u3',
-    username: 'carol',
-    roleLabel: 'Nurse',
-  );
-
   testWidgets('renders default title and helper text', (tester) async {
     await tester.pumpWidget(
       wrap(
         MessengerSuggestedPeoplePanel(
-          users: const [alice, bob],
+          users: const [_alice, _bob],
           onUserSelected: (_) {},
         ),
       ),
@@ -44,7 +44,7 @@ void main() {
     await tester.pumpWidget(
       wrap(
         MessengerSuggestedPeoplePanel(
-          users: const [alice],
+          users: const [_alice],
           onUserSelected: (_) {},
           titleWidget: const Text('Custom heading'),
         ),
@@ -59,7 +59,7 @@ void main() {
     await tester.pumpWidget(
       wrap(
         MessengerSuggestedPeoplePanel(
-          users: const [alice],
+          users: const [_alice],
           onUserSelected: (_) {},
           headerBuilder: (context, users) =>
               Text('Pick one of ${users.length}'),
@@ -80,7 +80,7 @@ void main() {
     await tester.pumpWidget(
       wrap(
         MessengerSuggestedPeoplePanel(
-          users: const [alice, bob],
+          users: const [_alice, _bob],
           onUserSelected: (_) {},
           itemBuilder: (context, user, index) => ListTile(
             key: ValueKey('row-${user.id}'),
@@ -102,7 +102,7 @@ void main() {
     await tester.pumpWidget(
       wrap(
         MessengerSuggestedPeoplePanel(
-          users: const [alice, bob],
+          users: const [_alice, _bob],
           onUserSelected: (user) => tapped = user,
         ),
       ),
@@ -147,7 +147,7 @@ void main() {
     await tester.pumpWidget(
       wrap(
         MessengerSuggestedPeoplePanel(
-          users: const [alice],
+          users: const [_alice],
           onUserSelected: (_) {},
           isLoading: true,
         ),
@@ -163,7 +163,7 @@ void main() {
     await tester.pumpWidget(
       wrap(
         MessengerSuggestedPeoplePanel(
-          users: const [alice],
+          users: const [_alice],
           onUserSelected: (_) {},
           isLoading: true,
           loadingBuilder: (_) => const Text('Fetching people'),
@@ -186,7 +186,7 @@ void main() {
               height: 400,
               width: 360,
               child: MessengerSuggestedPeoplePanel(
-                users: const [alice, bob],
+                users: const [_alice, _bob],
                 onUserSelected: (_) {},
                 onPullToRefresh: () async {
                   count++;
@@ -219,7 +219,7 @@ void main() {
         StatefulBuilder(
           builder: (context, setState) {
             return MessengerSuggestedPeoplePanel(
-              users: const [alice, bob, carol],
+              users: const [_alice, _bob, _carol],
               onUserSelected: (_) {},
               showSearchField: true,
               searchQuery: query,
@@ -259,7 +259,7 @@ void main() {
         StatefulBuilder(
           builder: (context, setState) {
             return MessengerSuggestedPeoplePanel(
-              users: const [alice, bob],
+              users: const [_alice, _bob],
               onUserSelected: (_) {},
               showSearchField: true,
               searchQuery: query,
@@ -281,7 +281,7 @@ void main() {
     await tester.pumpWidget(
       wrap(
         MessengerSuggestedPeoplePanel(
-          users: const [alice, bob, carol],
+          users: const [_alice, _bob, _carol],
           onUserSelected: (_) {},
           onCreateGroupSelected: (_) async {},
           showSearchField: true,
@@ -325,7 +325,7 @@ void main() {
       await tester.pumpWidget(
         wrap(
           MessengerSuggestedPeoplePanel(
-            users: const [alice, bob, carol],
+            users: const [_alice, _bob, _carol],
             onUserSelected: (_) => openedDirectChats++,
             onCreateGroupSelected: (selected) async {
               created
@@ -377,7 +377,7 @@ void main() {
                 currentUserId: 'me',
                 currentUserName: 'Me',
                 conversations: const [],
-                users: const [alice, bob],
+                users: const [_alice, _bob],
                 selectedConversationId: null,
                 messages: const [],
                 composerController: composer,
@@ -465,4 +465,139 @@ void main() {
       expect(find.text('No chats yet'), findsOneWidget);
     },
   );
+
+  testWidgets('directory debounces search callback', (tester) async {
+    final debounced = <String>[];
+    await tester.pumpWidget(
+      wrap(
+        MessengerSuggestedPeoplePanel(
+          users: const [_alice, _bob],
+          onUserSelected: (_) {},
+          showSearchField: true,
+          searchQuery: '',
+          onSearchQueryChanged: (_) {},
+          directory: MessengerSuggestedPeopleDirectory(
+            searchDebounce: const Duration(milliseconds: 200),
+            onSearchQueryDebounced: debounced.add,
+          ),
+        ),
+      ),
+    );
+
+    await tester.enterText(find.byType(TextField), 'al');
+    await tester.pump();
+    expect(debounced, isEmpty);
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(debounced, ['al']);
+  });
+
+  testWidgets('directory with zero debounce fires search immediately',
+      (tester) async {
+    var last = '';
+    await tester.pumpWidget(
+      wrap(
+        MessengerSuggestedPeoplePanel(
+          users: const [_alice],
+          onUserSelected: (_) {},
+          showSearchField: true,
+          searchQuery: '',
+          onSearchQueryChanged: (_) {},
+          directory: MessengerSuggestedPeopleDirectory(
+            searchDebounce: Duration.zero,
+            onSearchQueryDebounced: (q) => last = q,
+          ),
+        ),
+      ),
+    );
+
+    await tester.enterText(find.byType(TextField), 'a');
+    await tester.pump();
+    expect(last, 'a');
+  });
+
+  testWidgets('group selection survives directory user list replacement',
+      (tester) async {
+    final created = <MessengerUser>[];
+
+    await tester.pumpWidget(
+      wrap(
+        _GroupSelectionDirectoryHarness(created: created),
+      ),
+    );
+
+    await tester.tap(find.text('New group'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('alice'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('bob'));
+    await tester.pumpAndSettle();
+    expect(find.text('Selected people (2)'), findsOneWidget);
+
+    final harness = tester.state<_GroupSelectionDirectoryHarnessState>(
+      find.byType(_GroupSelectionDirectoryHarness),
+    );
+    harness.replaceUsers(const [_carol]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Selected people (2)'), findsOneWidget);
+    expect(find.text('alice'), findsOneWidget);
+    expect(find.text('bob'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'car');
+    await tester.pump();
+    harness.replaceUsers(const [_carol]);
+    await tester.pumpAndSettle();
+    expect(find.text('Selected people (2)'), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.close_rounded).last);
+    await tester.pumpAndSettle();
+    harness.replaceUsers(const [_alice, _bob, _carol]);
+    await tester.pumpAndSettle();
+    expect(find.text('Selected people (2)'), findsOneWidget);
+
+    await tester.tap(find.text('Create group'));
+    await tester.pumpAndSettle();
+
+    expect(created.map((user) => user.id).toList(), ['u1', 'u2']);
+  });
+}
+
+class _GroupSelectionDirectoryHarness extends StatefulWidget {
+  const _GroupSelectionDirectoryHarness({required this.created});
+
+  final List<MessengerUser> created;
+
+  @override
+  State<_GroupSelectionDirectoryHarness> createState() =>
+      _GroupSelectionDirectoryHarnessState();
+}
+
+class _GroupSelectionDirectoryHarnessState
+    extends State<_GroupSelectionDirectoryHarness> {
+  List<MessengerUser> _users = const [_alice, _bob, _carol];
+
+  void replaceUsers(List<MessengerUser> users) {
+    setState(() => _users = List<MessengerUser>.of(users));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MessengerSuggestedPeoplePanel(
+      users: _users,
+      onUserSelected: (_) {},
+      onCreateGroupSelected: (selected) async {
+        widget.created
+          ..clear()
+          ..addAll(selected);
+      },
+      showSearchField: true,
+      searchQuery: '',
+      onSearchQueryChanged: (_) {},
+      directory: MessengerSuggestedPeopleDirectory(
+        searchDebounce: Duration.zero,
+        onSearchQueryDebounced: (_) {},
+      ),
+    );
+  }
 }

@@ -33,6 +33,13 @@ class ChatClient {
 
   void disconnect() => repository.disconnectSocket();
 
+  void emitGoingOffline({
+    required String userId,
+    required String reason,
+  }) {
+    repository.emitGoingOffline(userId: userId, reason: reason);
+  }
+
   Future<ChatTenantScope> getTenantScope(ChatAuth auth) {
     return repository.getTenantScope(auth);
   }

@@ -4,14 +4,20 @@ import 'package:flutter/material.dart';
 
 import '../models/messenger_group_create_request.dart';
 import '../models/messenger_user.dart';
+import '../models/messenger_user_directory.dart';
 import '../theme/messenger_theme.dart';
 import 'messenger_avatar.dart';
 import 'messenger_group_name_text_field.dart';
 import 'messenger_list_search_chrome.dart';
 import 'messenger_list_search_field.dart';
+import 'messenger_suggested_directory_scope.dart';
 
 /// Self-contained panel that lists tenant users to start a brand new
 /// direct chat with — explicitly **not** a conversations list.
+///
+/// Uses a single [CustomScrollView] so the header, group controls, search
+/// field, and people list scroll together — keeping results reachable when
+/// the soft keyboard is open.
 ///
 /// Defaults render a "Suggested people" title, a helper line and a
 /// vertical list of user rows. Every visual region can be overridden
@@ -29,7 +35,8 @@ import 'messenger_list_search_field.dart';
 /// )
 /// ```
 class MessengerSuggestedPeoplePanel extends StatefulWidget {
-  const MessengerSuggestedPeoplePanel({
+  // ignore: prefer_const_constructors_in_immutables
+  MessengerSuggestedPeoplePanel({
     super.key,
     required this.users,
     required this.onUserSelected,
@@ -84,11 +91,8 @@ class MessengerSuggestedPeoplePanel extends StatefulWidget {
     this.groupNameLabelText = 'Group name',
     this.groupNameHintText = 'Enter a group name',
     this.groupNameRequiredErrorText = 'Enter a group name to continue.',
+    this.directory,
   })  : assert(
-          !showSearchField || onSearchQueryChanged != null,
-          'onSearchQueryChanged is required when showSearchField is true.',
-        ),
-        assert(
           groupMinSelectionCount > 0,
           'groupMinSelectionCount must be greater than zero.',
         );
@@ -126,7 +130,7 @@ class MessengerSuggestedPeoplePanel extends StatefulWidget {
       headerBuilder;
 
   /// Builds an individual user row. When null, a built-in compact row is
-  /// rendered (avatar + username + role + online dot).
+  /// rendered (avatar + username + role).
   final Widget Function(BuildContext context, MessengerUser user, int index)?
       itemBuilder;
 
@@ -194,11 +198,11 @@ class MessengerSuggestedPeoplePanel extends StatefulWidget {
   /// Style override for the default helper line.
   final TextStyle? helperTextStyle;
 
-  /// Optional [ScrollPhysics] forwarded to the internal list.
+  /// Optional [ScrollPhysics] forwarded to the internal [CustomScrollView].
   final ScrollPhysics? physics;
 
-  /// Forwarded to the internal list. Set to true when nesting inside
-  /// another scrollable.
+  /// Forwarded to the internal [CustomScrollView]. Set to true when nesting
+  /// inside another scrollable.
   final bool shrinkWrap;
 
   /// Accessibility label wrapped around the panel.
@@ -264,6 +268,12 @@ class MessengerSuggestedPeoplePanel extends StatefulWidget {
   /// Validation copy shown when the required group name is missing.
   final String groupNameRequiredErrorText;
 
+  /// Optional host hooks for debounced server search and list pagination.
+  ///
+  /// When [directory.onSearchQueryDebounced] is non-null, [users] is treated as
+  /// the host-provided directory page (no local substring filtering).
+  final MessengerSuggestedPeopleDirectory? directory;
+
   @override
   State<MessengerSuggestedPeoplePanel> createState() =>
       _MessengerSuggestedPeoplePanelState();
@@ -273,10 +283,19 @@ class _MessengerSuggestedPeoplePanelState
     extends State<MessengerSuggestedPeoplePanel> {
   bool _isGroupSelectionMode = false;
   List<String> _selectedUserIds = const <String>[];
+  final Map<String, MessengerUser> _selectedUsersById = {};
   late final TextEditingController _groupNameController;
   late final TextEditingController _searchFieldController;
   late final FocusNode _searchFocusNode;
+  late final ScrollController _listScrollController;
   String? _groupNameErrorText;
+  Timer? _searchDebounceTimer;
+  bool _nearEndConsumed = false;
+  MessengerSuggestedPeopleDirectory? _effectiveDirectory;
+  bool _prevDirectoryLoadingMore = false;
+
+  bool get _serverSearchMode =>
+      _effectiveDirectory?.onSearchQueryDebounced != null;
 
   bool get _canCreateGroup =>
       widget.onCreateGroupSelected != null ||
@@ -292,10 +311,86 @@ class _MessengerSuggestedPeoplePanelState
     _groupNameController = TextEditingController();
     _searchFieldController = TextEditingController(text: widget.searchQuery);
     _searchFocusNode = FocusNode();
+    _listScrollController = ScrollController();
+  }
+
+  void _updateEffectiveDirectory() {
+    _effectiveDirectory =
+        widget.directory ?? MessengerSuggestedDirectoryScope.maybeOf(context);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _updateEffectiveDirectory();
+    final loading = _effectiveDirectory?.isLoadingMore ?? false;
+    if (_prevDirectoryLoadingMore && !loading) {
+      _nearEndConsumed = false;
+    }
+    _prevDirectoryLoadingMore = loading;
+    _attachDirectoryScrollListener();
+  }
+
+  void _attachDirectoryScrollListener() {
+    _listScrollController.removeListener(_onDirectoryScroll);
+    if (_effectiveDirectory?.onNearEndOfList != null) {
+      _listScrollController.addListener(_onDirectoryScroll);
+    }
+  }
+
+  void _onDirectoryScroll() {
+    final d = _effectiveDirectory;
+    if (d == null ||
+        d.onNearEndOfList == null ||
+        !d.hasMore ||
+        d.isLoadingMore) {
+      return;
+    }
+    if (!_listScrollController.hasClients) {
+      return;
+    }
+    final pos = _listScrollController.position;
+    if (pos.maxScrollExtent <= 0) {
+      return;
+    }
+    if (pos.pixels >= pos.maxScrollExtent - 80) {
+      if (_nearEndConsumed) {
+        return;
+      }
+      _nearEndConsumed = true;
+      d.onNearEndOfList!();
+    } else if (pos.pixels < pos.maxScrollExtent - 120) {
+      _nearEndConsumed = false;
+    }
+  }
+
+  void _handleSearchTextChanged(String raw) {
+    widget.onSearchQueryChanged?.call(raw);
+    final debounced = _effectiveDirectory?.onSearchQueryDebounced;
+    if (debounced == null) {
+      return;
+    }
+    _searchDebounceTimer?.cancel();
+    final delay = _effectiveDirectory!.searchDebounce;
+    void emit() {
+      if (!mounted) {
+        return;
+      }
+      debounced(_searchFieldController.text.trim());
+    }
+
+    if (delay == Duration.zero) {
+      emit();
+    } else {
+      _searchDebounceTimer = Timer(delay, emit);
+    }
   }
 
   @override
   void dispose() {
+    _searchDebounceTimer?.cancel();
+    _listScrollController.removeListener(_onDirectoryScroll);
+    _listScrollController.dispose();
     _groupNameController.dispose();
     _searchFieldController.dispose();
     _searchFocusNode.dispose();
@@ -311,14 +406,30 @@ class _MessengerSuggestedPeoplePanelState
       return;
     }
 
-    final validIds = widget.users.map((user) => user.id.trim()).toSet();
-    final filtered = _selectedUserIds
-        .where((id) => validIds.contains(id.trim()))
-        .toList(growable: false);
-    if (filtered.length != _selectedUserIds.length) {
-      setState(() {
-        _selectedUserIds = filtered;
-      });
+    _updateEffectiveDirectory();
+    if (_serverSearchMode) {
+      _refreshSelectedUsersCacheFrom(widget.users);
+    } else {
+      final validIds = widget.users.map((user) => user.id.trim()).toSet();
+      final filtered = _selectedUserIds
+          .where((id) => validIds.contains(id.trim()))
+          .toList(growable: false);
+      if (filtered.length != _selectedUserIds.length) {
+        setState(() {
+          _selectedUserIds = filtered;
+          _selectedUsersById.removeWhere(
+            (id, _) => !validIds.contains(id),
+          );
+        });
+      }
+    }
+
+    if (oldWidget.users.length != widget.users.length) {
+      _nearEndConsumed = false;
+    }
+    if (oldWidget.directory?.isLoadingMore == true &&
+        widget.directory?.isLoadingMore != true) {
+      _nearEndConsumed = false;
     }
   }
 
@@ -344,13 +455,31 @@ class _MessengerSuggestedPeoplePanelState
 
   @override
   Widget build(BuildContext context) {
+    assert(() {
+      if (!widget.showSearchField) {
+        return true;
+      }
+      final d =
+          widget.directory ?? MessengerSuggestedDirectoryScope.maybeOf(context);
+      return widget.onSearchQueryChanged != null ||
+          d?.onSearchQueryDebounced != null;
+    }(),
+        'When showSearchField is true, provide onSearchQueryChanged and/or '
+        'MessengerSuggestedPeopleDirectory.onSearchQueryDebounced (via '
+        'MessengerSuggestedPeoplePanel.directory or '
+        'MessengerSuggestedDirectoryScope).');
+
+    _updateEffectiveDirectory();
+
     final theme = MessengerTheme.of(context);
     final searchChrome = _resolveSearchChrome(context, theme);
     final normalizedSearchQuery = widget.showSearchField
         ? _searchFieldController.text.trim()
         : widget.searchQuery.trim();
-    final filteredUsers = _filterUsers(widget.users, normalizedSearchQuery);
-    final selectedUsers = _selectedUsers(widget.users);
+    final filteredUsers = _serverSearchMode
+        ? widget.users
+        : _filterUsers(widget.users, normalizedSearchQuery);
+    final selectedUsers = _resolveSelectedUsers(widget.users);
     final visibleUsers = _isGroupSelectionMode
         ? filteredUsers
             .where((user) => !_selectedUserIds.contains(user.id.trim()))
@@ -360,105 +489,139 @@ class _MessengerSuggestedPeoplePanelState
     final header = widget.headerBuilder?.call(context, widget.users) ??
         _buildDefaultHeader(context, theme);
 
-    Widget body;
-    if (widget.isLoading) {
-      body = widget.loadingBuilder?.call(context) ?? _buildDefaultLoading();
-    } else if (widget.users.isEmpty) {
-      body = widget.emptyBuilder?.call(context) ?? _buildDefaultEmpty(theme);
-    } else if (visibleUsers.isEmpty && normalizedSearchQuery.isNotEmpty) {
-      body = _buildNoSearchResults(theme);
-    } else if (_isGroupSelectionMode && visibleUsers.isEmpty) {
-      body = _buildGroupSelectionEmpty(theme);
-    } else {
-      body = _buildList(context, visibleUsers);
-    }
+    final slivers = <Widget>[
+      SliverToBoxAdapter(child: header),
+      if (_isGroupSelectionMode) ...[
+        if (_showGroupNameField) ...[
+          const SliverToBoxAdapter(child: SizedBox(height: 12)),
+          SliverToBoxAdapter(
+            child: MessengerGroupNameTextField(
+              controller: _groupNameController,
+              enabled: !widget.isCreatingGroup,
+              labelText: widget.groupNameLabelText,
+              hintText: widget.groupNameHintText,
+              backgroundColor: searchChrome.backgroundColor,
+              borderRadius: searchChrome.borderRadius,
+              contentPadding: searchChrome.contentPadding,
+              iconColor: searchChrome.iconColor,
+              hintStyle: searchChrome.hintStyle,
+              inputTextStyle: searchChrome.typingStyle(theme),
+              errorText: _groupNameErrorText,
+              onChanged: (_) {
+                if (_groupNameErrorText == null || !mounted) {
+                  return;
+                }
+                setState(() => _groupNameErrorText = null);
+              },
+            ),
+          ),
+        ],
+        const SliverToBoxAdapter(child: SizedBox(height: 12)),
+        SliverToBoxAdapter(
+          child: _buildSelectedUsersSection(theme, selectedUsers),
+        ),
+        const SliverToBoxAdapter(child: SizedBox(height: 10)),
+        SliverToBoxAdapter(
+          child: _buildGroupActions(theme, selectedUsers),
+        ),
+      ],
+      if (widget.showSearchField) ...[
+        const SliverToBoxAdapter(child: SizedBox(height: 10)),
+        SliverToBoxAdapter(child: _buildSearchField(theme, searchChrome)),
+      ],
+      const SliverToBoxAdapter(child: SizedBox(height: 12)),
+      ..._buildMainContentSlivers(
+        context,
+        theme,
+        visibleUsers,
+        normalizedSearchQuery,
+      ),
+      if (widget.footerWidget != null) ...[
+        const SliverToBoxAdapter(child: SizedBox(height: 12)),
+        SliverToBoxAdapter(child: widget.footerWidget!),
+      ],
+    ];
 
-    body = _wrapWithPullToRefresh(
-      context,
-      body,
-      scrollableList: !widget.isLoading && visibleUsers.isNotEmpty,
+    Widget scrollView = CustomScrollView(
+      controller: _listScrollController,
+      primary: false,
+      shrinkWrap: widget.shrinkWrap,
+      physics: _resolveScrollPhysics(),
+      slivers: slivers,
     );
+
+    scrollView = _wrapWithPullToRefresh(scrollView);
 
     return Semantics(
       container: true,
       label: widget.semanticsLabel,
       child: Padding(
         padding: widget.padding,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            header,
-            if (_isGroupSelectionMode) ...[
-              if (_showGroupNameField) ...[
-                const SizedBox(height: 12),
-                MessengerGroupNameTextField(
-                  controller: _groupNameController,
-                  enabled: !widget.isCreatingGroup,
-                  labelText: widget.groupNameLabelText,
-                  hintText: widget.groupNameHintText,
-                  backgroundColor: searchChrome.backgroundColor,
-                  borderRadius: searchChrome.borderRadius,
-                  contentPadding: searchChrome.contentPadding,
-                  iconColor: searchChrome.iconColor,
-                  hintStyle: searchChrome.hintStyle,
-                  inputTextStyle: searchChrome.typingStyle(theme),
-                  errorText: _groupNameErrorText,
-                  onChanged: (_) {
-                    if (_groupNameErrorText == null || !mounted) {
-                      return;
-                    }
-                    setState(() => _groupNameErrorText = null);
-                  },
-                ),
-              ],
-              const SizedBox(height: 12),
-              _buildSelectedUsersSection(theme, selectedUsers),
-              const SizedBox(height: 10),
-              _buildGroupActions(theme, selectedUsers),
-            ],
-            if (widget.showSearchField) ...[
-              const SizedBox(height: 10),
-              _buildSearchField(theme, searchChrome),
-            ],
-            const SizedBox(height: 12),
-            Flexible(child: body),
-            if (widget.footerWidget != null) ...[
-              const SizedBox(height: 12),
-              widget.footerWidget!,
-            ],
-          ],
-        ),
+        child: scrollView,
       ),
     );
   }
 
-  Widget _wrapWithPullToRefresh(
+  ScrollPhysics _resolveScrollPhysics() {
+    final base = widget.physics ?? const ClampingScrollPhysics();
+    if (widget.shrinkWrap) {
+      return NeverScrollableScrollPhysics(parent: base);
+    }
+    if (widget.onPullToRefresh != null) {
+      return AlwaysScrollableScrollPhysics(parent: base);
+    }
+    return base;
+  }
+
+  List<Widget> _buildMainContentSlivers(
     BuildContext context,
-    Widget body, {
-    required bool scrollableList,
-  }) {
+    MessengerThemeData theme,
+    List<MessengerUser> visibleUsers,
+    String normalizedSearchQuery,
+  ) {
+    if (widget.isLoading) {
+      return [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: widget.loadingBuilder?.call(context) ?? _buildDefaultLoading(),
+        ),
+      ];
+    }
+    if (widget.users.isEmpty) {
+      return [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: widget.emptyBuilder?.call(context) ?? _buildDefaultEmpty(theme),
+        ),
+      ];
+    }
+    if (visibleUsers.isEmpty && normalizedSearchQuery.isNotEmpty) {
+      return [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: _buildNoSearchResults(theme),
+        ),
+      ];
+    }
+    if (_isGroupSelectionMode && visibleUsers.isEmpty) {
+      return [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: _buildGroupSelectionEmpty(theme),
+        ),
+      ];
+    }
+    return [_buildSeparatedUserListSliver(context, visibleUsers)];
+  }
+
+  Widget _wrapWithPullToRefresh(Widget scrollable) {
     final refresh = widget.onPullToRefresh;
     if (refresh == null) {
-      return body;
-    }
-    if (scrollableList) {
-      return RefreshIndicator(
-        onRefresh: refresh,
-        child: body,
-      );
+      return scrollable;
     }
     return RefreshIndicator(
       onRefresh: refresh,
-      child: LayoutBuilder(
-        builder: (ctx, constraints) => SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight),
-            child: body,
-          ),
-        ),
-      ),
+      child: scrollable,
     );
   }
 
@@ -715,15 +878,19 @@ class _MessengerSuggestedPeoplePanelState
       iconColor: chrome.iconColor,
       borderRadius: chrome.borderRadius,
       contentPadding: chrome.contentPadding,
-      onChanged: widget.onSearchQueryChanged,
-      onClear: widget.onSearchQueryChanged == null
-          ? null
-          : () {
+      onChanged: widget.showSearchField ? _handleSearchTextChanged : null,
+      onClear: _searchClearable
+          ? () {
               _searchFieldController.clear();
-              widget.onSearchQueryChanged!.call('');
-            },
+              _handleSearchTextChanged('');
+            }
+          : null,
     );
   }
+
+  bool get _searchClearable =>
+      widget.onSearchQueryChanged != null ||
+      _effectiveDirectory?.onSearchQueryDebounced != null;
 
   _MessengerSearchFieldChrome _resolveSearchChrome(
     BuildContext context,
@@ -750,33 +917,61 @@ class _MessengerSuggestedPeoplePanelState
     );
   }
 
-  Widget _buildList(BuildContext context, List<MessengerUser> visibleUsers) {
-    final listPhysics = widget.onPullToRefresh != null
-        ? AlwaysScrollableScrollPhysics(
-            parent: widget.physics ?? const ClampingScrollPhysics(),
-          )
-        : widget.physics;
+  /// [ListView.separated]-equivalent content as a single sliver.
+  Widget _buildSeparatedUserListSliver(
+    BuildContext context,
+    List<MessengerUser> visibleUsers,
+  ) {
+    final dir = _effectiveDirectory;
+    final loadingFooter =
+        dir != null && dir.isLoadingMore && dir.onNearEndOfList != null;
+    final extra = loadingFooter ? 1 : 0;
+    final itemCount = visibleUsers.length + extra;
+    if (itemCount == 0) {
+      return const SliverToBoxAdapter(child: SizedBox.shrink());
+    }
+    final delegateChildCount = 2 * itemCount - 1;
 
-    return ListView.separated(
-      primary: false,
-      physics: listPhysics,
-      shrinkWrap: widget.shrinkWrap,
-      padding: EdgeInsets.zero,
-      itemCount: visibleUsers.length,
-      separatorBuilder: widget.separatorBuilder ??
-          (_, __) => SizedBox(height: widget.itemSpacing),
-      itemBuilder: (context, index) {
-        final user = visibleUsers[index];
-        if (!_isGroupSelectionMode && widget.itemBuilder != null) {
-          return widget.itemBuilder!(context, user, index);
-        }
-        return _SuggestedUserRow(
-          user: user,
-          isOpening: !_isGroupSelectionMode && _isOpening(user.id),
-          isSelectable: _isGroupSelectionMode,
-          onTap: () => _handleUserTap(user),
-        );
-      },
+    return SliverList(
+      delegate: SliverChildBuilderDelegate(
+        (context, index) {
+          if (index.isEven) {
+            final itemIndex = index ~/ 2;
+            if (loadingFooter && itemIndex == visibleUsers.length) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: MessengerTheme.of(context).primary,
+                    ),
+                  ),
+                ),
+              );
+            }
+            final user = visibleUsers[itemIndex];
+            if (!_isGroupSelectionMode && widget.itemBuilder != null) {
+              return widget.itemBuilder!(context, user, itemIndex);
+            }
+            return _SuggestedUserRow(
+              user: user,
+              isOpening: !_isGroupSelectionMode && _isOpening(user.id),
+              isSelectable: _isGroupSelectionMode,
+              onTap: () => _handleUserTap(user),
+            );
+          }
+          final sepIndex = (index - 1) ~/ 2;
+          if (widget.separatorBuilder != null &&
+              sepIndex < visibleUsers.length - 1) {
+            return widget.separatorBuilder!(context, sepIndex);
+          }
+          return SizedBox(height: widget.itemSpacing);
+        },
+        childCount: delegateChildCount,
+      ),
     );
   }
 
@@ -796,6 +991,7 @@ class _MessengerSuggestedPeoplePanelState
     setState(() {
       _isGroupSelectionMode = true;
       _selectedUserIds = const <String>[];
+      _selectedUsersById.clear();
       _groupNameErrorText = null;
     });
   }
@@ -804,6 +1000,7 @@ class _MessengerSuggestedPeoplePanelState
     setState(() {
       _isGroupSelectionMode = false;
       _selectedUserIds = const <String>[];
+      _selectedUsersById.clear();
       _groupNameErrorText = null;
     });
     _groupNameController.clear();
@@ -838,6 +1035,7 @@ class _MessengerSuggestedPeoplePanelState
     setState(() {
       _isGroupSelectionMode = false;
       _selectedUserIds = const <String>[];
+      _selectedUsersById.clear();
     });
   }
 
@@ -849,6 +1047,7 @@ class _MessengerSuggestedPeoplePanelState
       }
       setState(() {
         _selectedUserIds = [..._selectedUserIds, id];
+        _selectedUsersById[id] = user;
       });
       return;
     }
@@ -856,19 +1055,44 @@ class _MessengerSuggestedPeoplePanelState
   }
 
   void _removeSelectedUser(String userId) {
+    final trimmed = userId.trim();
     setState(() {
       _selectedUserIds = _selectedUserIds
-          .where((id) => id.trim() != userId.trim())
+          .where((id) => id.trim() != trimmed)
           .toList(growable: false);
+      _selectedUsersById.remove(trimmed);
     });
   }
 
-  List<MessengerUser> _selectedUsers(List<MessengerUser> source) {
+  void _refreshSelectedUsersCacheFrom(List<MessengerUser> source) {
+    if (_selectedUserIds.isEmpty) {
+      return;
+    }
+    final byId = <String, MessengerUser>{
+      for (final user in source) user.id.trim(): user,
+    };
+    var changed = false;
+    for (final id in _selectedUserIds) {
+      final fresh = byId[id.trim()];
+      if (fresh != null && fresh != _selectedUsersById[id]) {
+        _selectedUsersById[id] = fresh;
+        changed = true;
+      }
+    }
+    if (changed && mounted) {
+      setState(() {});
+    }
+  }
+
+  List<MessengerUser> _resolveSelectedUsers(List<MessengerUser> source) {
     final byId = <String, MessengerUser>{
       for (final user in source) user.id.trim(): user,
     };
     return _selectedUserIds
-        .map((id) => byId[id.trim()])
+        .map((id) {
+          final trimmed = id.trim();
+          return byId[trimmed] ?? _selectedUsersById[trimmed];
+        })
         .whereType<MessengerUser>()
         .toList(growable: false);
   }
@@ -983,11 +1207,7 @@ class _SuggestedUserRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
-    final subtitleParts = <String>[
-      if (user.roleLabel.trim().isNotEmpty) user.roleLabel.trim(),
-      user.isOnline ? 'Online' : 'Offline',
-    ];
-    final subtitle = subtitleParts.join(' • ');
+    final subtitle = user.roleLabel.trim();
 
     return InkWell(
       onTap: isOpening ? null : onTap,
@@ -1001,8 +1221,6 @@ class _SuggestedUserRow extends StatelessWidget {
               imageUrl: user.avatarUrl,
               compact: true,
               size: 36,
-              showOnlineIndicator: true,
-              isOnline: user.isOnline,
             ),
             const SizedBox(width: 12),
             Expanded(

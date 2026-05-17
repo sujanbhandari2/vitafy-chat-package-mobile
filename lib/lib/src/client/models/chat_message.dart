@@ -169,9 +169,7 @@ class ChatMessage {
               Map<String, dynamic>.from(json['sender'] as Map),
             )
           : null,
-      deliveryStatus: json['deliveryStatus']?.toString() ??
-          json['delivery_status']?.toString() ??
-          json['status']?.toString(),
+      deliveryStatus: _deliveryStatusFromJson(json),
     );
   }
 
@@ -212,6 +210,18 @@ class ChatMessage {
       deliveryStatus: deliveryStatus ?? this.deliveryStatus,
     );
   }
+}
+
+String? _deliveryStatusFromJson(Map<String, dynamic> json) {
+  final explicit = json['deliveryStatus'] ?? json['delivery_status'];
+  if (explicit != null) {
+    final s = explicit.toString().trim();
+    if (s.isNotEmpty) {
+      return s;
+    }
+  }
+  // Do not map generic `status` (e.g. Vitafy REST uses READ for message lifecycle).
+  return null;
 }
 
 class ChatAttachment {

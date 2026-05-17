@@ -218,8 +218,8 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.edit_square));
     await tester.pumpAndSettle();
-    // Tap the row action: title text is not wired to onTap (only the Chat button is).
-    await tester.tap(find.text('Chat').at(1));
+    // Start-new-chat sheet uses [FilledButton] labels, not row trailing icons.
+    await tester.tap(find.widgetWithText(FilledButton, 'Chat').at(1));
     await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsOneWidget);
@@ -277,9 +277,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('New group'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Add').first);
+    final addButtons = find.widgetWithText(FilledButton, 'Add');
+    await tester.tap(addButtons.first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Add').first);
+    await tester.tap(addButtons.first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Create group'));
     await tester.pumpAndSettle();
@@ -336,7 +337,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.edit_square));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Chat').at(1));
+    await tester.tap(find.widgetWithText(FilledButton, 'Chat').at(1));
     await tester.pumpAndSettle();
 
     expect(find.text('Bob'), findsWidgets);
@@ -683,7 +684,7 @@ void main() {
   });
 
   testWidgets(
-      'isConversationListLoading shows inline spinner replacing conversation list',
+      'isListPaneRefreshing shows inline spinner replacing conversation list',
       (tester) async {
     final composer = TextEditingController();
     final scroll = ScrollController();
@@ -703,7 +704,7 @@ void main() {
               child: MessengerChatShell(
                 currentUserId: 'me',
                 currentUserName: 'Me',
-                isConversationListLoading: true,
+                isListPaneRefreshing: true,
                 conversations: const [],
                 users: const [
                   MessengerUser(id: 'u1', username: 'alice'),
@@ -740,7 +741,7 @@ void main() {
   });
 
   testWidgets(
-      'isConversationListLoading with suggested slot shows full-pane spinner',
+      'isListPaneRefreshing with suggested slot shows full-pane spinner',
       (tester) async {
     final composer = TextEditingController();
     final scroll = ScrollController();
@@ -760,7 +761,7 @@ void main() {
               child: MessengerChatShell(
                 currentUserId: 'me',
                 currentUserName: 'Me',
-                isConversationListLoading: true,
+                isListPaneRefreshing: true,
                 conversations: const [],
                 users: const [
                   MessengerUser(id: 'u1', username: 'alice'),
@@ -798,8 +799,7 @@ void main() {
   });
 
   testWidgets(
-      'deprecated isListPaneRefreshing alone still loads conversation list '
-      'but does not replace suggested slot',
+      'isListPaneRefreshing false shows suggested people when inbox is empty',
       (tester) async {
     final composer = TextEditingController();
     final scroll = ScrollController();
@@ -819,9 +819,7 @@ void main() {
               child: MessengerChatShell(
                 currentUserId: 'me',
                 currentUserName: 'Me',
-                // ignore: deprecated_member_use
-                isListPaneRefreshing: true,
-                isConversationListLoading: false,
+                isListPaneRefreshing: false,
                 conversations: const [],
                 users: const [
                   MessengerUser(id: 'u1', username: 'alice'),
@@ -880,7 +878,7 @@ void main() {
               child: MessengerChatShell(
                 currentUserId: 'me',
                 currentUserName: 'Me',
-                isConversationListLoading: false,
+                isListPaneRefreshing: false,
                 conversations: const [],
                 users: const [],
                 selectedConversationId: null,
@@ -918,7 +916,7 @@ void main() {
   });
 
   testWidgets(
-      'isConversationListLoading with non-empty inbox replaces list only',
+      'isListPaneRefreshing with non-empty inbox replaces list only',
       (tester) async {
     final composer = TextEditingController();
     final scroll = ScrollController();
@@ -946,7 +944,7 @@ void main() {
               child: MessengerChatShell(
                 currentUserId: 'me',
                 currentUserName: 'Me',
-                isConversationListLoading: true,
+                isListPaneRefreshing: true,
                 conversations: [conversation],
                 users: const [
                   MessengerUser(id: 'u1', username: 'alice'),

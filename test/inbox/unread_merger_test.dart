@@ -176,6 +176,116 @@ void main() {
       expect(out.containsKey('a'), isFalse);
     });
 
+    test(
+        'mergeFromConversations derives unread from messageState over unreadCount 0',
+        () {
+      final list = [
+        Conversation.fromJson({
+          'id': 'a',
+          'tenantId': 't',
+          'type': 'DIRECT',
+          'createdAt': DateTime.utc(2026).toIso8601String(),
+          'updatedAt': DateTime.utc(2026).toIso8601String(),
+          'participants': [],
+          'unreadCount': 0,
+          'latestMessage': {
+            'id': '329',
+            'conversationId': 'a',
+            'tenantId': 't',
+            'senderId': 'other',
+            'type': 'TEXT',
+            'content': 'hi',
+            'createdAt': DateTime.utc(2026).toIso8601String(),
+          },
+          'messageState': {'lastReadMessageId': '320'},
+        }),
+      ];
+      final out = UnreadMerger.mergeFromConversations(
+        <String, int>{},
+        list,
+        currentUserId: 'me',
+      );
+      expect(out['a'], 1);
+    });
+
+    test(
+        'mergeFromConversations clears when messageState shows read despite unreadCount 0',
+        () {
+      final list = [
+        Conversation.fromJson({
+          'id': 'a',
+          'tenantId': 't',
+          'type': 'DIRECT',
+          'createdAt': DateTime.utc(2026).toIso8601String(),
+          'updatedAt': DateTime.utc(2026).toIso8601String(),
+          'participants': [],
+          'unreadCount': 0,
+          'latestMessage': {
+            'id': '329',
+            'conversationId': 'a',
+            'tenantId': 't',
+            'senderId': 'other',
+            'type': 'TEXT',
+            'content': 'hi',
+            'createdAt': DateTime.utc(2026).toIso8601String(),
+          },
+          'messageState': {'lastReadMessageId': '329'},
+        }),
+      ];
+      final out = UnreadMerger.mergeFromConversations(
+        <String, int>{'a': 5},
+        list,
+        currentUserId: 'me',
+      );
+      expect(out.containsKey('a'), isFalse);
+    });
+
+    test(
+        'mergeFromConversations unread when messageState lastRead is null and unreadCount 0',
+        () {
+      final list = [
+        Conversation.fromJson({
+          'id': 'a',
+          'tenantId': 't',
+          'type': 'DIRECT',
+          'createdAt': DateTime.utc(2026).toIso8601String(),
+          'updatedAt': DateTime.utc(2026).toIso8601String(),
+          'participants': [],
+          'unreadCount': 0,
+          'latestMessageId': '329',
+          'messageState': {'lastReadMessageId': null},
+        }),
+      ];
+      final out = UnreadMerger.mergeFromConversations(
+        <String, int>{},
+        list,
+        currentUserId: 'me',
+      );
+      expect(out['a'], 1);
+    });
+
+    test(
+        'mergeFromConversations uses explicit unreadCount when no latest message id',
+        () {
+      final list = [
+        Conversation.fromJson({
+          'id': 'a',
+          'tenantId': 't',
+          'type': 'DIRECT',
+          'createdAt': DateTime.utc(2026).toIso8601String(),
+          'updatedAt': DateTime.utc(2026).toIso8601String(),
+          'participants': [],
+          'unreadCount': 3,
+        }),
+      ];
+      final out = UnreadMerger.mergeFromConversations(
+        <String, int>{},
+        list,
+        currentUserId: 'me',
+      );
+      expect(out['a'], 3);
+    });
+
     test('mergeFromConversations leaves rows untouched when no signal', () {
       final list = [
         Conversation.fromJson({

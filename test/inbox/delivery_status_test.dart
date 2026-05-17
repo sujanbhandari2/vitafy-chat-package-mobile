@@ -89,6 +89,23 @@ void main() {
       expect(s, MessengerDeliveryStatus.seen);
     });
 
+    test('own read receipt does not imply seen', () {
+      final s = messengerDeliveryStatusFor(
+        _outgoing(
+          readReceipts: [
+            {
+              'id': 'r1',
+              'messageId': 'm1',
+              'userId': 'me',
+              'readAt': DateTime.utc(2026).toIso8601String(),
+            },
+          ],
+        ),
+        currentUserId: 'me',
+      );
+      expect(s, MessengerDeliveryStatus.sent);
+    });
+
     test('incoming message is none', () {
       final m = ChatMessage.fromJson({
         'id': 'm1',

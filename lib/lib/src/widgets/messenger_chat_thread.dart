@@ -12,6 +12,7 @@ import '../models/messenger_typing.dart';
 import 'messenger_avatar.dart';
 import 'messenger_composer_bar.dart';
 import 'messenger_default_inline_loading.dart';
+import 'messenger_incoming_seen_reporter.dart';
 import 'messenger_message_bubble.dart';
 import '../theme/messenger_theme.dart';
 import '../utils/messenger_thread_scroll.dart';
@@ -243,58 +244,65 @@ class _MessengerChatThreadState extends State<MessengerChatThread> {
                     message.createdAt,
                   ));
 
+          final bubble = MessengerMessageBubble(
+            packageDialogTheme: widget.packageDialogTheme,
+            deleteActionTextStyle: Theme.of(context).textTheme.bodyMedium!,
+            attachmentCaptionTextStyle: widget.attachmentCaptionTextStyle,
+            message: message,
+            isMine: mine,
+            currentUserId: widget.currentUserId,
+            canDelete: widget.canDeleteMessage?.call(message) ?? mine,
+            canEdit: widget.canEditMessage?.call(message) ?? false,
+            onEdit: widget.onEditMessage == null
+                ? null
+                : () {
+                    final id = message.id;
+                    final text = message.content;
+                    unawaited(widget.onEditMessage!(id, text));
+                  },
+            onReact: widget.onReact == null
+                ? null
+                : (reaction) => widget.onReact!(message.id, reaction),
+            onRemoveReaction: widget.onRemoveReaction == null
+                ? null
+                : (messageId, reactionType) =>
+                    widget.onRemoveReaction!(messageId, reactionType),
+            onDelete:
+                widget.onDelete == null ? null : () => widget.onDelete!(message.id),
+            onMarkSeen: widget.onMarkSeen == null
+                ? null
+                : () => widget.onMarkSeen!(message.id),
+            enableReactions: widget.enableReactions,
+            reactionOptions: widget.reactionOptions,
+            onSwipeToReply: widget.onComposerReplyDraftChanged == null
+                ? null
+                : (MessengerChatMessage m) {
+                    widget.onComposerReplyDraftChanged!(
+                      MessengerComposerReplyDraft.fromMessage(m),
+                    );
+                    final focus = widget.composerFocusNode;
+                    if (focus != null) {
+                      SchedulerBinding.instance.addPostFrameCallback((_) {
+                        if (focus.canRequestFocus) {
+                          focus.requestFocus();
+                        }
+                      });
+                    }
+                  },
+          );
+
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (showDate) _DateSeparator(date: message.createdAt),
-              MessengerMessageBubble(
-                packageDialogTheme: widget.packageDialogTheme,
-                deleteActionTextStyle: Theme.of(context).textTheme.bodyMedium!,
-                attachmentCaptionTextStyle: widget.attachmentCaptionTextStyle,
-                message: message,
-                isMine: mine,
-                currentUserId: widget.currentUserId,
-                canDelete: widget.canDeleteMessage?.call(message) ?? mine,
-                canEdit: widget.canEditMessage?.call(message) ?? false,
-                onEdit: widget.onEditMessage == null
-                    ? null
-                    : () {
-                        final id = message.id;
-                        final text = message.content;
-                        unawaited(widget.onEditMessage!(id, text));
-                      },
-                onReact: widget.onReact == null
-                    ? null
-                    : (reaction) => widget.onReact!(message.id, reaction),
-                onRemoveReaction: widget.onRemoveReaction == null
-                    ? null
-                    : (messageId, reactionType) =>
-                        widget.onRemoveReaction!(messageId, reactionType),
-                onDelete:
-                    widget.onDelete == null ? null : () => widget.onDelete!(message.id),
-                onMarkSeen: widget.onMarkSeen == null
-                    ? null
-                    : () => widget.onMarkSeen!(message.id),
-                enableReactions: widget.enableReactions,
-                reactionOptions: widget.reactionOptions,
-                onSwipeToReply:
-                    widget.onComposerReplyDraftChanged == null
-                        ? null
-                        : (MessengerChatMessage m) {
-                            widget.onComposerReplyDraftChanged!(
-                              MessengerComposerReplyDraft.fromMessage(m),
-                            );
-                            final focus = widget.composerFocusNode;
-                            if (focus != null) {
-                              SchedulerBinding.instance
-                                  .addPostFrameCallback((_) {
-                                if (focus.canRequestFocus) {
-                                  focus.requestFocus();
-                                }
-                              });
-                            }
-                          },
-              ),
+              if (!mine && widget.onMarkSeen != null)
+                MessengerIncomingSeenReporter(
+                  enabled: true,
+                  onSeen: () => unawaited(widget.onMarkSeen!(message.id)),
+                  child: bubble,
+                )
+              else
+                bubble,
             ],
           );
         },
@@ -760,6 +768,8 @@ class _ThreadHeaderState extends State<_ThreadHeader> {
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
     final c = widget.conversation;
+    final showOnlinePresence =
+        c != null && !c.isGroup && c.isOnline != null;
     final menu = _overflowMenu(context, theme);
     return Container(
       decoration: BoxDecoration(
@@ -793,7 +803,7 @@ class _ThreadHeaderState extends State<_ThreadHeader> {
                         imageUrl: c?.avatarUrl,
                         compact: true,
                         size: 34,
-                        showOnlineIndicator: c?.isOnline != null,
+                        showOnlineIndicator: showOnlinePresence,
                         isOnline: c?.isOnline ?? false,
                       ),
                     ],
@@ -821,7 +831,7 @@ class _ThreadHeaderState extends State<_ThreadHeader> {
                   imageUrl: c?.avatarUrl,
                   compact: true,
                   size: 34,
-                  showOnlineIndicator: c?.isOnline != null,
+                  showOnlineIndicator: showOnlinePresence,
                   isOnline: c?.isOnline ?? false,
                 ),
                 const SizedBox(width: 10),

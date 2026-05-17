@@ -44,14 +44,18 @@ MessengerDeliveryStatus messengerDeliveryStatusFor(
   }
 
   final peerRead = message.readReceipts.any(
-    (r) => r.userId.isNotEmpty && r.userId != currentUserId,
+    (r) =>
+        r.userId.isNotEmpty &&
+        r.userId.trim() != currentUserId.trim(),
+  );
+  final peerDelivered = message.deliveredReceipts.any(
+    (r) =>
+        r.userId.isNotEmpty &&
+        r.userId.trim() != currentUserId.trim(),
   );
   if (peerRead) {
     return MessengerDeliveryStatus.seen;
   }
-  final peerDelivered = message.deliveredReceipts.any(
-    (r) => r.userId.isNotEmpty && r.userId != currentUserId,
-  );
   if (peerDelivered) {
     return MessengerDeliveryStatus.delivered;
   }

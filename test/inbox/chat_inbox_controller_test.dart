@@ -31,6 +31,10 @@ void main() {
       await controller.setActiveConversation('room-a');
 
       expect(fake.joinConversationLog, ['room-a']);
+      expect(fake.markConversationReadLog, isEmpty);
+
+      await controller.setThreadVisible(true);
+
       expect(fake.markConversationReadLog, ['room-a']);
 
       await controller.dispose();
@@ -72,6 +76,68 @@ void main() {
       expect(controller.unreadByConversation.value['c2'], 1);
       expect(fake.markAsDeliveredLog, contains('c2:m-ext'));
       expect(fake.markAsReadLog, isEmpty);
+
+      await controller.dispose();
+      await connection.close();
+    });
+
+    test('peer message does not mark read when thread is not visible', () async {
+      final fake = FakeChatRepository();
+      final client = ChatClient(
+        config: const ChatServiceConfig(
+          apiBaseUrl: 'http://localhost',
+          socketUrl: 'http://localhost',
+        ),
+        repository: fake,
+      );
+      final connection = StreamController<ChatConnectionState>.broadcast();
+      final controller = ChatInboxController(
+        client: client,
+        currentUserId: 'user-1',
+        connectionState: connection.stream,
+      );
+
+      await controller.setActiveConversation('c-open');
+      expect(fake.markConversationReadLog, isEmpty);
+
+      fake.emitSocket(
+        ChatSocketEvent(
+          type: ChatSocketEventType.messageReceived,
+          message: ChatMessage.fromJson({
+            'id': 'm1',
+            'conversationId': 'c-open',
+            'tenantId': 't',
+            'senderId': 'user-2',
+            'type': 'TEXT',
+            'content': 'hello',
+            'createdAt': DateTime.utc(2026).toIso8601String(),
+          }),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(fake.markAsReadLog, isEmpty);
+
+      await controller.setThreadVisible(true);
+      expect(fake.markConversationReadLog, ['c-open']);
+
+      fake.emitSocket(
+        ChatSocketEvent(
+          type: ChatSocketEventType.messageReceived,
+          message: ChatMessage.fromJson({
+            'id': 'm2',
+            'conversationId': 'c-open',
+            'tenantId': 't',
+            'senderId': 'user-2',
+            'type': 'TEXT',
+            'content': 'again',
+            'createdAt': DateTime.utc(2026, 1, 2).toIso8601String(),
+          }),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(fake.markAsReadLog, contains('c-open:m2'));
 
       await controller.dispose();
       await connection.close();
@@ -157,6 +223,7 @@ void main() {
       fake.markConversationReadLog.clear();
 
       await controller.setActiveConversation('room-z');
+      await controller.setThreadVisible(true);
       expect(fake.joinConversationLog.length, 1);
 
       fake.joinConversationLog.clear();

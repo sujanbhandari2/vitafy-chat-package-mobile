@@ -712,9 +712,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Selected people (0)'), findsOneWidget);
-    await tester.tap(find.text('Add').first);
+    await tester.tap(find.widgetWithText(FilledButton, 'Add').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Add').first);
+    await tester.tap(find.widgetWithText(FilledButton, 'Add').first);
     await tester.pumpAndSettle();
 
     expect(find.text('Selected people (2)'), findsOneWidget);
@@ -826,9 +826,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('New group'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Add').first);
+    await tester.tap(find.widgetWithText(FilledButton, 'Add').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Add').first);
+    await tester.tap(find.widgetWithText(FilledButton, 'Add').first);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Create group'));
@@ -878,7 +878,162 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Start New Chat'), findsNothing);
   });
+
+  testWidgets('start-new-chat sheet debounced search invokes host callback',
+      (tester) async {
+    final debounced = <String>[];
+    const users = [
+      MessengerUser(id: 'a', username: 'alice', roleLabel: ''),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 520,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: users,
+                startNewChatUsers: users,
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                startNewChatDirectory: MessengerStartNewChatDirectory(
+                  searchDebounce: const Duration(milliseconds: 180),
+                  onSearchQueryDebounced: debounced.add,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add_rounded));
+    await tester.pumpAndSettle();
+
+    final field = find.byType(TextField).last;
+    await tester.enterText(field, 'ali');
+    await tester.pump();
+    expect(debounced, isEmpty);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(debounced, ['ali']);
+  });
+
+  testWidgets(
+      'start-new-chat group selection survives directory user list replacement',
+      (tester) async {
+    final harnessKey = GlobalKey<_StartNewChatGroupSelectionHarnessState>();
+    final created = <MessengerUser>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _StartNewChatGroupSelectionHarness(
+          key: harnessKey,
+          created: created,
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add_rounded));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('New group'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Add').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Add').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Selected people (2)'), findsOneWidget);
+
+    harnessKey.currentState!.replaceUsers(const [
+      MessengerUser(id: 'c', username: 'cara_doe'),
+    ]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Selected people (2)'), findsOneWidget);
+
+    await tester.tap(find.text('Create group'));
+    await tester.pumpAndSettle();
+
+    expect(created.map((user) => user.id).toList(), ['a', 'b']);
+    expect(find.text('Start New Chat'), findsNothing);
+  });
 }
+
+class _StartNewChatGroupSelectionHarness extends StatefulWidget {
+  const _StartNewChatGroupSelectionHarness({
+    super.key,
+    required this.created,
+  });
+
+  final List<MessengerUser> created;
+
+  @override
+  State<_StartNewChatGroupSelectionHarness> createState() =>
+      _StartNewChatGroupSelectionHarnessState();
+}
+
+class _StartNewChatGroupSelectionHarnessState
+    extends State<_StartNewChatGroupSelectionHarness> {
+  static const _alice = MessengerUser(id: 'a', username: 'alice_jones');
+  static const _bob = MessengerUser(id: 'b', username: 'bob_smith');
+  static const _cara = MessengerUser(id: 'c', username: 'cara_doe');
+
+  List<MessengerUser> _users = const [_alice, _bob, _cara];
+
+  void replaceUsers(List<MessengerUser> users) {
+    setState(() => _users = users);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MessengerTheme(
+      data: const MessengerThemeData(),
+      child: Scaffold(
+        body: SizedBox(
+          height: 520,
+          width: 360,
+          child: MessengerConversationList(
+            currentUserName: 'me',
+            conversations: const [],
+            users: _users,
+            startNewChatUsers: _users,
+            selectedConversationId: null,
+            openingDirectUserId: '',
+            onRefresh: () async {},
+            onLogout: () {},
+            onOpenDirectChat: (_) async {},
+            onCreateGroupSelected: (selected) async {
+              widget.created
+                ..clear()
+                ..addAll(selected);
+            },
+            onSelectConversation: (_) async {},
+            searchVisibility: MessengerSearchVisibility.never,
+            showHeaderComposeButton: false,
+            startNewChatDirectory: const MessengerStartNewChatDirectory(
+              searchDebounce: Duration.zero,
+              onSearchQueryDebounced: _noopSearch,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+void _noopSearch(String _) {}
 
 class _StartNewChatSheetLiveHarness extends StatefulWidget {
   const _StartNewChatSheetLiveHarness({super.key});

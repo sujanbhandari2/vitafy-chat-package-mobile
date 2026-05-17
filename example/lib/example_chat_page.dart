@@ -10,23 +10,16 @@ import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 import 'dummy/associated_user_response.dart';
 import 'dummy/dummy_associated_users.dart';
 import 'example_models.dart';
-
-bool _hasExampleBootstrapConfig(ExampleBootstrapFormData data) {
-  return data.apiBaseUrl.trim().isNotEmpty &&
-      data.socketUrl.trim().isNotEmpty &&
-      data.apiKey.trim().isNotEmpty &&
-      data.externalTenantId.trim().isNotEmpty &&
-      data.externalUserId.trim().isNotEmpty &&
-      data.externalUserRole.trim().isNotEmpty &&
-      data.email.trim().isNotEmpty;
-}
+import 'example_chat_session_holder.dart';
 
 class ExampleChatPage extends StatefulWidget {
   const ExampleChatPage({
     super.key,
+    required this.session,
     this.initialData = const ExampleBootstrapFormData.initial(),
   });
 
+  final ChatSession session;
   final ExampleBootstrapFormData initialData;
 
   @override
@@ -41,7 +34,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
   /// When true, [MessengerChatShell.users] / suggested people use [kDummyAssociatedUsers].
   /// Set false to use live `getUsers` rows ([TenantUser]) instead.
-  static const bool _useDummyAssociatedUsers = true;
+  static const bool _useDummyAssociatedUsers = false;
 
   final TextEditingController _composerController = TextEditingController();
   final ScrollController _messagesScrollController = ScrollController();
@@ -57,6 +50,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   ChatAuth? _sessionAuth;
   ChatTenantScope? _tenantScope;
   TenantUser? _currentUser;
+
+  RemotePresenceStore? _remotePresenceStore;
+  Map<String, bool> _remotePresenceByUserId = const <String, bool>{};
+  VoidCallback? _remotePresenceListener;
 
   List<TenantUser> _users = const [];
   List<Conversation> _conversations = const [];
@@ -86,6 +83,18 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   String _suggestedPeopleOpeningUserId = '';
   String _suggestedPeopleSearchQuery = '';
   bool _isCreatingSuggestedGroup = false;
+
+  static const int _splitDirectoryPageSize = 8;
+  List<MessengerUser> _suggestedDirectoryVisible = const [];
+  List<MessengerUser> _startNewChatDirectoryVisible = const [];
+  int _suggestedDirLoaded = 0;
+  int _sheetDirLoaded = 0;
+  bool _suggestedDirHasMore = false;
+  bool _sheetDirHasMore = false;
+  bool _suggestedDirLoadingMore = false;
+  bool _sheetDirLoadingMore = false;
+  String _suggestedDirQuery = '';
+  String _sheetDirQuery = '';
 
   /// Until [ChatSession.bootstrap] completes, badge listenable has no inbox.
   final ValueNotifier<Map<String, int>> _preBootstrapUnread =
@@ -117,10 +126,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   @override
   void initState() {
     super.initState();
-    if (_hasExampleBootstrapConfig(widget.initialData)) {
-      _isBootstrapping = true;
-    }
-    unawaited(_bootstrapPackageFlow());
+    _isBootstrapping = true;
+    unawaited(_attachToSession(widget.session));
   }
 
   @override
@@ -200,6 +207,170 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
             .compareTo(right.username.toLowerCase());
       });
     return sorted;
+  }
+
+  List<MessengerUser> get _splitDirectoryPool =>
+      List<MessengerUser>.of(_uiUsers);
+
+  List<MessengerUser> _filterSplitDirectory(
+    List<MessengerUser> pool,
+    String query,
+  ) {
+    final t = query.trim().toLowerCase();
+    if (t.isEmpty) {
+      return pool;
+    }
+    return pool
+        .where(
+          (u) =>
+              u.username.toLowerCase().contains(t) ||
+              u.roleLabel.toLowerCase().contains(t) ||
+              u.id.toLowerCase().contains(t),
+        )
+        .toList(growable: false);
+  }
+
+  void _initSplitDirectoryPagesIfDummy() {
+    if (!_useDummyAssociatedUsers || !mounted) {
+      return;
+    }
+    final pool = _splitDirectoryPool;
+    final sFiltered = _filterSplitDirectory(pool, '');
+    final sFirst =
+        sFiltered.take(_splitDirectoryPageSize).toList(growable: false);
+    final shFiltered = _filterSplitDirectory(pool, '');
+    final shFirst =
+        shFiltered.take(_splitDirectoryPageSize).toList(growable: false);
+    setState(() {
+      _suggestedDirQuery = '';
+      _sheetDirQuery = '';
+      _suggestedDirectoryVisible = sFirst;
+      _suggestedDirLoaded = sFirst.length;
+      _suggestedDirHasMore = _suggestedDirLoaded < sFiltered.length;
+      _suggestedDirLoadingMore = false;
+      _startNewChatDirectoryVisible = shFirst;
+      _sheetDirLoaded = shFirst.length;
+      _sheetDirHasMore = _sheetDirLoaded < shFiltered.length;
+      _sheetDirLoadingMore = false;
+    });
+  }
+
+  MessengerSuggestedPeopleDirectory? get _exampleSuggestedDirectory {
+    if (!_useDummyAssociatedUsers) {
+      return null;
+    }
+    return MessengerSuggestedPeopleDirectory(
+      searchDebounce: const Duration(milliseconds: 300),
+      onSearchQueryDebounced: _onSuggestedDirectorySearch,
+      onNearEndOfList: _onSuggestedDirectoryNearEnd,
+      hasMore: _suggestedDirHasMore,
+      isLoadingMore: _suggestedDirLoadingMore,
+    );
+  }
+
+  MessengerStartNewChatDirectory? get _exampleStartNewChatDirectory {
+    if (!_useDummyAssociatedUsers) {
+      return null;
+    }
+    return MessengerStartNewChatDirectory(
+      searchDebounce: const Duration(milliseconds: 300),
+      onSearchQueryDebounced: _onSheetDirectorySearch,
+      onNearEndOfList: _onSheetDirectoryNearEnd,
+      hasMore: _sheetDirHasMore,
+      isLoadingMore: _sheetDirLoadingMore,
+    );
+  }
+
+  void _onSuggestedDirectorySearch(String query) {
+    if (!_useDummyAssociatedUsers || !mounted) {
+      return;
+    }
+    final filtered = _filterSplitDirectory(_splitDirectoryPool, query);
+    final first =
+        filtered.take(_splitDirectoryPageSize).toList(growable: false);
+    setState(() {
+      _suggestedDirQuery = query;
+      _suggestedDirectoryVisible = first;
+      _suggestedDirLoaded = first.length;
+      _suggestedDirHasMore = _suggestedDirLoaded < filtered.length;
+      _suggestedDirLoadingMore = false;
+    });
+  }
+
+  void _onSheetDirectorySearch(String query) {
+    if (!_useDummyAssociatedUsers || !mounted) {
+      return;
+    }
+    final filtered = _filterSplitDirectory(_splitDirectoryPool, query);
+    final first =
+        filtered.take(_splitDirectoryPageSize).toList(growable: false);
+    setState(() {
+      _sheetDirQuery = query;
+      _startNewChatDirectoryVisible = first;
+      _sheetDirLoaded = first.length;
+      _sheetDirHasMore = _sheetDirLoaded < filtered.length;
+      _sheetDirLoadingMore = false;
+    });
+  }
+
+  void _onSuggestedDirectoryNearEnd() {
+    if (!_useDummyAssociatedUsers ||
+        !mounted ||
+        _suggestedDirLoadingMore ||
+        !_suggestedDirHasMore) {
+      return;
+    }
+    setState(() => _suggestedDirLoadingMore = true);
+    Future<void>.delayed(const Duration(milliseconds: 140), () {
+      if (!mounted) {
+        return;
+      }
+      final filtered =
+          _filterSplitDirectory(_splitDirectoryPool, _suggestedDirQuery);
+      setState(() {
+        final next = filtered
+            .skip(_suggestedDirLoaded)
+            .take(_splitDirectoryPageSize)
+            .toList(growable: false);
+        _suggestedDirectoryVisible = [
+          ..._suggestedDirectoryVisible,
+          ...next,
+        ];
+        _suggestedDirLoaded += next.length;
+        _suggestedDirHasMore = _suggestedDirLoaded < filtered.length;
+        _suggestedDirLoadingMore = false;
+      });
+    });
+  }
+
+  void _onSheetDirectoryNearEnd() {
+    if (!_useDummyAssociatedUsers ||
+        !mounted ||
+        _sheetDirLoadingMore ||
+        !_sheetDirHasMore) {
+      return;
+    }
+    setState(() => _sheetDirLoadingMore = true);
+    Future<void>.delayed(const Duration(milliseconds: 140), () {
+      if (!mounted) {
+        return;
+      }
+      final filtered =
+          _filterSplitDirectory(_splitDirectoryPool, _sheetDirQuery);
+      setState(() {
+        final next = filtered
+            .skip(_sheetDirLoaded)
+            .take(_splitDirectoryPageSize)
+            .toList(growable: false);
+        _startNewChatDirectoryVisible = [
+          ..._startNewChatDirectoryVisible,
+          ...next,
+        ];
+        _sheetDirLoaded += next.length;
+        _sheetDirHasMore = _sheetDirLoaded < filtered.length;
+        _sheetDirLoadingMore = false;
+      });
+    });
   }
 
   Future<bool> _ensureSocketConnected() async {
@@ -418,6 +589,94 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     if (updateUi && mounted) {
       setState(() {});
     }
+  }
+
+  Future<void> _attachToSession(ChatSession session) async {
+    if (!mounted) {
+      return;
+    }
+    final tenantScope = session.tenantScope;
+    final registeredUser = session.currentUser;
+    final sessionAuth = session.sessionAuth;
+    if (tenantScope == null ||
+        registeredUser == null ||
+        sessionAuth == null) {
+      setState(() {
+        _isBootstrapping = false;
+        _statusText = 'ChatSession is not bootstrapped yet.';
+      });
+      return;
+    }
+
+    setState(() {
+      _session = session;
+      _sessionAuth = sessionAuth;
+      _tenantScope = tenantScope;
+      _currentUser = registeredUser;
+      _isSocketConnected = false;
+      _messagesByConversation.clear();
+      _typingUserIdsByConversation.clear();
+      _selectedConversationId = null;
+      _suggestedPeopleOpeningUserId = '';
+      _suggestedPeopleSearchQuery = '';
+      _isCreatingSuggestedGroup = false;
+      _isBootstrapping = true;
+      _statusText = 'Attached to chat session · loading inbox…';
+    });
+
+    // Subscribe to remote presence updates (other users' online/offline
+    // state). Own presence is handled by `ChatSession.ownPresence`.
+    _remotePresenceStore = session.remotePresence;
+    _remotePresenceByUserId = _remotePresenceStore!.onlineByUserId.value;
+    _remotePresenceListener = () {
+      final store = _remotePresenceStore;
+      if (store == null) {
+        return;
+      }
+      final next = store.onlineByUserId.value;
+      final prev = _remotePresenceByUserId;
+
+      // Diff maps to avoid calling `_applyPresenceUpdate` for unchanged users.
+      for (final entry in next.entries) {
+        final uid = entry.key;
+        final nextOnline = entry.value;
+        final prevOnline = prev[uid];
+        if (prevOnline == nextOnline) {
+          continue;
+        }
+        _applyPresenceUpdate(uid, nextOnline);
+      }
+      // Treat removals as offline (best-effort; current store doesn't
+      // remove keys, it only flips boolean values).
+      for (final uid in prev.keys) {
+        if (!next.containsKey(uid)) {
+          _applyPresenceUpdate(uid, false);
+        }
+      }
+
+      _remotePresenceByUserId = next;
+    };
+    _remotePresenceStore!.onlineByUserId.addListener(_remotePresenceListener!);
+
+    _listenToSocketEvents(session.client);
+    await _refreshAll(selectFirstConversation: true);
+    if (!mounted) {
+      return;
+    }
+
+    for (final entry
+        in _remotePresenceStore!.onlineByUserId.value.entries) {
+      _applyPresenceUpdate(entry.key, entry.value);
+    }
+
+    await _setupPushAfterBootstrap(session);
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _isBootstrapping = false;
+    });
   }
 
   Future<void> _bootstrapPackageFlow() async {
@@ -648,6 +907,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                 : 'Data refreshed (REST-only, socket disconnected).';
           });
         }
+        _initSplitDirectoryPagesIfDummy();
         unawaited(_fetchTenantUsersInBackground(client, auth));
         return;
       }
@@ -1573,15 +1833,65 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         }),
       );
     }
-    if (_isDraftConversationId(id)) {
-      if (!mounted) {
-        return;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      if (_selectedConversationId == id) {
+        _selectedConversationId = null;
+        _composerReplyDraft = null;
       }
-      setState(() {
-        if (_selectedConversationId == id) {
-          _selectedConversationId = null;
-        }
-      });
+    });
+  }
+
+  void _onThreadVisibilityChanged(bool visible) {
+    unawaited(_session?.setThreadVisible(visible) ?? Future<void>.value());
+  }
+
+  Future<void> _markMessageSeen(String messageId) async {
+    final client = _client;
+    final conversationId = _selectedConversationId?.trim();
+    final currentUserId = _currentUser?.id;
+    if (client == null ||
+        conversationId == null ||
+        conversationId.isEmpty ||
+        currentUserId == null) {
+      return;
+    }
+
+    final messages = _messagesByConversation[conversationId] ?? const [];
+    final index = messages.indexWhere((m) => m.id == messageId);
+    if (index == -1) {
+      return;
+    }
+    final message = messages[index];
+    if (message.senderId == currentUserId || message.isDeleted) {
+      return;
+    }
+
+    try {
+      final receipt = await client.markAsRead(
+        conversationId: conversationId,
+        messageId: messageId,
+      );
+      final existing = messages[index];
+      final nextReceipts = List<ReadReceipt>.from(existing.readReceipts)
+        ..removeWhere((r) => r.userId == receipt.userId)
+        ..add(receipt);
+      _upsertMessage(
+        conversationId,
+        existing.copyWith(readReceipts: nextReceipts),
+      );
+    } catch (error, stackTrace) {
+      _appendLog(
+        'Mark message seen failed',
+        data: {
+          'messageId': messageId,
+          'conversationId': conversationId,
+          'error': error.toString(),
+          'stackTrace': stackTrace.toString(),
+        },
+      );
     }
   }
 
@@ -1766,6 +2076,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     }
     try {
       await _disposeActiveClient();
+      await ExampleChatSessionHolderScope.of(context).logout();
     } finally {
       if (mounted) {
         setState(() => _isLoggingOut = false);
@@ -1799,12 +2110,16 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     await _teardownPushIntegration(updateUi: false);
     await _socketSubscription?.cancel();
     _socketSubscription = null;
-    final session = _session;
     _session = null;
     _isSocketConnected = false;
-    if (session != null) {
-      await session.dispose();
+    if (_remotePresenceStore != null && _remotePresenceListener != null) {
+      _remotePresenceStore!
+          .onlineByUserId
+          .removeListener(_remotePresenceListener!);
     }
+    _remotePresenceStore = null;
+    _remotePresenceListener = null;
+    _remotePresenceByUserId = const <String, bool>{};
   }
 
   void _listenToSocketEvents(ChatClient client) {
@@ -1949,16 +2264,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         }
         break;
       case ChatSocketEventType.userOnline:
-        final presence = event.presence;
-        if (presence != null) {
-          _applyPresenceUpdate(presence.userId, true);
-        }
+        // Own presence is handled via session-level presence state machine.
+        // Remote presence is synchronized via `session.remotePresence`.
         break;
       case ChatSocketEventType.userOffline:
-        final presence = event.presence;
-        if (presence != null) {
-          _applyPresenceUpdate(presence.userId, false);
-        }
+        // See `ChatSocketEventType.userOnline`.
         break;
     }
   }
@@ -2284,6 +2594,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     ChatMessage? latestMessage,
     String? latestMessageId,
     Map<String, ConversationMessageStatus>? messageStatusByUserId,
+    ConversationMessageStatus? messageState,
   }) {
     return Conversation(
       id: conversation.id,
@@ -2297,12 +2608,16 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       unreadCount: unreadCount ?? conversation.unreadCount,
       latestMessage: latestMessage ?? conversation.latestMessage,
       latestMessageId: latestMessageId ?? conversation.latestMessageId,
+      messageState: messageState ?? conversation.messageState,
       messageStatusByUserId:
           messageStatusByUserId ?? conversation.messageStatusByUserId,
     );
   }
 
   void _applyPresenceUpdate(String userId, bool isOnline) {
+    if (!mounted) {
+      return;
+    }
     setState(() {
       _users = _users
           .map(
@@ -2357,6 +2672,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                   )
                   .toList(),
               latestMessage: conversation.latestMessage,
+              latestMessageId: conversation.latestMessageId,
+              messageState: conversation.messageState,
+              messageStatusByUserId: conversation.messageStatusByUserId,
             ),
           )
           .toList();
@@ -3170,7 +3488,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           composerFocusNode: _composerFocusNode,
                           currentUserId: _currentUser?.id ?? '',
                           currentUserName: currentUserName,
-                          isConversationListLoading:
+                          isListPaneRefreshing:
                               _isConversationListLoading || _isBootstrapping,
                           startNewChatUsersLoading: _isSuggestedUsersLoading,
                           conversations: _mapConversations(
@@ -3178,6 +3496,14 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                             orderSnapshot,
                           ),
                           users: _uiUsers,
+                          suggestedUsers: _useDummyAssociatedUsers
+                              ? _suggestedDirectoryVisible
+                              : null,
+                          suggestedDirectory: _exampleSuggestedDirectory,
+                          startNewChatUsers: _useDummyAssociatedUsers
+                              ? _startNewChatDirectoryVisible
+                              : null,
+                          startNewChatDirectory: _exampleStartNewChatDirectory,
                           selectedConversationId: _selectedConversationId,
                           messages: _activeMessages,
                           composerController: _composerController,
@@ -3225,6 +3551,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           prepareOutgoingConversation:
                               _prepareOutgoingConversationForShell,
                           onMobileThreadClosed: _onMobileThreadClosed,
+                          onThreadVisibilityChanged: _onThreadVisibilityChanged,
                           onSend: () => unawaited(_sendMessage()),
                           onPickImage: () {},
                           onPickAudio: () {},
@@ -3277,7 +3604,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           onReact: _reactToMessage,
                           onRemoveReaction: _removeReactionFromMessage,
                           onDelete: _handleDelete,
-                          onMarkSeen: null,
+                          onMarkSeen: _markMessageSeen,
                           canDeleteMessage: _canDeleteMessage,
                           searchVisibility: MessengerSearchVisibility.always,
                           searchInputTextStyle: const TextStyle(

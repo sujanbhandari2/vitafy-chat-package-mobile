@@ -181,6 +181,7 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
                                       _DeliveryTick(
                                         status:
                                             widget.message.deliveryStatus,
+                                        bubbleColor: bubbleColor,
                                       ),
                                     ],
                                   ],
@@ -601,9 +602,16 @@ class _BubbleQuotedReply extends StatelessWidget {
 }
 
 class _DeliveryTick extends StatelessWidget {
-  const _DeliveryTick({required this.status});
+  const _DeliveryTick({
+    required this.status,
+    required this.bubbleColor,
+  });
 
   final MessengerDeliveryStatus status;
+  final Color bubbleColor;
+
+  static const double _chipSize = 16;
+  static const double _iconSize = 11;
 
   @override
   Widget build(BuildContext context) {
@@ -614,11 +622,44 @@ class _DeliveryTick extends StatelessWidget {
 
     final icon =
         status == MessengerDeliveryStatus.sent ? Icons.done : Icons.done_all;
-    final color = status == MessengerDeliveryStatus.seen
+    final iconColor = status == MessengerDeliveryStatus.seen
         ? theme.primary
         : theme.mutedText;
 
-    return Icon(icon, size: 14, color: color);
+    // White chip on dark outgoing bubbles so blue "seen" ticks stay visible.
+    final onDarkBubble = bubbleColor.computeLuminance() < 0.45;
+    final chipFill = onDarkBubble ? Colors.white : theme.surface;
+    final chipBorder = onDarkBubble
+        ? null
+        : Border.all(color: theme.border.withValues(alpha: 0.7));
+
+    return Semantics(
+      label: _semanticsLabel(status),
+      child: Container(
+        width: _chipSize,
+        height: _chipSize,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: chipFill,
+          shape: BoxShape.circle,
+          border: chipBorder,
+        ),
+        child: Icon(icon, size: _iconSize, color: iconColor),
+      ),
+    );
+  }
+
+  static String _semanticsLabel(MessengerDeliveryStatus status) {
+    switch (status) {
+      case MessengerDeliveryStatus.none:
+        return '';
+      case MessengerDeliveryStatus.sent:
+        return 'Message sent';
+      case MessengerDeliveryStatus.delivered:
+        return 'Message delivered';
+      case MessengerDeliveryStatus.seen:
+        return 'Message seen';
+    }
   }
 }
 

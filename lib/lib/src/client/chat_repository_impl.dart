@@ -28,6 +28,14 @@ class BackendChatRepositoryImpl implements ChatRepository {
   void disconnectSocket() => _socketApi.disconnect();
 
   @override
+  void emitGoingOffline({
+    required String userId,
+    required String reason,
+  }) {
+    _socketApi.emitGoingOffline(userId: userId, reason: reason);
+  }
+
+  @override
   Future<ChatTenantScope> getTenantScope(ChatAuth auth) async {
     final payload = await _chatApi.getTenantScope(auth);
     return ChatTenantScope.fromJson(payload);

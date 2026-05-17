@@ -291,14 +291,18 @@ void main() {
       ),
     );
 
-    final chipFinder = find.byWidgetPredicate(
-      (widget) =>
-          widget is Container &&
-          widget.decoration is BoxDecoration &&
-          (widget.decoration! as BoxDecoration).shape == BoxShape.circle,
-    );
+    await tester.pumpAndSettle();
 
-    expect(chipFinder, findsWidgets);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Container &&
+            widget.decoration is BoxDecoration &&
+            (widget.decoration! as BoxDecoration).shape == BoxShape.circle &&
+            (widget.decoration! as BoxDecoration).color == Colors.white,
+      ),
+      findsOneWidget,
+    );
     expect(
       find.byWidgetPredicate(
         (widget) =>

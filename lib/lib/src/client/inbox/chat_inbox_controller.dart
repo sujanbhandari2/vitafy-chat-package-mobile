@@ -74,9 +74,27 @@ class ChatInboxController {
   StreamSubscription<ChatConnectionState>? _connectionSubscription;
 
   String? _activeConversationId;
+  bool _threadVisible = false;
 
   /// Currently focused conversation id, if any.
   String? get activeConversationId => _activeConversationId;
+
+  /// Whether the message thread UI is on screen for [activeConversationId].
+  bool get threadVisible => _threadVisible;
+
+  /// Host/shell should call when the thread pane opens or closes.
+  ///
+  /// Read receipts and [markConversationRead] run only while visible so list-only
+  /// or background selection does not mark messages seen.
+  Future<void> setThreadVisible(bool visible) async {
+    if (_threadVisible == visible) {
+      return;
+    }
+    _threadVisible = visible;
+    if (visible) {
+      await _markActiveConversationRead();
+    }
+  }
 
   ValueListenable<Map<String, int>> get unreadByConversation => _unreadNotifier;
 
@@ -151,23 +169,35 @@ class ChatInboxController {
     _activeConversationId = next;
 
     if (next == null) {
+      _threadVisible = false;
       return;
     }
 
     if (previous == next) {
-      await _joinAndMarkRead(next);
+      await _joinActiveRoom(next);
+      if (_threadVisible) {
+        await _markActiveConversationRead();
+      }
       return;
     }
 
     // Optimistic clear only when switching threads (matches web selectConversation).
     clearLocalUnread(next);
-    await _joinAndMarkRead(next);
+    await _joinActiveRoom(next);
+    if (_threadVisible) {
+      await _markActiveConversationRead();
+    }
   }
 
-  Future<void> _joinAndMarkRead(String conversationId) async {
+  Future<void> _joinActiveRoom(String conversationId) async {
     try {
       await _client.joinConversation(conversationId);
-    } catch (_) {
+    } catch (_) {}
+  }
+
+  Future<void> _markActiveConversationRead() async {
+    final conversationId = _activeConversationId?.trim();
+    if (conversationId == null || conversationId.isEmpty) {
       return;
     }
     try {
@@ -186,7 +216,12 @@ class ChatInboxController {
     if (state == ChatConnectionState.connected) {
       final active = _activeConversationId;
       if (active != null) {
-        unawaited(_joinAndMarkRead(active));
+        unawaited(() async {
+          await _joinActiveRoom(active);
+          if (_threadVisible) {
+            await _markActiveConversationRead();
+          }
+        }());
       }
     }
   }
@@ -307,7 +342,7 @@ class ChatInboxController {
       }
     }
 
-    if (message.conversationId == _activeConversationId) {
+    if (_threadVisible && message.conversationId == _activeConversationId) {
       if (!_readEmitted.contains(msgId)) {
         _readEmitted.add(msgId);
         try {

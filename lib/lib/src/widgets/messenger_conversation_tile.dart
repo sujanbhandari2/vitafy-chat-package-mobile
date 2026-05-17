@@ -29,7 +29,9 @@ class MessengerConversationTile extends StatelessWidget {
         : DateFormat('M/d/yy').format(date);
 
     final hasUnread = conversation.unreadCount > 0;
-    final showPresenceDot = hasUnread || conversation.isOnline != null;
+    final showOnlinePresence =
+        !conversation.isGroup && conversation.isOnline != null;
+    final showPresenceDot = hasUnread || showOnlinePresence;
 
     return InkWell(
       onTap: onTap,

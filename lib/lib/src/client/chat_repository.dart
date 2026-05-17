@@ -12,6 +12,15 @@ abstract class ChatRepository {
   Future<void> connectSocket(ChatAuth auth);
   void disconnectSocket();
 
+  /// Best-effort client → server presence hint before the socket goes away.
+  ///
+  /// The server is expected to handle it alongside disconnect; presence is
+  /// ultimately authoritative via server socket ref-count / heartbeats.
+  void emitGoingOffline({
+    required String userId,
+    required String reason,
+  });
+
   Stream<ChatSocketEvent> get socketEvents;
 
   Future<ChatTenantScope> getTenantScope(ChatAuth auth);

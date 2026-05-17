@@ -73,6 +73,22 @@ class FakeChatRepository implements ChatRepository {
     disconnectSocketCalls++;
   }
 
+  int emitGoingOfflineCalls = 0;
+  final List<Map<String, String>> goingOfflineLog =
+      <Map<String, String>>[];
+
+  @override
+  void emitGoingOffline({
+    required String userId,
+    required String reason,
+  }) {
+    emitGoingOfflineCalls++;
+    goingOfflineLog.add(<String, String>{
+      'userId': userId,
+      'reason': reason,
+    });
+  }
+
   @override
   Future<ChatTenantScope> getTenantScope(ChatAuth auth) async {
     return _tenantScope;

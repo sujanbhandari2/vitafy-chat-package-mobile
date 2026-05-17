@@ -6,6 +6,7 @@ import '../models/messenger_conversation.dart';
 import '../models/messenger_group_create_request.dart';
 import '../models/messenger_search_visibility.dart';
 import '../models/messenger_user.dart';
+import '../models/messenger_user_directory.dart';
 import '../theme/messenger_theme.dart';
 import 'messenger_avatar.dart';
 import 'messenger_default_inline_loading.dart';
@@ -116,6 +117,8 @@ class MessengerConversationList extends StatefulWidget {
     this.groupNameFieldLabelText = 'Group name',
     this.groupNameFieldHintText = 'Enter a group name',
     this.groupNameRequiredErrorText = 'Enter a group name to continue.',
+    this.startNewChatUsers,
+    this.startNewChatDirectory,
   });
 
   final String currentUserName;
@@ -185,6 +188,14 @@ class MessengerConversationList extends StatefulWidget {
   final String groupNameFieldHintText;
   final String groupNameRequiredErrorText;
 
+  /// Optional directory rows for the **Start New Chat** sheet only.
+  ///
+  /// When null, the sheet uses [users] (existing behavior).
+  final List<MessengerUser>? startNewChatUsers;
+
+  /// Debounced server search and/or pagination for the Start New Chat sheet.
+  final MessengerStartNewChatDirectory? startNewChatDirectory;
+
   @override
   State<MessengerConversationList> createState() =>
       _MessengerConversationListState();
@@ -219,12 +230,20 @@ class _StartNewChatSheetLiveData {
     required this.isUsersLoading,
     required this.openingDirectUserId,
     required this.isCreatingGroup,
+    required this.directoryHasMore,
+    required this.directoryLoadingMore,
   });
 
   final List<MessengerUser> sortedUsers;
   final bool isUsersLoading;
   final String openingDirectUserId;
   final bool isCreatingGroup;
+
+  /// Snapshot from [MessengerConversationList.startNewChatDirectory] so the
+  /// modal sheet footer reflects pagination without relying on modal [Element]
+  /// updates for a new directory instance.
+  final bool directoryHasMore;
+  final bool directoryLoadingMore;
 }
 
 class _MessengerConversationListState extends State<MessengerConversationList> {
@@ -234,7 +253,8 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
   ValueNotifier<_StartNewChatSheetLiveData>? _startNewChatSheetLive;
 
   List<MessengerUser> _sortedUsersForStartNewChatSheet() {
-    final sorted = [...widget.users]..sort((a, b) {
+    final source = widget.startNewChatUsers ?? widget.users;
+    final sorted = [...source]..sort((a, b) {
         if (a.isOnline == b.isOnline) {
           return a.username.toLowerCase().compareTo(b.username.toLowerCase());
         }
@@ -244,11 +264,14 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
   }
 
   _StartNewChatSheetLiveData _buildStartNewChatSheetLiveData() {
+    final d = widget.startNewChatDirectory;
     return _StartNewChatSheetLiveData(
       sortedUsers: _sortedUsersForStartNewChatSheet(),
       isUsersLoading: widget.startNewChatUsersLoading,
       openingDirectUserId: widget.openingDirectUserId,
       isCreatingGroup: widget.isCreatingGroup,
+      directoryHasMore: d?.hasMore ?? false,
+      directoryLoadingMore: d?.isLoadingMore ?? false,
     );
   }
 
@@ -275,7 +298,6 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
 
   @override
   void dispose() {
-    _startNewChatSheetLive?.dispose();
     _startNewChatSheetLive = null;
     _searchController.removeListener(_handleSearchChange);
     _searchController.dispose();
@@ -299,6 +321,14 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
       }
     }
     return null;
+  }
+
+  bool _peerEntryShowsOnlinePresence(_PeerListEntry entry) {
+    if (!entry.isConversationRow) {
+      return true;
+    }
+    final conversation = _conversationForId(entry.conversationId);
+    return conversation != null && !conversation.isGroup;
   }
 
   bool get _hasPeerUsers => widget.conversations
@@ -580,6 +610,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
       isSelected: data.isSelected,
       messagePreview: data.messagePreview,
       hasUnread: data.hasUnread,
+      showOnlinePresence: _peerEntryShowsOnlinePresence(entry),
       style: widget.userListItemStyle,
     );
   }
@@ -788,7 +819,8 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     final searchRadius = widget.searchFieldBorderRadius ?? 12;
 
     _startNewChatSheetLive?.dispose();
-    _startNewChatSheetLive = ValueNotifier(_buildStartNewChatSheetLiveData());
+    final sheetLive = ValueNotifier(_buildStartNewChatSheetLiveData());
+    _startNewChatSheetLive = sheetLive;
 
     try {
       await showModalBottomSheet<void>(
@@ -798,7 +830,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
         builder: (sheetContext) => _StartNewChatBottomSheet(
-          sheetLive: _startNewChatSheetLive!,
+          sheetLive: sheetLive,
           searchBackgroundColor: searchBg,
           searchIconColor: searchIconColor,
           searchHintStyle: searchHintStyle,
@@ -815,11 +847,13 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
           groupNameFieldLabelText: widget.groupNameFieldLabelText,
           groupNameFieldHintText: widget.groupNameFieldHintText,
           groupNameRequiredErrorText: widget.groupNameRequiredErrorText,
+          startNewChatDirectory: widget.startNewChatDirectory,
         ),
       );
     } finally {
-      _startNewChatSheetLive?.dispose();
-      _startNewChatSheetLive = null;
+      if (identical(_startNewChatSheetLive, sheetLive)) {
+        _startNewChatSheetLive = null;
+      }
     }
   }
 
@@ -895,6 +929,7 @@ class _StartNewChatBottomSheet extends StatefulWidget {
     this.groupNameFieldLabelText = 'Group name',
     this.groupNameFieldHintText = 'Enter a group name',
     this.groupNameRequiredErrorText = 'Enter a group name to continue.',
+    this.startNewChatDirectory,
   });
 
   final ValueNotifier<_StartNewChatSheetLiveData> sheetLive;
@@ -916,6 +951,7 @@ class _StartNewChatBottomSheet extends StatefulWidget {
   final String groupNameFieldLabelText;
   final String groupNameFieldHintText;
   final String groupNameRequiredErrorText;
+  final MessengerStartNewChatDirectory? startNewChatDirectory;
 
   @override
   State<_StartNewChatBottomSheet> createState() =>
@@ -925,10 +961,19 @@ class _StartNewChatBottomSheet extends StatefulWidget {
 class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
   late final TextEditingController _searchController;
   late final TextEditingController _groupNameController;
+  late final ScrollController _listScrollController;
   String _query = '';
   bool _isGroupSelectionMode = false;
   List<String> _selectedUserIds = const <String>[];
+  final Map<String, MessengerUser> _selectedUsersById = {};
   String? _groupNameErrorText;
+  Timer? _searchDebounceTimer;
+  bool _nearEndConsumed = false;
+  int _trackedSortedLen = -1;
+  bool _lastSheetDirectoryLoadingMore = false;
+
+  bool get _serverSearchMode =>
+      widget.startNewChatDirectory?.onSearchQueryDebounced != null;
 
   bool get _canCreateGroup =>
       widget.onCreateGroupSelected != null ||
@@ -943,13 +988,101 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
     super.initState();
     _searchController = TextEditingController();
     _groupNameController = TextEditingController();
+    _listScrollController = ScrollController();
+    _lastSheetDirectoryLoadingMore =
+        widget.sheetLive.value.directoryLoadingMore;
+    widget.sheetLive.addListener(_onSheetLiveChanged);
+    _attachDirectoryScrollListener();
+  }
+
+  void _onSheetLiveChanged() {
+    final data = widget.sheetLive.value;
+    if (_lastSheetDirectoryLoadingMore && !data.directoryLoadingMore) {
+      _nearEndConsumed = false;
+    }
+    _lastSheetDirectoryLoadingMore = data.directoryLoadingMore;
+  }
+
+  void _attachDirectoryScrollListener() {
+    _listScrollController.removeListener(_onDirectoryScroll);
+    if (widget.startNewChatDirectory?.onNearEndOfList != null) {
+      _listScrollController.addListener(_onDirectoryScroll);
+    }
+  }
+
+  void _onDirectoryScroll() {
+    final d = widget.startNewChatDirectory;
+    final live = widget.sheetLive.value;
+    if (d == null ||
+        d.onNearEndOfList == null ||
+        !live.directoryHasMore ||
+        live.directoryLoadingMore) {
+      return;
+    }
+    if (!_listScrollController.hasClients) {
+      return;
+    }
+    final pos = _listScrollController.position;
+    if (pos.maxScrollExtent <= 0) {
+      return;
+    }
+    if (pos.pixels >= pos.maxScrollExtent - 80) {
+      if (_nearEndConsumed) {
+        return;
+      }
+      _nearEndConsumed = true;
+      d.onNearEndOfList!();
+    } else if (pos.pixels < pos.maxScrollExtent - 120) {
+      _nearEndConsumed = false;
+    }
+  }
+
+  void _handleSearchChanged(String raw) {
+    setState(() {
+      _query = raw.trim().toLowerCase();
+    });
+    final debounced = widget.startNewChatDirectory?.onSearchQueryDebounced;
+    if (debounced == null) {
+      return;
+    }
+    _searchDebounceTimer?.cancel();
+    final delay = widget.startNewChatDirectory!.searchDebounce;
+    void emit() {
+      if (!mounted) {
+        return;
+      }
+      debounced(_searchController.text.trim());
+    }
+
+    if (delay == Duration.zero) {
+      emit();
+    } else {
+      _searchDebounceTimer = Timer(delay, emit);
+    }
   }
 
   @override
   void dispose() {
+    widget.sheetLive.removeListener(_onSheetLiveChanged);
+    widget.sheetLive.dispose();
+    _searchDebounceTimer?.cancel();
+    _listScrollController.removeListener(_onDirectoryScroll);
+    _listScrollController.dispose();
     _searchController.dispose();
     _groupNameController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant _StartNewChatBottomSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldLive = oldWidget.sheetLive.value;
+    final newLive = widget.sheetLive.value;
+    if (oldLive.directoryLoadingMore == true &&
+        newLive.directoryLoadingMore != true) {
+      _nearEndConsumed = false;
+    }
+    _attachDirectoryScrollListener();
   }
 
   @override
@@ -961,18 +1094,30 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
   }
 
   Widget _buildSheet(BuildContext context, _StartNewChatSheetLiveData data) {
-    final q = _query.toLowerCase();
-    final filteredUsers = _query.isEmpty
-        ? data.sortedUsers
-        : data.sortedUsers
-            .where(
-              (user) =>
-                  user.username.toLowerCase().contains(q) ||
-                  user.roleLabel.toLowerCase().contains(q) ||
-                  user.id.toLowerCase().contains(q),
-            )
-            .toList(growable: false);
-    final selectedUsers = _selectedUsersFrom(data.sortedUsers);
+    final len = data.sortedUsers.length;
+    if (len != _trackedSortedLen) {
+      _trackedSortedLen = len;
+      _nearEndConsumed = false;
+    }
+
+    final q = _query;
+    final List<MessengerUser> filteredUsers;
+    if (_serverSearchMode || q.isEmpty) {
+      filteredUsers = data.sortedUsers;
+    } else {
+      filteredUsers = data.sortedUsers
+          .where(
+            (user) =>
+                user.username.toLowerCase().contains(q) ||
+                user.roleLabel.toLowerCase().contains(q) ||
+                user.id.toLowerCase().contains(q),
+          )
+          .toList(growable: false);
+    }
+    if (_serverSearchMode) {
+      _refreshSelectedUsersCacheFrom(data.sortedUsers);
+    }
+    final selectedUsers = _resolveSelectedUsersFrom(data.sortedUsers);
     final visibleUsers = _isGroupSelectionMode
         ? filteredUsers
             .where((user) => !_selectedUserIds.contains(user.id.trim()))
@@ -1073,12 +1218,10 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
                   iconColor: widget.searchIconColor,
                   borderRadius: widget.searchBorderRadius,
                   contentPadding: widget.searchContentPadding,
-                  onChanged: (value) => setState(() {
-                    _query = value.trim().toLowerCase();
-                  }),
+                  onChanged: _handleSearchChanged,
                   onClear: () {
                     _searchController.clear();
-                    setState(() => _query = '');
+                    _handleSearchChanged('');
                   },
                 ),
                 if (_isGroupSelectionMode) ...[
@@ -1149,57 +1292,15 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
                   child: data.isUsersLoading && visibleUsers.isEmpty
                       ? const MessengerDefaultInlineLoading()
                       : visibleUsers.isEmpty
-                          ? Align(
-                              alignment: Alignment.topCenter,
-                              child: Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 12),
-                                child: _isGroupSelectionMode
-                                    ? Text(
-                                        _query.isEmpty
-                                            ? 'No more people available to add right now.'
-                                            : 'No people match your search.',
-                                        style:
-                                            TextStyle(color: theme.subtleText),
-                                      )
-                                    : widget.emptyUsersBuilder?.call(context) ??
-                                        Text(
-                                          widget.emptyUsersMessage,
-                                          style: TextStyle(
-                                              color: theme.subtleText),
-                                        ),
-                              ),
+                          ? _buildStartNewChatEmptyBody(
+                              context,
+                              theme,
                             )
-                          : ListView.separated(
-                              padding: EdgeInsets.zero,
-                              itemCount: visibleUsers.length,
-                              separatorBuilder: (_, __) =>
-                                  const SizedBox(height: 8),
-                              itemBuilder: (context, index) {
-                                final user = visibleUsers[index];
-                                return _DirectUserTile(
-                                  user: user,
-                                  isOpening: !_isGroupSelectionMode &&
-                                      _isDirectOpenBusyForUser(
-                                        data.openingDirectUserId,
-                                        user.id,
-                                      ),
-                                  onTap: _isGroupSelectionMode
-                                      ? () => _addSelectedUser(user)
-                                      : () {
-                                          final open = widget.onOpenDirectChat;
-                                          final u = user;
-                                          Navigator.of(context).pop();
-                                          open(u);
-                                        },
-                                  showChatButton: true,
-                                  actionLabel:
-                                      _isGroupSelectionMode ? 'Add' : 'Chat',
-                                  isSelected: false,
-                                  messagePreview: null,
-                                  hasUnread: false,
-                                );
-                              },
+                          : _buildStartNewChatUserList(
+                              context,
+                              data,
+                              theme,
+                              visibleUsers,
                             ),
                 ),
               ],
@@ -1207,6 +1308,112 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildStartNewChatEmptyBody(
+    BuildContext context,
+    MessengerThemeData theme,
+  ) {
+    final isSearchActive = _searchController.text.trim().isNotEmpty;
+    final emptyStyle = TextStyle(color: theme.subtleText);
+    if (_isGroupSelectionMode) {
+      return Align(
+        alignment: Alignment.topCenter,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Text(
+            _query.isEmpty
+                ? 'No more people available to add right now.'
+                : 'No people match your search.',
+            style: emptyStyle,
+          ),
+        ),
+      );
+    }
+    if (isSearchActive) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          child: Text(
+            'No users found',
+            textAlign: TextAlign.center,
+            style: emptyStyle,
+          ),
+        ),
+      );
+    }
+    return Align(
+      alignment: Alignment.topCenter,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: widget.emptyUsersBuilder?.call(context) ??
+            Text(
+              widget.emptyUsersMessage,
+              style: emptyStyle,
+            ),
+      ),
+    );
+  }
+
+  Widget _buildStartNewChatUserList(
+    BuildContext context,
+    _StartNewChatSheetLiveData data,
+    MessengerThemeData theme,
+    List<MessengerUser> visibleUsers,
+  ) {
+    final dir = widget.startNewChatDirectory;
+    final loadingFooter = dir != null &&
+        data.directoryLoadingMore &&
+        dir.onNearEndOfList != null;
+    final extra = loadingFooter ? 1 : 0;
+    final itemCount = visibleUsers.length + extra;
+
+    return ListView.separated(
+      controller: _listScrollController,
+      padding: EdgeInsets.zero,
+      itemCount: itemCount,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (context, index) {
+        if (loadingFooter && index == visibleUsers.length) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: theme.primary,
+                ),
+              ),
+            ),
+          );
+        }
+        final user = visibleUsers[index];
+        return _DirectUserTile(
+          user: user,
+          isOpening: !_isGroupSelectionMode &&
+              _isDirectOpenBusyForUser(
+                data.openingDirectUserId,
+                user.id,
+              ),
+          onTap: _isGroupSelectionMode
+              ? () => _addSelectedUser(user)
+              : () {
+                  final open = widget.onOpenDirectChat;
+                  final u = user;
+                  Navigator.of(context).pop();
+                  open(u);
+                },
+          showChatButton: true,
+          actionLabel: _isGroupSelectionMode ? 'Add' : 'Chat',
+          isSelected: false,
+          messagePreview: null,
+          hasUnread: false,
+          showOnlinePresence: false,
+        );
+      },
     );
   }
 
@@ -1218,6 +1425,7 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
     setState(() {
       _isGroupSelectionMode = true;
       _selectedUserIds = const <String>[];
+      _selectedUsersById.clear();
       _groupNameErrorText = null;
     });
   }
@@ -1226,6 +1434,7 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
     setState(() {
       _isGroupSelectionMode = false;
       _selectedUserIds = const <String>[];
+      _selectedUsersById.clear();
       _groupNameErrorText = null;
     });
     _groupNameController.clear();
@@ -1238,23 +1447,44 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
     }
     setState(() {
       _selectedUserIds = [..._selectedUserIds, id];
+      _selectedUsersById[id] = user;
     });
   }
 
   void _removeSelectedUser(String userId) {
+    final trimmed = userId.trim();
     setState(() {
       _selectedUserIds = _selectedUserIds
-          .where((id) => id.trim() != userId.trim())
+          .where((id) => id.trim() != trimmed)
           .toList(growable: false);
+      _selectedUsersById.remove(trimmed);
     });
   }
 
-  List<MessengerUser> _selectedUsersFrom(List<MessengerUser> sortedUsers) {
+  void _refreshSelectedUsersCacheFrom(List<MessengerUser> source) {
+    if (_selectedUserIds.isEmpty) {
+      return;
+    }
+    final byId = <String, MessengerUser>{
+      for (final user in source) user.id.trim(): user,
+    };
+    for (final id in _selectedUserIds) {
+      final fresh = byId[id.trim()];
+      if (fresh != null) {
+        _selectedUsersById[id] = fresh;
+      }
+    }
+  }
+
+  List<MessengerUser> _resolveSelectedUsersFrom(List<MessengerUser> sortedUsers) {
     final byId = <String, MessengerUser>{
       for (final user in sortedUsers) user.id.trim(): user,
     };
     return _selectedUserIds
-        .map((id) => byId[id.trim()])
+        .map((id) {
+          final trimmed = id.trim();
+          return byId[trimmed] ?? _selectedUsersById[trimmed];
+        })
         .whereType<MessengerUser>()
         .toList(growable: false);
   }
@@ -1409,6 +1639,7 @@ class _DirectUserTile extends StatelessWidget {
     required this.isSelected,
     required this.hasUnread,
     this.messagePreview,
+    this.showOnlinePresence = true,
     this.style = const MessengerUserListItemStyle(),
   });
 
@@ -1420,6 +1651,7 @@ class _DirectUserTile extends StatelessWidget {
   final bool isSelected;
   final bool hasUnread;
   final String? messagePreview;
+  final bool showOnlinePresence;
   final MessengerUserListItemStyle style;
 
   @override
@@ -1428,7 +1660,9 @@ class _DirectUserTile extends StatelessWidget {
     final preview = messagePreview;
     final subtitle = preview != null && preview.isNotEmpty
         ? preview
-        : '${user.roleLabel}${user.roleLabel.isNotEmpty ? ' • ' : ''}${user.isOnline ? 'Online' : 'Offline'}';
+        : showOnlinePresence
+            ? '${user.roleLabel}${user.roleLabel.isNotEmpty ? ' • ' : ''}${user.isOnline ? 'Online' : 'Offline'}'
+            : user.roleLabel.trim();
     final titleStyle = const TextStyle(
       fontWeight: FontWeight.w700,
       fontSize: 13.5,
@@ -1455,7 +1689,7 @@ class _DirectUserTile extends StatelessWidget {
             imageUrl: user.avatarUrl,
             compact: true,
             size: 34,
-            showOnlineIndicator: true,
+            showOnlineIndicator: hasUnread || showOnlinePresence,
             isOnline: user.isOnline,
             presenceDotColor: hasUnread
                 ? (style.unreadDotColor ?? theme.onlineIndicator)

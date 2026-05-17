@@ -483,6 +483,32 @@ class SocketClient {
     }
   }
 
+  /// Fire-and-forget Socket.IO emit.
+  ///
+  /// Used for best-effort presence hints like `going_offline`.
+  void emit(
+    String event,
+    Map<String, dynamic> payload,
+  ) {
+    _auth?.validateForSocketAction(event);
+    final socket = _socket;
+    if (socket == null || !socket.connected) {
+      return;
+    }
+
+    _socketLog(
+      SocketLogKind.emit,
+      'Socket emit',
+      data: {
+        'integration': 'socket.emit.$event',
+        'event': event,
+        'payload': payload,
+      },
+    );
+
+    socket.emit(event, payload);
+  }
+
   Future<void> close() async {
     disconnect();
     await _eventsController.close();

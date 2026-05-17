@@ -9,12 +9,11 @@ class UnreadMerger {
   /// Merges per-conversation unread from a REST list into [previous].
   ///
   /// Resolution order per row:
-  ///   1. Explicit numeric `unreadCount` / `unread` from the server wins (back-compat).
-  ///      A value of `0` or less clears the entry.
-  ///   2. Otherwise, when `latestMessageId` and the current user's message status
-  ///      are present, derive unread from `lastReadMessageId` vs `latestMessageId`.
-  ///      Unread sets the entry to `max(previous, 1)` so any prior socket-derived
-  ///      count is preserved while a fresh seed still shows bold as `1`.
+  ///   1. When a latest message id exists, derive unread from `lastReadMessageId`
+  ///      vs latest (integer compare). This overrides `unreadCount: 0` from REST.
+  ///      Unread sets the entry to `max(previous, server unreadCount if > 0, 1)`.
+  ///   2. Otherwise, explicit numeric `unreadCount` / `unread` from the server
+  ///      (back-compat). A value of `0` or less clears the entry.
   ///   3. Rows with neither signal are left untouched.
   ///
   /// When [activeConversationId] is set, that conversation is force-cleared so
@@ -30,19 +29,20 @@ class UnreadMerger {
     for (final c in list) {
       final id = c.id;
       final u = c.unreadCount;
-      if (u != null) {
+      if (_hasLatestMessageId(c)) {
+        if (c.isUnreadFor(currentUserId)) {
+          final prev = next[id] ?? 0;
+          final serverFloor =
+              u != null && u > 0 ? u : 1;
+          next[id] = _maxUnreadCount(prev, serverFloor, 1);
+        } else {
+          next.remove(id);
+        }
+      } else if (u != null) {
         if (u <= 0) {
           next.remove(id);
         } else {
           next[id] = u;
-        }
-      } else if (c.latestMessageId != null &&
-          c.messageStatusByUserId.isNotEmpty) {
-        if (c.isUnreadFor(currentUserId)) {
-          final prev = next[id] ?? 0;
-          next[id] = prev > 1 ? prev : 1;
-        } else {
-          next.remove(id);
         }
       }
       if (active != null && active.isNotEmpty && id == active) {
@@ -50,6 +50,22 @@ class UnreadMerger {
       }
     }
     return next;
+  }
+
+  static bool _hasLatestMessageId(Conversation c) {
+    final id = c.latestMessageId?.trim();
+    if (id != null && id.isNotEmpty) {
+      return true;
+    }
+    final mid = c.latestMessage?.id.trim();
+    return mid != null && mid.isNotEmpty;
+  }
+
+  static int _maxUnreadCount(int a, int b, int c) {
+    var max = a;
+    if (b > max) max = b;
+    if (c > max) max = c;
+    return max;
   }
 
   /// Applies authoritative unread from a `conversation_message` list event.
