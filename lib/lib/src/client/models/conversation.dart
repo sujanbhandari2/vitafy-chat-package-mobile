@@ -105,18 +105,43 @@ class Conversation {
     return null;
   }
 
-  /// True when [userId] has at least one unread message, derived from
-  /// latest message id vs `lastReadMessageId` (integer comparison).
+  /// True when [userId] has at least one unread inbound message.
   ///
-  /// Returns `false` when no latest message id is available.
+  /// Uses REST `messageState` / `messageStatus` cursors vs `latestMessage` id.
+  /// Returns `false` when the latest row is your own send, or when read and
+  /// delivery cursors are tied to the same id at/ past latest (outbound / caught up).
   bool isUnreadFor(String userId) {
-    final latestId = int.tryParse(_effectiveLatestMessageId() ?? '');
+    final me = userId.trim();
+    if (me.isEmpty) {
+      return false;
+    }
+
+    final latest = latestMessage;
+    if (latest != null && latest.senderId.trim() == me) {
+      return false;
+    }
+
+    final latestIdStr = _effectiveLatestMessageId();
+    final latestId = int.tryParse(latestIdStr ?? '');
     if (latestId == null) {
       return false;
     }
 
-    final status = messageStatusByUserId[userId] ?? messageState;
+    final status = messageStatusByUserId[me] ?? messageState;
     final lastReadRaw = status?.lastReadMessageId?.trim();
+    final lastDeliveredRaw = status?.lastDeliveredMessageId?.trim();
+
+    if (lastReadRaw != null &&
+        lastReadRaw.isNotEmpty &&
+        lastDeliveredRaw != null &&
+        lastDeliveredRaw.isNotEmpty &&
+        lastReadRaw == lastDeliveredRaw) {
+      final tiedId = int.tryParse(lastReadRaw);
+      if (tiedId != null && tiedId >= latestId) {
+        return false;
+      }
+    }
+
     if (lastReadRaw == null || lastReadRaw.isEmpty) {
       return true;
     }

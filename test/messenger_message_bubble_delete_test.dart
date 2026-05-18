@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
@@ -75,6 +77,9 @@ void main() {
     expect(find.text('Delete message'), findsOneWidget);
     await tester.tap(find.text('Delete message'));
     await tester.pumpAndSettle();
+    expect(find.text('Delete message?'), findsOneWidget);
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
     expect(deleteCalls, 1);
 
     await tester.longPress(find.text('Blocked delete'));
@@ -128,6 +133,81 @@ void main() {
     },
   );
 
+  testWidgets('long-press unfocuses active text input to avoid keyboard pop',
+      (tester) async {
+    final inputFocus = FocusNode();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: Column(
+              children: [
+                TextField(focusNode: inputFocus),
+                MessengerMessageBubble(
+                  message: makeMessage(content: 'Focus test'),
+                  isMine: true,
+                  canDelete: true,
+                  onDelete: () {},
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    inputFocus.requestFocus();
+    await tester.pump();
+    expect(inputFocus.hasFocus, isTrue);
+
+    await tester.longPress(find.text('Focus test'));
+    await tester.pumpAndSettle();
+    expect(inputFocus.hasFocus, isFalse);
+    expect(find.text('Delete message'), findsOneWidget);
+  });
+
+  testWidgets('delete dialog shows loader while delete is in progress',
+      (tester) async {
+    final completer = Completer<void>();
+    var deleteCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerMessageBubble(
+              message: makeMessage(content: 'Pending delete'),
+              isMine: true,
+              canDelete: true,
+              onDelete: () async {
+                deleteCalls++;
+                await completer.future;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.longPress(find.text('Pending delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete message'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Delete message?'), findsOneWidget);
+    await tester.tap(find.text('Delete'));
+    await tester.pump();
+
+    expect(deleteCalls, 1);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('Delete message?'), findsOneWidget);
+
+    completer.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Delete message?'), findsNothing);
+  });
+
   testWidgets('deleted message hides reaction panel in action sheet',
       (tester) async {
     await tester.pumpWidget(
@@ -155,6 +235,54 @@ void main() {
     expect(find.text('👍'), findsNothing);
     expect(find.text('❤️'), findsNothing);
     expect(find.text('Delete message'), findsOneWidget);
+  });
+
+  testWidgets('delete confirmation dialog applies packageDialogTheme',
+      (tester) async {
+    const dialogTheme = DialogThemeData(
+      titleTextStyle: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+      contentTextStyle: TextStyle(fontSize: 11, height: 1.2),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(dialogTheme: const DialogThemeData()),
+        home: Builder(
+          builder: (context) {
+            return MessengerTheme(
+              data: const MessengerThemeData(),
+              child: Scaffold(
+                body: MessengerMessageBubble(
+                  message: makeMessage(content: 'Themed delete'),
+                  isMine: true,
+                  canDelete: true,
+                  onDelete: () {},
+                  packageDialogTheme: Theme.of(context).copyWith(
+                    dialogTheme: dialogTheme,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+
+    await tester.longPress(find.text('Themed delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete message'));
+    await tester.pumpAndSettle();
+
+    final titleStyle = DefaultTextStyle.of(
+      tester.element(find.text('Delete message?')),
+    ).style;
+    final contentStyle = DefaultTextStyle.of(
+      tester.element(
+        find.textContaining('Are you sure you want to delete this message?'),
+      ),
+    ).style;
+    expect(titleStyle.fontSize, 22);
+    expect(titleStyle.fontWeight, FontWeight.w900);
+    expect(contentStyle.fontSize, 11);
   });
 
   testWidgets('delete action uses custom icon and text style', (tester) async {

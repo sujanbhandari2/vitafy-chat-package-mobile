@@ -69,6 +69,9 @@ class ChatClient {
   }
 
   /// Batch merge users + create DIRECT or GROUP (`POST …/users/start-conversation`).
+  ///
+  /// **DIRECT** when only two users are sent and [groupName] is null/empty.
+  /// **GROUP** when [groupName] is non-empty (even with two users).
   Future<Conversation> startConversation(
     ChatAuth auth, {
     required List<ChatUserRegistrationBody> users,
@@ -78,6 +81,22 @@ class ChatClient {
       auth,
       users: users,
       groupName: groupName,
+    );
+  }
+
+  /// Always creates a GROUP via [startConversation] by supplying a non-empty name.
+  Future<Conversation> startGroupConversation(
+    ChatAuth auth, {
+    required List<ChatUserRegistrationBody> users,
+    String? groupName,
+    String defaultGroupName = 'Group',
+  }) {
+    final trimmed = groupName?.trim() ?? '';
+    final effective = trimmed.isNotEmpty ? trimmed : defaultGroupName.trim();
+    return startConversation(
+      auth,
+      users: users,
+      groupName: effective.isEmpty ? 'Group' : effective,
     );
   }
 

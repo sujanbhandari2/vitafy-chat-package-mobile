@@ -8,6 +8,7 @@ export 'src/client/chat_exceptions.dart';
 export 'src/client/chat_session.dart';
 export 'src/client/inbox/chat_inbox_controller.dart';
 export 'src/client/inbox/delivery_status.dart';
+export 'src/client/inbox/message_delivery_merge.dart';
 export 'src/client/inbox/unread_merger.dart';
 export 'src/client/chat_logger.dart';
 export 'src/client/socket_pretty_logger.dart';

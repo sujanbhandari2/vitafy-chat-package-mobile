@@ -316,6 +316,35 @@ void main() {
     expect(find.byIcon(Icons.add_circle_outline_rounded), findsNWidgets(3));
   });
 
+  testWidgets('group mode create enabled with one selected peer', (tester) async {
+    final created = <MessengerUser>[];
+
+    await tester.pumpWidget(
+      wrap(
+        MessengerSuggestedPeoplePanel(
+          users: const [_alice, _bob],
+          onUserSelected: (_) {},
+          onCreateGroupSelected: (selected) async {
+            created
+              ..clear()
+              ..addAll(selected);
+          },
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('New group'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('alice'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Selected people (1)'), findsOneWidget);
+    await tester.tap(find.text('Create group'));
+    await tester.pumpAndSettle();
+
+    expect(created.map((user) => user.id).toList(), ['u1']);
+  });
+
   testWidgets(
     'group mode create callback uses selection order and bypasses direct open',
     (tester) async {

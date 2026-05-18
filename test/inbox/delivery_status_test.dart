@@ -72,6 +72,60 @@ void main() {
       expect(s, MessengerDeliveryStatus.sent);
     });
 
+    test('peer read receipt wins over stale deliveryStatus SENT', () {
+      final s = messengerDeliveryStatusFor(
+        _outgoing(
+          deliveryStatus: 'SENT',
+          readReceipts: [
+            {
+              'id': 'r1',
+              'messageId': 'm1',
+              'userId': 'peer',
+              'readAt': DateTime.utc(2026).toIso8601String(),
+            },
+          ],
+        ),
+        currentUserId: 'me',
+      );
+      expect(s, MessengerDeliveryStatus.seen);
+    });
+
+    test('deliveredToCount wins over stale deliveryStatus SENT', () {
+      final m = ChatMessage.fromJson({
+        'id': 'm1',
+        'conversationId': 'c1',
+        'tenantId': 't',
+        'senderId': 'me',
+        'type': 'TEXT',
+        'content': 'x',
+        'deliveryStatus': 'SENT',
+        'deliveredToCount': 1,
+        'createdAt': DateTime.utc(2026).toIso8601String(),
+      });
+      expect(
+        messengerDeliveryStatusFor(m, currentUserId: 'me'),
+        MessengerDeliveryStatus.delivered,
+      );
+    });
+
+    test('peer delivered receipt wins over stale deliveryStatus SENT', () {
+      final s = messengerDeliveryStatusFor(
+        _outgoing(
+          deliveryStatus: 'SENT',
+          deliveredReceipts: [
+            {
+              'id': 'd1',
+              'messageId': 'm1',
+              'userId': 'peer',
+              'deliveredAt': DateTime.utc(2026).toIso8601String(),
+            },
+          ],
+        ),
+        currentUserId: 'me',
+      );
+      expect(s, MessengerDeliveryStatus.delivered);
+    });
+
     test('peer read receipt implies seen', () {
       final s = messengerDeliveryStatusFor(
         _outgoing(

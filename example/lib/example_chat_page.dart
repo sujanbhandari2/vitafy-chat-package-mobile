@@ -1274,9 +1274,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       uniqueUsers.add(user);
     }
 
-    if (uniqueUsers.length < 2) {
-      _showSnack('Select at least 2 people to create a group.');
-      throw StateError('At least 2 users are required for group creation.');
+    if (uniqueUsers.isEmpty) {
+      _showSnack('Select at least one person to create a group.');
+      throw StateError('At least one user is required for group creation.');
     }
 
     if (mounted) {
@@ -1306,7 +1306,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
           },
         );
 
-        created = await client.startConversation(
+        created = await client.startGroupConversation(
           auth,
           users: [selfBody, ...peerBodies],
           groupName: groupName.isEmpty ? null : groupName,
@@ -1324,7 +1324,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         created = await client.createConversation(
           auth,
           type: 'GROUP',
-          title: groupName.isEmpty ? null : groupName,
+          title: request.startConversationGroupName(
+            fallback: groupName.isEmpty ? 'Group' : groupName,
+          ),
           creatorUserId: currentUser.id.trim(),
           participantIds: participantIds,
         );
@@ -2282,7 +2284,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       next.add(message);
       upsertedMessage = message;
     } else {
-      upsertedMessage = _coalesceDeletedMessageOnUpsert(next[index], message);
+      upsertedMessage = mergeMessageDeliveryReadSnapshot(
+        next[index],
+        _coalesceDeletedMessageOnUpsert(next[index], message),
+      );
       next[index] = upsertedMessage;
     }
     next.sort((left, right) => left.createdAt.compareTo(right.createdAt));
@@ -2473,11 +2478,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       return;
     }
 
-    final target = messages[index];
-    final nextReceipts = List<DeliveredReceipt>.from(target.deliveredReceipts)
-      ..removeWhere((item) => item.userId == receipt.userId)
-      ..add(receipt);
-    final updatedMessage = target.copyWith(deliveredReceipts: nextReceipts);
+    final updatedMessage =
+        applyDeliveredReceiptToMessage(messages[index], receipt);
 
     final nextMessages = List<ChatMessage>.from(messages);
     nextMessages[index] = updatedMessage;
@@ -2507,11 +2509,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       return;
     }
 
-    final target = messages[index];
-    final nextReceipts = List<ReadReceipt>.from(target.readReceipts)
-      ..removeWhere((item) => item.userId == receipt.userId)
-      ..add(receipt);
-    final updatedMessage = target.copyWith(readReceipts: nextReceipts);
+    final updatedMessage = applyReadReceiptToMessage(messages[index], receipt);
 
     final nextMessages = List<ChatMessage>.from(messages);
     nextMessages[index] = updatedMessage;

@@ -31,7 +31,6 @@ class MessengerConversationTile extends StatelessWidget {
     final hasUnread = conversation.unreadCount > 0;
     final showOnlinePresence =
         !conversation.isGroup && conversation.isOnline != null;
-    final showPresenceDot = hasUnread || showOnlinePresence;
 
     return InkWell(
       onTap: onTap,
@@ -52,9 +51,8 @@ class MessengerConversationTile extends StatelessWidget {
               imageUrl: conversation.avatarUrl,
               compact: true,
               size: 44,
-              showOnlineIndicator: showPresenceDot,
+              showOnlineIndicator: showOnlinePresence,
               isOnline: conversation.isOnline ?? false,
-              presenceDotColor: hasUnread ? theme.onlineIndicator : null,
             ),
             const SizedBox(width: 10),
             Expanded(

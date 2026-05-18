@@ -86,11 +86,12 @@ class MessengerSuggestedPeoplePanel extends StatefulWidget {
     this.selectedUsersTitleText = 'Selected people',
     this.selectedUsersEmptyText = 'No people selected yet.',
     this.groupEmptyText = 'No more people available to add right now.',
-    this.groupMinSelectionCount = 2,
+    this.groupMinSelectionCount = 1,
     this.groupNameInputBehavior = MessengerGroupNameInputBehavior.hidden,
     this.groupNameLabelText = 'Group name',
     this.groupNameHintText = 'Enter a group name',
     this.groupNameRequiredErrorText = 'Enter a group name to continue.',
+    this.defaultGroupNameWhenEmpty = 'Group',
     this.directory,
   })  : assert(
           groupMinSelectionCount > 0,
@@ -253,7 +254,8 @@ class MessengerSuggestedPeoplePanel extends StatefulWidget {
   /// Empty copy shown when every visible person is already selected in group mode.
   final String groupEmptyText;
 
-  /// Minimum required selected users before the create-group action is enabled.
+  /// Minimum selected peers before create-group is enabled (default 1: creator
+  /// plus one other; more members can be added later in the thread).
   final int groupMinSelectionCount;
 
   /// Controls whether a group name field is hidden, optional, or required.
@@ -267,6 +269,10 @@ class MessengerSuggestedPeoplePanel extends StatefulWidget {
 
   /// Validation copy shown when the required group name is missing.
   final String groupNameRequiredErrorText;
+
+  /// Used when the name field is hidden/optional and empty so
+  /// `startConversation` still creates GROUP (not DIRECT).
+  final String defaultGroupNameWhenEmpty;
 
   /// Optional host hooks for debounced server search and list pagination.
   ///
@@ -1006,6 +1012,17 @@ class _MessengerSuggestedPeoplePanelState
     _groupNameController.clear();
   }
 
+  String _groupNameForCreateRequest(String trimmedInput) {
+    if (trimmedInput.isNotEmpty) {
+      return trimmedInput;
+    }
+    if (_groupNameIsRequired) {
+      return '';
+    }
+    final fallback = widget.defaultGroupNameWhenEmpty.trim();
+    return fallback.isEmpty ? 'Group' : fallback;
+  }
+
   Future<void> _submitGroupSelection(List<MessengerUser> selectedUsers) async {
     final requestCallback = widget.onCreateGroupRequested;
     final callback = widget.onCreateGroupSelected;
@@ -1023,7 +1040,7 @@ class _MessengerSuggestedPeoplePanelState
       await requestCallback(
         MessengerGroupCreateRequest(
           selectedUsers: selectedUsers,
-          groupName: trimmedGroupName,
+          groupName: _groupNameForCreateRequest(trimmedGroupName),
         ),
       );
     } else if (callback != null) {

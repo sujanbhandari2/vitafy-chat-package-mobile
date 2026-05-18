@@ -53,6 +53,8 @@ class MessengerChatShell extends StatefulWidget {
     this.groupNameFieldLabelText = 'Group name',
     this.groupNameFieldHintText = 'Enter a group name',
     this.groupNameRequiredErrorText = 'Enter a group name to continue.',
+    this.groupMinSelectionCount = 1,
+    this.defaultGroupNameWhenEmpty = 'Group',
     required this.onSend,
     required this.onPickImage,
     required this.onPickAudio,
@@ -152,6 +154,7 @@ class MessengerChatShell extends StatefulWidget {
     this.composerFocusNode,
     this.attachmentCaptionTextStyle,
     this.attachmentOptionTextStyle,
+    this.packageDialogTheme,
   });
 
   final String currentUserId;
@@ -200,6 +203,13 @@ class MessengerChatShell extends StatefulWidget {
   final String groupNameFieldLabelText;
   final String groupNameFieldHintText;
   final String groupNameRequiredErrorText;
+
+  /// Minimum peers to select when creating a group (default 1).
+  final int groupMinSelectionCount;
+
+  /// Fallback name when group name input is hidden/optional and empty.
+  final String defaultGroupNameWhenEmpty;
+
   final VoidCallback onSend;
   final VoidCallback onPickImage;
   final VoidCallback onPickAudio;
@@ -397,6 +407,11 @@ class MessengerChatShell extends StatefulWidget {
 
   /// Passed through to each [MessengerMessageBubble] in the thread.
   final TextStyle? attachmentCaptionTextStyle;
+
+  /// Merged with [Theme.of] for package-owned dialogs (delete confirmations,
+  /// image preview). Pass a full [ThemeData] from
+  /// `Theme.of(context).copyWith(dialogTheme: …)` so overrides stay complete.
+  final ThemeData? packageDialogTheme;
 
   @override
   State<MessengerChatShell> createState() => _MessengerChatShellState();
@@ -794,6 +809,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       onComposerReplyDraftChanged: widget.onComposerReplyDraftChanged,
       composerFocusNode: widget.composerFocusNode,
       attachmentCaptionTextStyle: widget.attachmentCaptionTextStyle,
+      packageDialogTheme: widget.packageDialogTheme,
       onEditGroupConversation: widget.onEditGroupConversation,
       onAddPeopleToGroupConversation: widget.onAddPeopleToGroupConversation,
       onDeleteConversation: mobileRouteContextForDeletePop == null
@@ -1646,6 +1662,8 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       groupNameFieldLabelText: widget.groupNameFieldLabelText,
       groupNameFieldHintText: widget.groupNameFieldHintText,
       groupNameRequiredErrorText: widget.groupNameRequiredErrorText,
+      groupMinSelectionCount: widget.groupMinSelectionCount,
+      defaultGroupNameWhenEmpty: widget.defaultGroupNameWhenEmpty,
       onSelectConversation: widget.onSelectConversation,
       searchVisibility: widget.searchVisibility,
       searchThreshold: widget.searchThreshold,
@@ -1734,6 +1752,8 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       groupNameFieldLabelText: widget.groupNameFieldLabelText,
       groupNameFieldHintText: widget.groupNameFieldHintText,
       groupNameRequiredErrorText: widget.groupNameRequiredErrorText,
+      groupMinSelectionCount: widget.groupMinSelectionCount,
+      defaultGroupNameWhenEmpty: widget.defaultGroupNameWhenEmpty,
       onSelectConversation: (conversationId) async {
         await _runSelectConversation(conversationId);
         if (!mounted) {

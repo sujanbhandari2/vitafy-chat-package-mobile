@@ -128,6 +128,7 @@ class ChatInboxController {
       list,
       currentUserId: _currentUserId,
       activeConversationId: _activeConversationId,
+      clearActiveConversationUnread: _threadVisible,
     );
     final liveIds = list.map((item) => item.id.trim()).toSet();
     _promotedAt.removeWhere((key, _) => !liveIds.contains(key));
@@ -320,40 +321,60 @@ class ChatInboxController {
       return;
     }
 
-    unawaited(_emitDeliveredAndRead(message));
+    final activeId = _activeConversationId?.trim();
+    final inJoinedThread =
+        activeId != null && activeId.isNotEmpty && cid == activeId;
+
+    // Web parity: list delivery ACK via per-user `conversation_message`; room
+    // `message` only delivers when this conversation is the joined active thread.
+    if (fromConversationMessage || inJoinedThread) {
+      unawaited(_emitDelivered(message));
+    }
+
+    if (_threadVisible && inJoinedThread) {
+      unawaited(_emitRead(message));
+    }
   }
 
-  Future<void> _emitDeliveredAndRead(ChatMessage message) async {
-    final convId = message.conversationId;
-    final msgId = message.id;
+  Future<void> _emitDelivered(ChatMessage message) async {
+    final convId = message.conversationId.trim();
+    final msgId = message.id.trim();
     if (convId.isEmpty || msgId.isEmpty) {
       return;
     }
 
-    if (!_deliveredEmitted.contains(msgId)) {
-      _deliveredEmitted.add(msgId);
-      try {
-        await _client.markAsDelivered(
-          conversationId: convId,
-          messageId: msgId,
-        );
-      } catch (_) {
-        _deliveredEmitted.remove(msgId);
-      }
+    if (_deliveredEmitted.contains(msgId)) {
+      return;
+    }
+    _deliveredEmitted.add(msgId);
+    try {
+      await _client.markAsDelivered(
+        conversationId: convId,
+        messageId: msgId,
+      );
+    } catch (_) {
+      _deliveredEmitted.remove(msgId);
+    }
+  }
+
+  Future<void> _emitRead(ChatMessage message) async {
+    final convId = message.conversationId.trim();
+    final msgId = message.id.trim();
+    if (convId.isEmpty || msgId.isEmpty) {
+      return;
     }
 
-    if (_threadVisible && message.conversationId == _activeConversationId) {
-      if (!_readEmitted.contains(msgId)) {
-        _readEmitted.add(msgId);
-        try {
-          await _client.markAsRead(
-            conversationId: convId,
-            messageId: msgId,
-          );
-        } catch (_) {
-          _readEmitted.remove(msgId);
-        }
-      }
+    if (_readEmitted.contains(msgId)) {
+      return;
+    }
+    _readEmitted.add(msgId);
+    try {
+      await _client.markAsRead(
+        conversationId: convId,
+        messageId: msgId,
+      );
+    } catch (_) {
+      _readEmitted.remove(msgId);
     }
   }
 

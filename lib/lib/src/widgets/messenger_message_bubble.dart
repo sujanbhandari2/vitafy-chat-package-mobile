@@ -42,7 +42,7 @@ class MessengerMessageBubble extends StatefulWidget {
   final ValueChanged<String>? onReact;
   final Future<void> Function(String messageId, String reactionType)?
       onRemoveReaction;
-  final VoidCallback? onDelete;
+  final FutureOr<void> Function()? onDelete;
   /// When set with [canEdit], long-press shows an "Edit message" action (text only).
   final VoidCallback? onEdit;
   final bool canEdit;
@@ -275,6 +275,7 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
     if (!hasAnyAction) {
       return;
     }
+    _dismissKeyboardFocus();
 
     await showModalBottomSheet<void>(
       context: context,
@@ -370,9 +371,9 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
               Material(
                 color: Colors.transparent,
                 child: InkWell(
-                  onTap: () {
+                  onTap: () async {
                     Navigator.of(sheetContext).pop();
-                    widget.onDelete?.call();
+                    await _confirmAndDeleteMessage();
                   },
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
@@ -404,6 +405,34 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
     );
   }
 
+  void _dismissKeyboardFocus() {
+    final currentFocus = FocusManager.instance.primaryFocus;
+    if (currentFocus != null && currentFocus.hasFocus) {
+      currentFocus.unfocus();
+    }
+  }
+
+  Future<void> _confirmAndDeleteMessage() async {
+    _dismissKeyboardFocus();
+    final didDelete = await showDialog<bool>(
+          context: context,
+          useRootNavigator: true,
+          builder: (dialogContext) => wrapMessengerPackageDialogTheme(
+            ambientContext: context,
+            packageDialogTheme: widget.packageDialogTheme,
+            child: _MessengerDeleteMessageDialog(
+              onDeleteConfirmed: () async {
+                await Future<void>.sync(() => widget.onDelete?.call());
+              },
+            ),
+          ),
+        ) ??
+        false;
+    if (!didDelete || !mounted) {
+      return;
+    }
+  }
+
   double _maxBubbleWidth(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     if (width <= 0) {
@@ -422,6 +451,82 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
         ? parts[1][0]
         : (parts.first.length > 1 ? parts.first[1] : '');
     return '$first$second'.toUpperCase();
+  }
+}
+
+class _MessengerDeleteMessageDialog extends StatefulWidget {
+  const _MessengerDeleteMessageDialog({
+    required this.onDeleteConfirmed,
+  });
+
+  final Future<void> Function() onDeleteConfirmed;
+
+  @override
+  State<_MessengerDeleteMessageDialog> createState() =>
+      _MessengerDeleteMessageDialogState();
+}
+
+class _MessengerDeleteMessageDialogState
+    extends State<_MessengerDeleteMessageDialog> {
+  bool _deleting = false;
+
+  Future<void> _onDeletePressed() async {
+    setState(() => _deleting = true);
+    try {
+      await widget.onDeleteConfirmed();
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context, rootNavigator: true).pop(true);
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _deleting = false);
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text('Could not delete the message.')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return PopScope(
+      canPop: !_deleting,
+      child: AlertDialog(
+        title: const Text('Delete message?'),
+        content: const Text(
+          'Are you sure you want to delete this message? '
+          'This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: _deleting
+                ? null
+                : () => Navigator.of(context, rootNavigator: true).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: colorScheme.error,
+              foregroundColor: colorScheme.onError,
+            ),
+            onPressed: _deleting ? null : _onDeletePressed,
+            child: _deleting
+                ? SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: colorScheme.onError,
+                    ),
+                  )
+                : const Text('Delete'),
+          ),
+        ],
+      ),
+    );
   }
 }
 

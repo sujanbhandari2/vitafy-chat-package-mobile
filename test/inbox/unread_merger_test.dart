@@ -22,6 +22,36 @@ ChatMessage _msg({
 
 void main() {
   group('UnreadMerger', () {
+    test('mergeFromConversations ignores positive unreadCount for own latest',
+        () {
+      final list = [
+        Conversation.fromJson({
+          'id': 'a',
+          'tenantId': 't',
+          'type': 'DIRECT',
+          'createdAt': DateTime.utc(2026).toIso8601String(),
+          'updatedAt': DateTime.utc(2026).toIso8601String(),
+          'participants': [],
+          'unreadCount': 3,
+          'latestMessage': {
+            'id': '100',
+            'conversationId': 'a',
+            'tenantId': 't',
+            'senderId': 'me',
+            'type': 'TEXT',
+            'content': 'sent',
+            'createdAt': DateTime.utc(2026).toIso8601String(),
+          },
+        }),
+      ];
+      final out = UnreadMerger.mergeFromConversations(
+        <String, int>{'a': 2},
+        list,
+        currentUserId: 'me',
+      );
+      expect(out.containsKey('a'), isFalse);
+    });
+
     test('mergeFromConversations sets and removes', () {
       final list = [
         Conversation.fromJson({
@@ -101,7 +131,33 @@ void main() {
       expect(out['a'], 7);
     });
 
-    test('mergeFromConversations clears when last read equals latest', () {
+    test('mergeFromConversations clears when REST unreadCount is 0', () {
+      final list = [
+        Conversation.fromJson({
+          'id': 'a',
+          'tenantId': 't',
+          'type': 'DIRECT',
+          'createdAt': DateTime.utc(2026).toIso8601String(),
+          'updatedAt': DateTime.utc(2026).toIso8601String(),
+          'participants': [],
+          'unreadCount': 0,
+          'latestMessageId': '100',
+          'messageStatus': [
+            {'userId': 'me', 'lastReadMessageId': '100'},
+          ],
+        }),
+      ];
+      final out = UnreadMerger.mergeFromConversations(
+        <String, int>{'a': 5},
+        list,
+        currentUserId: 'me',
+      );
+      expect(out.containsKey('a'), isFalse);
+    });
+
+    test(
+        'mergeFromConversations preserves socket unread when REST omits unreadCount',
+        () {
       final list = [
         Conversation.fromJson({
           'id': 'a',
@@ -117,11 +173,11 @@ void main() {
         }),
       ];
       final out = UnreadMerger.mergeFromConversations(
-        <String, int>{'a': 5},
+        <String, int>{'a': 3},
         list,
         currentUserId: 'me',
       );
-      expect(out.containsKey('a'), isFalse);
+      expect(out['a'], 3);
     });
 
     test('mergeFromConversations supports per-participant messageStatus', () {
@@ -152,7 +208,8 @@ void main() {
       expect(out['a'], 1);
     });
 
-    test('mergeFromConversations force-clears active conversation', () {
+    test('mergeFromConversations force-clears active conversation when visible',
+        () {
       final list = [
         Conversation.fromJson({
           'id': 'a',
@@ -172,8 +229,33 @@ void main() {
         list,
         currentUserId: 'me',
         activeConversationId: 'a',
+        clearActiveConversationUnread: true,
       );
       expect(out.containsKey('a'), isFalse);
+    });
+
+    test(
+        'mergeFromConversations does not clear active conversation when list only',
+        () {
+      final list = [
+        Conversation.fromJson({
+          'id': 'a',
+          'tenantId': 't',
+          'type': 'DIRECT',
+          'createdAt': DateTime.utc(2026).toIso8601String(),
+          'updatedAt': DateTime.utc(2026).toIso8601String(),
+          'participants': [],
+          'unreadCount': 2,
+        }),
+      ];
+      final out = UnreadMerger.mergeFromConversations(
+        <String, int>{'a': 2},
+        list,
+        currentUserId: 'me',
+        activeConversationId: 'a',
+        clearActiveConversationUnread: false,
+      );
+      expect(out['a'], 2);
     });
 
     test(

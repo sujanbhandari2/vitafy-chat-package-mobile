@@ -726,6 +726,58 @@ void main() {
     expect(find.text('Start New Chat'), findsNothing);
   });
 
+  testWidgets('start-new-chat group creation allows one selected peer',
+      (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice_jones');
+    List<String> createdIds = const [];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 520,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [alice],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onCreateGroupSelected: (selectedUsers) async {
+                  createdIds = selectedUsers
+                      .map((user) => user.id)
+                      .toList(growable: false);
+                },
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showHeaderComposeButton: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add_rounded));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New group'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Add').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Selected people (1)'), findsOneWidget);
+    await tester.tap(find.text('Create group'));
+    await tester.pumpAndSettle();
+
+    expect(createdIds, ['a']);
+  });
+
   testWidgets('group rows are interleaved by latest activity', (tester) async {
     const alice = MessengerUser(id: 'a', username: 'alice_jones');
     final groupConversation = MessengerConversation(

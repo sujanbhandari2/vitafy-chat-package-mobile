@@ -1,6 +1,20 @@
 import '../../models/messenger_message.dart';
 import '../models/chat_message.dart';
 
+bool _isPeerUserId(String userId, String currentUserId) {
+  final id = userId.trim();
+  return id.isNotEmpty && id != currentUserId.trim();
+}
+
+bool _hasPeerReadReceipt(ChatMessage message, String currentUserId) {
+  return message.readReceipts.any((r) => _isPeerUserId(r.userId, currentUserId));
+}
+
+bool _hasPeerDeliveredReceipt(ChatMessage message, String currentUserId) {
+  return message.deliveredReceipts
+      .any((r) => _isPeerUserId(r.userId, currentUserId));
+}
+
 /// Maps backend [deliveryStatus] using exact tokens only (trimmed, uppercased).
 /// Substring matching is intentionally avoided so values like `UNREAD` / `NOT_READ`
 /// / `UNDELIVERED` never classify as seen or delivered.
@@ -20,15 +34,14 @@ MessengerDeliveryStatus? _statusFromDeliveryStatusApi(String api) {
     case 'SENT':
     case 'S':
     case 'SENDING':
-      // No dedicated enum; treat like web "sending" tick as single-check sent.
       return MessengerDeliveryStatus.sent;
     default:
       return null;
   }
 }
 
-/// Outgoing tick state: prefers API [ChatMessage.deliveryStatus], then receipts
-/// from peers (not the sender).
+/// Outgoing tick state aligned with web `getDeliveryStatus`:
+/// realtime read/delivered evidence wins over stale `deliveryStatus` from socket echoes.
 MessengerDeliveryStatus messengerDeliveryStatusFor(
   ChatMessage message, {
   required String currentUserId,
@@ -38,26 +51,33 @@ MessengerDeliveryStatus messengerDeliveryStatusFor(
   }
 
   final api = message.deliveryStatus?.trim().toUpperCase() ?? '';
-  final fromApi = _statusFromDeliveryStatusApi(api);
-  if (fromApi != null) {
-    return fromApi;
+  if (api == 'SENDING') {
+    return MessengerDeliveryStatus.sent;
   }
 
-  final peerRead = message.readReceipts.any(
-    (r) =>
-        r.userId.isNotEmpty &&
-        r.userId.trim() != currentUserId.trim(),
-  );
-  final peerDelivered = message.deliveredReceipts.any(
-    (r) =>
-        r.userId.isNotEmpty &&
-        r.userId.trim() != currentUserId.trim(),
-  );
-  if (peerRead) {
+  // Socket `message_read` often updates receipts without clearing `deliveryStatus`.
+  if ((message.readByCount ?? 0) >= 1 ||
+      _hasPeerReadReceipt(message, currentUserId)) {
     return MessengerDeliveryStatus.seen;
   }
-  if (peerDelivered) {
+
+  final seenFromApi = _statusFromDeliveryStatusApi(api);
+  if (seenFromApi == MessengerDeliveryStatus.seen) {
+    return MessengerDeliveryStatus.seen;
+  }
+
+  if ((message.deliveredToCount ?? 0) >= 1 ||
+      _hasPeerDeliveredReceipt(message, currentUserId)) {
     return MessengerDeliveryStatus.delivered;
   }
+
+  if (seenFromApi == MessengerDeliveryStatus.delivered) {
+    return MessengerDeliveryStatus.delivered;
+  }
+
+  if (seenFromApi == MessengerDeliveryStatus.sent) {
+    return MessengerDeliveryStatus.sent;
+  }
+
   return MessengerDeliveryStatus.sent;
 }

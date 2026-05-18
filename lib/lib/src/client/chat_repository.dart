@@ -36,7 +36,8 @@ abstract class ChatRepository {
     String? profile,
   });
 
-  /// Batch merge users + create DIRECT (two users, no [groupName]) or GROUP.
+  /// Batch merge users + create DIRECT (two users, no [groupName]) or GROUP
+  /// (non-empty [groupName], including two-user groups).
   Future<Conversation> startConversation(
     ChatAuth auth, {
     required List<ChatUserRegistrationBody> users,

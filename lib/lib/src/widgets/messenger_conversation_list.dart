@@ -117,9 +117,14 @@ class MessengerConversationList extends StatefulWidget {
     this.groupNameFieldLabelText = 'Group name',
     this.groupNameFieldHintText = 'Enter a group name',
     this.groupNameRequiredErrorText = 'Enter a group name to continue.',
+    this.groupMinSelectionCount = 1,
+    this.defaultGroupNameWhenEmpty = 'Group',
     this.startNewChatUsers,
     this.startNewChatDirectory,
-  });
+  }) : assert(
+          groupMinSelectionCount > 0,
+          'groupMinSelectionCount must be greater than zero.',
+        );
 
   final String currentUserName;
   final List<MessengerConversation> conversations;
@@ -187,6 +192,13 @@ class MessengerConversationList extends StatefulWidget {
   final String groupNameFieldLabelText;
   final String groupNameFieldHintText;
   final String groupNameRequiredErrorText;
+
+  /// Minimum selected peers before create-group is enabled (default 1).
+  final int groupMinSelectionCount;
+
+  /// Used when the name field is hidden/optional and empty so
+  /// `startConversation` still creates GROUP (not DIRECT).
+  final String defaultGroupNameWhenEmpty;
 
   /// Optional directory rows for the **Start New Chat** sheet only.
   ///
@@ -847,6 +859,8 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
           groupNameFieldLabelText: widget.groupNameFieldLabelText,
           groupNameFieldHintText: widget.groupNameFieldHintText,
           groupNameRequiredErrorText: widget.groupNameRequiredErrorText,
+          groupMinSelectionCount: widget.groupMinSelectionCount,
+          defaultGroupNameWhenEmpty: widget.defaultGroupNameWhenEmpty,
           startNewChatDirectory: widget.startNewChatDirectory,
         ),
       );
@@ -929,6 +943,8 @@ class _StartNewChatBottomSheet extends StatefulWidget {
     this.groupNameFieldLabelText = 'Group name',
     this.groupNameFieldHintText = 'Enter a group name',
     this.groupNameRequiredErrorText = 'Enter a group name to continue.',
+    this.groupMinSelectionCount = 1,
+    this.defaultGroupNameWhenEmpty = 'Group',
     this.startNewChatDirectory,
   });
 
@@ -951,6 +967,8 @@ class _StartNewChatBottomSheet extends StatefulWidget {
   final String groupNameFieldLabelText;
   final String groupNameFieldHintText;
   final String groupNameRequiredErrorText;
+  final int groupMinSelectionCount;
+  final String defaultGroupNameWhenEmpty;
   final MessengerStartNewChatDirectory? startNewChatDirectory;
 
   @override
@@ -1244,7 +1262,9 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
                       ),
                       const Spacer(),
                       FilledButton(
-                        onPressed: !groupBusy && selectedUsers.length >= 2
+                        onPressed: !groupBusy &&
+                                selectedUsers.length >=
+                                    widget.groupMinSelectionCount
                             ? () => _submitGroupSelection(selectedUsers)
                             : null,
                         style: FilledButton.styleFrom(
@@ -1489,11 +1509,22 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
         .toList(growable: false);
   }
 
+  String _groupNameForCreateRequest(String trimmedInput) {
+    if (trimmedInput.isNotEmpty) {
+      return trimmedInput;
+    }
+    if (_groupNameIsRequired) {
+      return '';
+    }
+    final fallback = widget.defaultGroupNameWhenEmpty.trim();
+    return fallback.isEmpty ? 'Group' : fallback;
+  }
+
   Future<void> _submitGroupSelection(List<MessengerUser> selectedUsers) async {
     final requestCallback = widget.onCreateGroupRequested;
     final callback = widget.onCreateGroupSelected;
     if ((requestCallback == null && callback == null) ||
-        selectedUsers.length < 2 ||
+        selectedUsers.length < widget.groupMinSelectionCount ||
         widget.sheetLive.value.isCreatingGroup) {
       return;
     }
@@ -1507,7 +1538,7 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
         await requestCallback(
           MessengerGroupCreateRequest(
             selectedUsers: selectedUsers,
-            groupName: trimmedGroupName,
+            groupName: _groupNameForCreateRequest(trimmedGroupName),
           ),
         );
       } else if (callback != null) {
@@ -1689,11 +1720,8 @@ class _DirectUserTile extends StatelessWidget {
             imageUrl: user.avatarUrl,
             compact: true,
             size: 34,
-            showOnlineIndicator: hasUnread || showOnlinePresence,
+            showOnlineIndicator: showOnlinePresence,
             isOnline: user.isOnline,
-            presenceDotColor: hasUnread
-                ? (style.unreadDotColor ?? theme.onlineIndicator)
-                : null,
           ),
           const SizedBox(width: 10),
           Expanded(

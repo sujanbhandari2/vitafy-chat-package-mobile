@@ -16,36 +16,49 @@ class UnreadMerger {
   ///      (back-compat). A value of `0` or less clears the entry.
   ///   3. Rows with neither signal are left untouched.
   ///
-  /// When [activeConversationId] is set, that conversation is force-cleared so
-  /// the open thread stays at zero on refresh (matches join+markRead semantics).
+  /// When [activeConversationId] is set and [clearActiveConversationUnread] is
+  /// true (thread visible), that conversation is force-cleared on refresh.
   static Map<String, int> mergeFromConversations(
     Map<String, int> previous,
     List<Conversation> list, {
     required String currentUserId,
     String? activeConversationId,
+    bool clearActiveConversationUnread = false,
   }) {
     final next = Map<String, int>.from(previous);
     final active = activeConversationId?.trim();
     for (final c in list) {
       final id = c.id;
       final u = c.unreadCount;
-      if (_hasLatestMessageId(c)) {
-        if (c.isUnreadFor(currentUserId)) {
-          final prev = next[id] ?? 0;
-          final serverFloor =
-              u != null && u > 0 ? u : 1;
-          next[id] = _maxUnreadCount(prev, serverFloor, 1);
-        } else {
-          next.remove(id);
-        }
-      } else if (u != null) {
-        if (u <= 0) {
-          next.remove(id);
-        } else {
+
+      // Web list refresh: trust positive unreadCount; zero clears unless read
+      // cursors still show mail behind latest (REST unreadCount can lag).
+      if (u != null) {
+        if (u > 0 &&
+            (!_hasLatestMessageId(c) || c.isUnreadFor(currentUserId))) {
           next[id] = u;
+        } else if (!_hasLatestMessageId(c) ||
+            !c.isUnreadFor(currentUserId)) {
+          next.remove(id);
+        } else {
+          final prev = next[id] ?? 0;
+          next[id] = _maxUnreadCount(prev, 1, 1);
         }
+        continue;
       }
-      if (active != null && active.isNotEmpty && id == active) {
+
+      // No explicit count: derive unread from read cursor vs latest message id.
+      // Do not clear [previous] solely because cursors look caught up — avoids
+      // wiping socket `conversation_message` badges on REST refresh.
+      if (_hasLatestMessageId(c) && c.isUnreadFor(currentUserId)) {
+        final prev = next[id] ?? 0;
+        next[id] = _maxUnreadCount(prev, 1, 1);
+      }
+
+      if (clearActiveConversationUnread &&
+          active != null &&
+          active.isNotEmpty &&
+          id == active) {
         next.remove(id);
       }
     }

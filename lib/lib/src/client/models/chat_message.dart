@@ -70,6 +70,8 @@ class ChatMessage {
     required this.readReceipts,
     this.sender,
     this.deliveryStatus,
+    this.deliveredToCount,
+    this.readByCount,
   });
 
   final String id;
@@ -93,6 +95,12 @@ class ChatMessage {
 
   /// Server-provided delivery/read aggregate when present (e.g. SENT, DELIVERED, SEEN).
   final String? deliveryStatus;
+
+  /// Other participants with a delivery cursor at or past this message (REST aggregate).
+  final int? deliveredToCount;
+
+  /// Other participants with a read cursor at or past this message (REST aggregate).
+  final int? readByCount;
 
   bool get isDeleted => deletedAt != null;
 
@@ -170,6 +178,10 @@ class ChatMessage {
             )
           : null,
       deliveryStatus: _deliveryStatusFromJson(json),
+      deliveredToCount: _intFromJson(
+        json['deliveredToCount'] ?? json['delivered_to_count'],
+      ),
+      readByCount: _intFromJson(json['readByCount'] ?? json['read_by_count']),
     );
   }
 
@@ -187,6 +199,8 @@ class ChatMessage {
     List<DeliveredReceipt>? deliveredReceipts,
     List<ReadReceipt>? readReceipts,
     String? deliveryStatus,
+    int? deliveredToCount,
+    int? readByCount,
   }) {
     return ChatMessage(
       id: id,
@@ -208,8 +222,23 @@ class ChatMessage {
       readReceipts: readReceipts ?? this.readReceipts,
       sender: sender,
       deliveryStatus: deliveryStatus ?? this.deliveryStatus,
+      deliveredToCount: deliveredToCount ?? this.deliveredToCount,
+      readByCount: readByCount ?? this.readByCount,
     );
   }
+}
+
+int? _intFromJson(dynamic raw) {
+  if (raw == null) {
+    return null;
+  }
+  if (raw is int) {
+    return raw;
+  }
+  if (raw is num) {
+    return raw.toInt();
+  }
+  return int.tryParse(raw.toString());
 }
 
 String? _deliveryStatusFromJson(Map<String, dynamic> json) {

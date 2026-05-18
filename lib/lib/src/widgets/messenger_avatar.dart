@@ -12,6 +12,8 @@ class MessengerAvatar extends StatelessWidget {
     this.showOnlineIndicator = false,
     this.isOnline = false,
     this.presenceDotColor,
+    this.showUnreadIndicator = false,
+    this.unreadIndicatorColor,
   });
 
   final String label;
@@ -24,6 +26,10 @@ class MessengerAvatar extends StatelessWidget {
   /// When set, used for the bottom-right dot instead of [isOnline] /
   /// [MessengerThemeData.onlineIndicator] vs [MessengerThemeData.offlineIndicator].
   final Color? presenceDotColor;
+
+  /// Unread badge (top-right), separate from online presence (bottom-right).
+  final bool showUnreadIndicator;
+  final Color? unreadIndicatorColor;
 
   @override
   Widget build(BuildContext context) {
@@ -60,30 +66,43 @@ class MessengerAvatar extends StatelessWidget {
             ),
     );
 
-    if (!showOnlineIndicator) {
+    if (!showOnlineIndicator && !showUnreadIndicator) {
       return avatar;
     }
 
-    final dotColor = presenceDotColor ??
+    final onlineDotColor = presenceDotColor ??
         (isOnline ? theme.onlineIndicator : theme.offlineIndicator);
+    final unreadDotColor = unreadIndicatorColor ?? theme.primary;
+    final dotSize = size * 0.26;
+
+    Widget dot(Color color) {
+      return Container(
+        width: dotSize,
+        height: dotSize,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+        ),
+      );
+    }
 
     return Stack(
       clipBehavior: Clip.none,
       children: [
         avatar,
-        Positioned(
-          right: -1,
-          bottom: -1,
-          child: Container(
-            width: size * 0.26,
-            height: size * 0.26,
-            decoration: BoxDecoration(
-              color: dotColor,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-            ),
+        if (showUnreadIndicator)
+          Positioned(
+            right: -1,
+            top: -1,
+            child: dot(unreadDotColor),
           ),
-        ),
+        if (showOnlineIndicator)
+          Positioned(
+            right: -1,
+            bottom: -1,
+            child: dot(onlineDotColor),
+          ),
       ],
     );
   }
