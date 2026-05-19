@@ -80,4 +80,35 @@ void main() {
       expect(merged.readByCount, 2);
     });
   });
+
+  group('receipt appliers', () {
+    test('delivered receipt lifts deliveredToCount for sparse payloads', () {
+      final message = _message(deliveredToCount: 0);
+      final next = applyDeliveredReceiptToMessage(
+        message,
+        DeliveredReceipt.fromJson({
+          'id': 'd1',
+          'messageId': 'm1',
+          'userId': '',
+          'deliveredAt': DateTime.utc(2020).toIso8601String(),
+        }),
+      );
+      expect(next.deliveredToCount, 1);
+    });
+
+    test('read receipt lifts read and delivered aggregates', () {
+      final message = _message(deliveredToCount: 0, readByCount: 0);
+      final next = applyReadReceiptToMessage(
+        message,
+        ReadReceipt.fromJson({
+          'id': 'r1',
+          'messageId': 'm1',
+          'userId': '',
+          'readAt': DateTime.utc(2020).toIso8601String(),
+        }),
+      );
+      expect(next.readByCount, 1);
+      expect(next.deliveredToCount, 1);
+    });
+  });
 }

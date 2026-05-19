@@ -715,8 +715,8 @@ class _DeliveryTick extends StatelessWidget {
   final MessengerDeliveryStatus status;
   final Color bubbleColor;
 
-  static const double _chipSize = 16;
-  static const double _iconSize = 11;
+  static const double _chipSize = 18;
+  static const double _iconSize = 13;
 
   @override
   Widget build(BuildContext context) {

@@ -63,7 +63,13 @@ ChatMessage applyDeliveredReceiptToMessage(
   final next = List<DeliveredReceipt>.from(message.deliveredReceipts)
     ..removeWhere((item) => item.userId == receipt.userId)
     ..add(receipt);
-  return message.copyWith(deliveredReceipts: next);
+  // Realtime receipt payloads can be sparse (missing peer id/count fields), so
+  // raise aggregate delivery evidence immediately instead of waiting for a REST
+  // refetch to advance outgoing ticks.
+  return message.copyWith(
+    deliveredReceipts: next,
+    deliveredToCount: _maxCount(message.deliveredToCount, 1),
+  );
 }
 
 /// Applies a socket `message_read` receipt to [message] (idempotent per user).
@@ -77,5 +83,11 @@ ChatMessage applyReadReceiptToMessage(
   final next = List<ReadReceipt>.from(message.readReceipts)
     ..removeWhere((item) => item.userId == receipt.userId)
     ..add(receipt);
-  return message.copyWith(readReceipts: next);
+  // Read implies delivered; lift both aggregates so status updates in-place even
+  // when socket echoes omit peer identifiers.
+  return message.copyWith(
+    readReceipts: next,
+    readByCount: _maxCount(message.readByCount, 1),
+    deliveredToCount: _maxCount(message.deliveredToCount, 1),
+  );
 }

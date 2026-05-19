@@ -117,8 +117,8 @@ class MessengerConversationList extends StatefulWidget {
     this.groupNameFieldLabelText = 'Group name',
     this.groupNameFieldHintText = 'Enter a group name',
     this.groupNameRequiredErrorText = 'Enter a group name to continue.',
-    this.groupMinSelectionCount = 1,
     this.defaultGroupNameWhenEmpty = 'Group',
+    this.groupMinSelectionCount = 1,
     this.startNewChatUsers,
     this.startNewChatDirectory,
   }) : assert(
@@ -192,13 +192,8 @@ class MessengerConversationList extends StatefulWidget {
   final String groupNameFieldLabelText;
   final String groupNameFieldHintText;
   final String groupNameRequiredErrorText;
-
-  /// Minimum selected peers before create-group is enabled (default 1).
-  final int groupMinSelectionCount;
-
-  /// Used when the name field is hidden/optional and empty so
-  /// `startConversation` still creates GROUP (not DIRECT).
   final String defaultGroupNameWhenEmpty;
+  final int groupMinSelectionCount;
 
   /// Optional directory rows for the **Start New Chat** sheet only.
   ///
@@ -859,12 +854,14 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
           groupNameFieldLabelText: widget.groupNameFieldLabelText,
           groupNameFieldHintText: widget.groupNameFieldHintText,
           groupNameRequiredErrorText: widget.groupNameRequiredErrorText,
-          groupMinSelectionCount: widget.groupMinSelectionCount,
           defaultGroupNameWhenEmpty: widget.defaultGroupNameWhenEmpty,
+          groupMinSelectionCount: widget.groupMinSelectionCount,
           startNewChatDirectory: widget.startNewChatDirectory,
         ),
       );
     } finally {
+      // Reset host-side server search so reopening starts from full user list.
+      widget.startNewChatDirectory?.onSearchQueryDebounced?.call('');
       if (identical(_startNewChatSheetLive, sheetLive)) {
         _startNewChatSheetLive = null;
       }
@@ -943,10 +940,13 @@ class _StartNewChatBottomSheet extends StatefulWidget {
     this.groupNameFieldLabelText = 'Group name',
     this.groupNameFieldHintText = 'Enter a group name',
     this.groupNameRequiredErrorText = 'Enter a group name to continue.',
-    this.groupMinSelectionCount = 1,
     this.defaultGroupNameWhenEmpty = 'Group',
+    this.groupMinSelectionCount = 1,
     this.startNewChatDirectory,
-  });
+  }) : assert(
+          groupMinSelectionCount > 0,
+          'groupMinSelectionCount must be greater than zero.',
+        );
 
   final ValueNotifier<_StartNewChatSheetLiveData> sheetLive;
   final Color searchBackgroundColor;
@@ -967,8 +967,8 @@ class _StartNewChatBottomSheet extends StatefulWidget {
   final String groupNameFieldLabelText;
   final String groupNameFieldHintText;
   final String groupNameRequiredErrorText;
-  final int groupMinSelectionCount;
   final String defaultGroupNameWhenEmpty;
+  final int groupMinSelectionCount;
   final MessengerStartNewChatDirectory? startNewChatDirectory;
 
   @override
@@ -1514,7 +1514,7 @@ class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
       return trimmedInput;
     }
     if (_groupNameIsRequired) {
-      return '';
+      return trimmedInput;
     }
     final fallback = widget.defaultGroupNameWhenEmpty.trim();
     return fallback.isEmpty ? 'Group' : fallback;
