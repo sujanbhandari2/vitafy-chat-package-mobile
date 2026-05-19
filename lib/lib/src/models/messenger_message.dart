@@ -1,3 +1,5 @@
+import 'messenger_message_attachment.dart';
+
 enum MessengerMessageType { text, image, voice, video, file }
 
 enum MessengerDeliveryStatus { none, sent, delivered, seen }
@@ -38,22 +40,9 @@ class MessengerComposerReplyDraft {
   }
 }
 
-String messengerReplyPreviewSnippet(MessengerChatMessage message) {
-  if (message.isDeleted) {
-    return 'Message deleted';
-  }
-  if (message.isUploading) {
-    return 'Sending…';
-  }
-  final caption = message.caption?.trim() ?? '';
-  if (caption.isNotEmpty) {
-    return _truncatePreview(caption);
-  }
-  final text = message.content.trim();
-  if (message.type == MessengerMessageType.text && text.isNotEmpty) {
-    return _truncatePreview(text);
-  }
-  switch (message.type) {
+/// Short label for media rows in reply chips and conversation previews.
+String messengerMediaPreviewLabel(MessengerMessageType type) {
+  switch (type) {
     case MessengerMessageType.image:
       return 'Photo';
     case MessengerMessageType.video:
@@ -67,7 +56,25 @@ String messengerReplyPreviewSnippet(MessengerChatMessage message) {
   }
 }
 
-String _truncatePreview(String raw, [int max = 80]) {
+String messengerReplyPreviewSnippet(MessengerChatMessage message) {
+  if (message.isDeleted) {
+    return 'Message deleted';
+  }
+  if (message.isUploading) {
+    return 'Sending…';
+  }
+  final caption = message.caption?.trim() ?? '';
+  if (caption.isNotEmpty) {
+    return messengerTruncatePreview(caption);
+  }
+  final text = message.content.trim();
+  if (message.type == MessengerMessageType.text && text.isNotEmpty) {
+    return messengerTruncatePreview(text);
+  }
+  return messengerMediaPreviewLabel(message.type);
+}
+
+String messengerTruncatePreview(String raw, [int max = 80]) {
   final t = raw.trim();
   if (t.length <= max) {
     return t;
@@ -94,6 +101,7 @@ class MessengerChatMessage {
     required this.content,
     required this.createdAt,
     this.caption,
+    this.attachments = const [],
     this.isDeleted = false,
     this.deliveryStatus = MessengerDeliveryStatus.none,
     this.reactions = const [],
@@ -110,6 +118,8 @@ class MessengerChatMessage {
   final String content;
   /// Optional text shown beneath image, video, file, or voice payloads.
   final String? caption;
+  /// When non-empty, drives multi-attachment bubble rendering.
+  final List<MessengerMessageAttachment> attachments;
   final DateTime createdAt;
   final bool isDeleted;
   final MessengerDeliveryStatus deliveryStatus;

@@ -2858,8 +2858,15 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
   MessengerChatMessage _mapMessage(ChatMessage message) {
     final body = message.content.trim();
+    final uiType = _mapUiMessageType(message.type);
+    final mediaOrigin = widget.session.config.apiBaseUrl.trim();
+    final uiAttachments = messengerAttachmentsFromChatMessage(
+      message,
+      fallbackType: uiType,
+      mediaBaseOrigin: mediaOrigin.isEmpty ? null : mediaOrigin,
+    );
     final attachmentUrl =
-        message.attachments.isEmpty ? '' : message.attachments.first.url.trim();
+        uiAttachments.isEmpty ? '' : uiAttachments.first.url.trim();
 
     late final String content;
     late final String? caption;
@@ -2889,9 +2896,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       id: message.id,
       senderId: message.senderId,
       senderLabel: _senderName(message),
-      type: _mapUiMessageType(message.type),
+      type: uiType,
       content: content,
       caption: caption,
+      attachments: uiAttachments,
       createdAt: message.createdAt,
       isDeleted: message.isDeleted,
       deliveryStatus: _deliveryStatusFor(message),
@@ -3069,75 +3077,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }
 
   String _messagePreview(ChatMessage message) {
-    if (message.isDeleted) {
-      return '[deleted]';
-    }
-    final content = message.content.trim();
-    if (content.isNotEmpty) {
-      return content;
-    }
-    if (message.attachments.isNotEmpty) {
-      return _attachmentPreviewLabel(message);
-    }
-    return '[Empty message]';
-  }
-
-  String _attachmentPreviewLabel(ChatMessage message) {
-    final attachment = message.attachments.first;
-    final normalizedKind = attachment.kind?.trim().toLowerCase() ?? '';
-    final normalizedMime = attachment.mimeType?.trim().toLowerCase() ?? '';
-    final normalizedName = attachment.fileName?.trim().toLowerCase() ?? '';
-
-    bool looksLikeDocument() {
-      return normalizedMime.startsWith('application/') ||
-          normalizedName.endsWith('.pdf') ||
-          normalizedName.endsWith('.doc') ||
-          normalizedName.endsWith('.docx') ||
-          normalizedName.endsWith('.xls') ||
-          normalizedName.endsWith('.xlsx') ||
-          normalizedName.endsWith('.ppt') ||
-          normalizedName.endsWith('.pptx') ||
-          normalizedName.endsWith('.txt');
-    }
-
-    switch (message.type) {
-      case MessageType.image:
-        return 'Image';
-      case MessageType.voice:
-        return 'Voice';
-      case MessageType.video:
-        return 'Video';
-      case MessageType.file:
-        return 'Document';
-      case MessageType.link:
-        return 'Link';
-      case MessageType.text:
-      case MessageType.other:
-        break;
-    }
-
-    if (normalizedKind.contains('image') ||
-        normalizedMime.startsWith('image/')) {
-      return 'Image';
-    }
-    if (normalizedKind.contains('voice') ||
-        normalizedKind.contains('audio') ||
-        normalizedMime.startsWith('audio/')) {
-      return 'Voice';
-    }
-    if (normalizedKind.contains('video') ||
-        normalizedMime.startsWith('video/')) {
-      return 'Video';
-    }
-    if (normalizedKind.contains('link')) {
-      return 'Link';
-    }
-    if (normalizedKind.contains('file') ||
-        normalizedKind.contains('document') ||
-        looksLikeDocument()) {
-      return 'Document';
-    }
-    return 'Attachment';
+    final mediaOrigin = widget.session.config.apiBaseUrl.trim();
+    return messengerConversationPreview(
+      message,
+      mediaBaseOrigin: mediaOrigin.isEmpty ? null : mediaOrigin,
+    );
   }
 
   /// Prefer the chronologically newer row when both REST and loaded-thread

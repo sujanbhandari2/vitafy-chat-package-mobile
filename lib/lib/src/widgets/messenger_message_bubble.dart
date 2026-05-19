@@ -4,9 +4,11 @@ import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' show DateFormat;
-import 'package:http/http.dart' as http;
-
+import '../media/messenger_cached_image.dart';
+import '../media/messenger_media_cache.dart';
+import '../media/messenger_media_cache_scope.dart';
 import '../models/messenger_message.dart';
+import '../models/messenger_message_attachment.dart';
 import '../theme/messenger_theme.dart';
 import 'messenger_avatar.dart';
 
@@ -818,62 +820,27 @@ class _MessageContent extends StatelessWidget {
       );
     }
 
+    if (message.attachments.isNotEmpty) {
+      return _buildAttachmentsPayload(context);
+    }
+
     if (message.type == MessengerMessageType.image) {
-      final uri = Uri.tryParse(message.content);
-      final isNetwork =
-          uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
       return GestureDetector(
-        onTap: () => _openImagePreview(context, message.content, isNetwork),
+        onTap: () => _openImageGallery(
+          context,
+          urls: [message.content],
+          initialIndex: 0,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: isNetwork
-                  ? Image.network(
-                      message.content,
-                      width: 220,
-                      height: 220,
-                      fit: BoxFit.cover,
-                      loadingBuilder: (context, child, loadingProgress) {
-                        if (loadingProgress == null) {
-                          return child;
-                        }
-                        final expected = loadingProgress.expectedTotalBytes;
-                        final loaded = loadingProgress.cumulativeBytesLoaded;
-                        final value = expected == null
-                            ? null
-                            : loaded / expected.toDouble();
-                        return Container(
-                          width: 220,
-                          height: 220,
-                          alignment: Alignment.center,
-                          color: mutedColor.withValues(alpha: 0.15),
-                          child: CircularProgressIndicator(
-                            value: value,
-                            strokeWidth: 2,
-                            color: mutedColor,
-                          ),
-                        );
-                      },
-                      errorBuilder: (_, __, ___) => const SizedBox(
-                        width: 220,
-                        height: 100,
-                        child: Center(child: Text('Unable to load image')),
-                      ),
-                    )
-                  : Image.file(
-                      File(message.content),
-                      width: 220,
-                      height: 220,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const SizedBox(
-                        width: 220,
-                        height: 100,
-                        child: Center(child: Text('Unable to load image')),
-                      ),
-                    ),
+            _cachedImage(
+              context,
+              message.content,
+              width: 220,
+              height: 220,
+              mutedColor: mutedColor,
             ),
             _attachmentCaptionIfAny(),
           ],
@@ -939,76 +906,461 @@ class _MessageContent extends StatelessWidget {
     );
   }
 
-  void _openImagePreview(
+  Widget _buildAttachmentsPayload(BuildContext context) {
+    final attachments = message.attachments;
+    final nonAudio = attachments
+        .where((a) => a.kind != MessengerMessageAttachmentKind.voice)
+        .toList(growable: false);
+    final audio = attachments
+        .where((a) => a.kind == MessengerMessageAttachmentKind.voice)
+        .toList(growable: false);
+    final imageOnly = nonAudio.isNotEmpty &&
+        nonAudio.every((a) => a.kind == MessengerMessageAttachmentKind.image);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (imageOnly && nonAudio.length > 1)
+          _MessageImageStack(
+            images: nonAudio,
+            buildImage: (url, {showLoader = true}) => _cachedImage(
+              context,
+              url,
+              width: 200,
+              height: 168,
+              mutedColor: mutedColor,
+              showLoader: showLoader,
+            ),
+            onOpen: (index) => _openImageGallery(
+              context,
+              urls: nonAudio.map((a) => a.url).toList(growable: false),
+              initialIndex: index,
+            ),
+          )
+        else if (imageOnly && nonAudio.length == 1)
+          GestureDetector(
+            onTap: () => _openImageGallery(
+              context,
+              urls: [nonAudio.first.url],
+              initialIndex: 0,
+            ),
+            child: _cachedImage(
+              context,
+              nonAudio.first.url,
+              width: 220,
+              height: 220,
+              mutedColor: mutedColor,
+            ),
+          )
+        else ...[
+          for (final att in nonAudio) _buildSingleAttachment(context, att),
+        ],
+        if (audio.isNotEmpty)
+          Padding(
+            padding: EdgeInsets.only(top: nonAudio.isNotEmpty ? 8 : 0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final att in audio) ...[
+                  _buildVoiceAttachment(att),
+                  if (att != audio.last) const SizedBox(height: 6),
+                ],
+              ],
+            ),
+          ),
+        _attachmentCaptionIfAny(),
+      ],
+    );
+  }
+
+  Widget _buildSingleAttachment(
     BuildContext context,
-    String source,
-    bool isNetwork,
+    MessengerMessageAttachment att,
   ) {
+    switch (att.kind) {
+      case MessengerMessageAttachmentKind.image:
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: GestureDetector(
+            onTap: () => _openImageGallery(
+              context,
+              urls: [att.url],
+              initialIndex: 0,
+            ),
+            child: _cachedImage(
+              context,
+              att.url,
+              width: 220,
+              height: 220,
+              mutedColor: mutedColor,
+            ),
+          ),
+        );
+      case MessengerMessageAttachmentKind.video:
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: _MediaAssetTile(
+            icon: Icons.videocam_rounded,
+            label: att.fileName ?? _labelForContent(att.url, fallback: 'Video'),
+            textColor: textColor,
+            mutedColor: mutedColor,
+          ),
+        );
+      case MessengerMessageAttachmentKind.file:
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: _MediaAssetTile(
+            icon: Icons.insert_drive_file_rounded,
+            label: att.fileName ?? _labelForContent(att.url, fallback: 'File'),
+            textColor: textColor,
+            mutedColor: mutedColor,
+          ),
+        );
+      case MessengerMessageAttachmentKind.voice:
+        return _buildVoiceAttachment(att);
+    }
+  }
+
+  Widget _buildVoiceAttachment(MessengerMessageAttachment att) {
+    return MessengerVoicePlayer(
+      source: att.url,
+      preferDeviceFile: !_isNetworkUrl(att.url),
+      iconColor: textColor,
+      waveformActiveColor: textColor,
+      waveformInactiveColor: textColor.withValues(alpha: 0.35),
+    );
+  }
+
+  Widget _cachedImage(
+    BuildContext context,
+    String source, {
+    required double width,
+    required double height,
+    required Color mutedColor,
+    bool showLoader = true,
+  }) {
+    final theme = MessengerTheme.of(context);
+    return MessengerCachedImage(
+      source: source,
+      width: width,
+      height: height,
+      placeholderColor: theme.mediaPlaceholderBackground ??
+          mutedColor.withValues(alpha: 0.15),
+      loaderColor: theme.mediaLoaderColor ?? mutedColor,
+      showLoader: showLoader,
+    );
+  }
+
+  bool _isNetworkUrl(String url) => messengerMediaSourceIsNetwork(url);
+
+  void _openImageGallery(
+    BuildContext context, {
+    required List<String> urls,
+    required int initialIndex,
+  }) {
+    final sources = urls.map((u) => u.trim()).where((u) => u.isNotEmpty).toList();
+    if (sources.isEmpty) {
+      return;
+    }
+    final start = initialIndex.clamp(0, sources.length - 1);
+    final cacheScope = MessengerMediaCacheScope.maybeOf(context);
     showDialog<void>(
       context: context,
       barrierColor: Colors.black.withValues(alpha: 0.92),
-      builder: (dialogContext) => wrapMessengerPackageDialogTheme(
-        ambientContext: context,
-        packageDialogTheme: packageDialogTheme,
-        child: Builder(
-          builder: (context) {
-            final imageWidget = isNetwork
-            ? Image.network(
-                source,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const Center(
-                  child: Text(
-                    'Unable to load image',
-                    style: TextStyle(color: Colors.white70),
-                  ),
-                ),
-              )
-            : Image.file(
-                File(source),
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const Center(
-                  child: Text(
-                    'Unable to load image',
-                    style: TextStyle(color: Colors.white70),
-                  ),
-                ),
-              );
+      builder: (dialogContext) {
+        final lightbox = _MessengerImageLightbox(
+          sources: sources,
+          initialIndex: start,
+        );
+        final themed = wrapMessengerPackageDialogTheme(
+          ambientContext: context,
+          packageDialogTheme: packageDialogTheme,
+          child: lightbox,
+        );
+        if (cacheScope == null) {
+          return themed;
+        }
+        return MessengerMediaCacheScope(
+          cache: cacheScope.cache,
+          staticHeaders: cacheScope.staticHeaders,
+          headersForUrl: cacheScope.headersForUrl,
+          mediaBaseOrigin: cacheScope.mediaBaseOrigin,
+          child: themed,
+        );
+      },
+    );
+  }
+}
 
-        return Material(
-          type: MaterialType.transparency,
+class _MessageImageStack extends StatelessWidget {
+  const _MessageImageStack({
+    required this.images,
+    required this.buildImage,
+    required this.onOpen,
+  });
+
+  final List<MessengerMessageAttachment> images;
+  final Widget Function(String url, {bool showLoader}) buildImage;
+  final void Function(int index) onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final top3 = images.take(3).toList(growable: false);
+    final extra = images.length - top3.length;
+
+    return Semantics(
+      button: true,
+      label: 'Open ${images.length} images',
+      child: GestureDetector(
+        onTap: () => onOpen(0),
+        child: SizedBox(
+          width: 248,
+          height: 220,
           child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
             children: [
-              Positioned.fill(
-                child: GestureDetector(
-                  onTap: () => Navigator.of(dialogContext).pop(),
-                  child: Center(
-                    child: InteractiveViewer(
-                      minScale: 0.8,
-                      maxScale: 4.0,
-                      child: imageWidget,
+              for (var i = top3.length - 1; i >= 0; i--)
+                _stackedImage(top3[i].url, i, showLoader: i == 0),
+              if (extra > 0)
+                Positioned(
+                  right: 6,
+                  bottom: 6,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '+$extra',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _stackedImage(String url, int index, {required bool showLoader}) {
+    final yOffset = index * 3.0;
+    final rotate = index == 0
+        ? 0.0
+        : (index.isOdd ? -0.035 : 0.035);
+    final xOffset = index == 0 ? 0.0 : (index.isOdd ? -5.0 : 5.0);
+
+    return Transform.translate(
+      offset: Offset(xOffset, yOffset),
+      child: Transform.rotate(
+        angle: rotate,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0x330F172A)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x1F000000),
+                blurRadius: 10,
+                offset: Offset(0, 4),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: buildImage(url, showLoader: showLoader),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-screen viewer for one or more images (swipe / arrow navigation).
+class _MessengerImageLightbox extends StatefulWidget {
+  const _MessengerImageLightbox({
+    required this.sources,
+    required this.initialIndex,
+  });
+
+  final List<String> sources;
+  final int initialIndex;
+
+  @override
+  State<_MessengerImageLightbox> createState() => _MessengerImageLightboxState();
+}
+
+class _MessengerImageLightboxState extends State<_MessengerImageLightbox> {
+  late final PageController _pageController;
+  late int _index;
+
+  @override
+  void initState() {
+    super.initState();
+    _index = widget.initialIndex;
+    _pageController = PageController(initialPage: _index);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _go(int delta) {
+    final next = (_index + delta).clamp(0, widget.sources.length - 1);
+    if (next == _index) {
+      return;
+    }
+    _pageController.animateToPage(
+      next,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasMany = widget.sources.length > 1;
+    final size = MediaQuery.sizeOf(context);
+
+    return Material(
+      type: MaterialType.transparency,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: () => Navigator.of(context).pop(),
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: widget.sources.length,
+                onPageChanged: (page) => setState(() => _index = page),
+                itemBuilder: (context, pageIndex) {
+                  return Center(
+                    child: GestureDetector(
+                      onTap: () {},
+                      child: InteractiveViewer(
+                        minScale: 0.8,
+                        maxScale: 4.0,
+                        child: MessengerCachedImage(
+                          source: widget.sources[pageIndex],
+                          width: size.width,
+                          height: size.height,
+                          containFit: true,
+                          borderRadius: BorderRadius.zero,
+                          placeholderColor: Colors.white12,
+                          loaderColor: Colors.white70,
+                          loaderStrokeWidth: 3,
+                          errorMessage: 'Unable to load image',
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          Positioned(
+            top: 16,
+            right: 16,
+            child: Material(
+              color: Colors.black54,
+              shape: const CircleBorder(),
+              child: IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close_rounded, color: Colors.white),
+                tooltip: 'Close',
+              ),
+            ),
+          ),
+          if (hasMany) ...[
+            Positioned(
+              left: 8,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: _LightboxNavButton(
+                  icon: Icons.chevron_left_rounded,
+                  enabled: _index > 0,
+                  onPressed: () => _go(-1),
+                  tooltip: 'Previous image',
+                ),
+              ),
+            ),
+            Positioned(
+              right: 8,
+              top: 0,
+              bottom: 0,
+              child: Center(
+                child: _LightboxNavButton(
+                  icon: Icons.chevron_right_rounded,
+                  enabled: _index < widget.sources.length - 1,
+                  onPressed: () => _go(1),
+                  tooltip: 'Next image',
+                ),
+              ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 24,
+              child: Center(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '${_index + 1}/${widget.sources.length}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
                     ),
                   ),
                 ),
               ),
-              Positioned(
-                top: 16,
-                right: 16,
-                child: Material(
-                  color: Colors.black54,
-                  shape: const CircleBorder(),
-                  elevation: 4,
-                  shadowColor: Colors.black45,
-                  child: IconButton(
-                    onPressed: () => Navigator.of(dialogContext).pop(),
-                    icon: const Icon(Icons.close_rounded, color: Colors.white),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-          },
-        ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _LightboxNavButton extends StatelessWidget {
+  const _LightboxNavButton({
+    required this.icon,
+    required this.enabled,
+    required this.onPressed,
+    required this.tooltip,
+  });
+
+  final IconData icon;
+  final bool enabled;
+  final VoidCallback onPressed;
+  final String tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black54,
+      shape: const CircleBorder(),
+      child: IconButton(
+        onPressed: enabled ? onPressed : null,
+        icon: Icon(icon, color: Colors.white, size: 32),
+        tooltip: tooltip,
       ),
     );
   }
@@ -1140,8 +1492,6 @@ enum _VoicePlaybackStage {
 }
 
 class _MessengerVoicePlayerState extends State<MessengerVoicePlayer> {
-  static final Map<String, String> _downloadedAudioCache = <String, String>{};
-
   /// Total wall-clock time we wait for duration metadata before allowing
   /// playback controls while the duration label still shows a loading
   /// indicator (never `00:00` as a fake placeholder).
@@ -1616,8 +1966,8 @@ class _MessengerVoicePlayerState extends State<MessengerVoicePlayer> {
       return;
     }
 
-    final localPlayed = await _tryPlayFromDownloadedFile(widget.source);
-    if (localPlayed) {
+    final cachedPlayed = await _tryPlayFromCachedFile(widget.source);
+    if (cachedPlayed) {
       return;
     }
 
@@ -1774,6 +2124,11 @@ class _MessengerVoicePlayerState extends State<MessengerVoicePlayer> {
     final isNetwork =
         uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
     if (isNetwork) {
+      final cached = await _resolveMediaFile(src);
+      if (cached != null) {
+        await _player.setSourceDeviceFile(cached.path);
+        return true;
+      }
       await _player.setSourceUrl(src);
       return true;
     }
@@ -1807,33 +2162,35 @@ class _MessengerVoicePlayerState extends State<MessengerVoicePlayer> {
     }
   }
 
-  Future<bool> _tryPlayFromDownloadedFile(String originalUrl) async {
-    try {
-      final cachedPath = _downloadedAudioCache[originalUrl];
-      if (cachedPath != null && await File(cachedPath).exists()) {
-        await _stopOtherPlayers();
-        await _player.stop();
-        await _player.setSourceDeviceFile(cachedPath);
-        _primedSource = widget.source;
-        await _player.resume();
-        _VoicePlayerLifecycleHandler.instance.markActive(this);
-        _clearPlaybackError();
-        return true;
+  Future<File?> _resolveMediaFile(String source) async {
+    final trimmed = MessengerMediaCacheScope.maybeOf(context) != null
+        ? MessengerMediaCacheScope.resolveMediaUrl(context, source)
+        : source.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    if (!messengerMediaSourceIsNetwork(trimmed)) {
+      final file = File(trimmed);
+      if (await file.exists()) {
+        return file;
       }
+      return null;
+    }
+    final scope = MessengerMediaCacheScope.maybeOf(context);
+    if (scope == null) {
+      return null;
+    }
+    final headers =
+        await MessengerMediaCacheScope.resolveHeaders(context, trimmed);
+    return scope.cache.getFile(trimmed, headers: headers);
+  }
 
-      final uri = Uri.parse(originalUrl);
-      final response = await http.get(uri);
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+  Future<bool> _tryPlayFromCachedFile(String originalUrl) async {
+    try {
+      final file = await _resolveMediaFile(originalUrl);
+      if (file == null) {
         return false;
       }
-
-      final extension = _extractExtension(uri.path);
-      final tempPath =
-          '${Directory.systemTemp.path}/voice-${originalUrl.hashCode}$extension';
-      final file = File(tempPath);
-      await file.writeAsBytes(response.bodyBytes, flush: true);
-      _downloadedAudioCache[originalUrl] = file.path;
-
       await _stopOtherPlayers();
       await _player.stop();
       await _player.setSourceDeviceFile(file.path);
@@ -1868,14 +2225,6 @@ class _MessengerVoicePlayerState extends State<MessengerVoicePlayer> {
 
   Future<void> _stopOtherPlayers() async {
     await _VoicePlayerLifecycleHandler.instance.stopOthers(this);
-  }
-
-  String _extractExtension(String path) {
-    final dotIndex = path.lastIndexOf('.');
-    if (dotIndex < 0 || dotIndex == path.length - 1) {
-      return '.audio';
-    }
-    return path.substring(dotIndex);
   }
 
   void _setPlaybackError(String message) {

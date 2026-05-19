@@ -1,4 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:health_messenger_ui/lib/src/client/models/chat_message.dart';
+import 'package:health_messenger_ui/lib/src/widgets/messenger_media_send_orchestrator.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 
@@ -681,6 +685,90 @@ void main() {
 
     expect(fallbackCalls, 1);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('multi-pick queues attachments with per-item removal',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    const user = MessengerUser(id: 'u1', username: 'alice_jones');
+    final conversation = MessengerConversation(
+      id: 'c1',
+      title: 'Alice Jones',
+      subtitle: 'Hello',
+      avatarLabel: 'A',
+      createdAt: DateTime.utc(2026),
+      peerUsers: const [user],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerChatShell(
+              currentUserId: 'me',
+              currentUserName: 'Me',
+              conversations: [conversation],
+              users: const [user],
+              selectedConversationId: 'c1',
+              messages: const [],
+              composerController: composer,
+              messagesScrollController: scroll,
+              isSending: false,
+              isRecording: false,
+              onRefresh: () async {},
+              onLogout: () {},
+              onSelectConversation: (_) async {},
+              onOpenDirectChat: (_) async {},
+              onSend: () {},
+              onPickImage: () {},
+              onPickAudio: () {},
+              onToggleRecording: () {},
+              desktopBreakpoint: 200,
+              enablePackageMediaSending: true,
+              mediaChatClient: _NoopMediaClient(),
+              mediaChatAuth: const ChatAuth(apiKey: 'k'),
+              mediaSenderId: 'me',
+              mediaPicker: _QueueingMediaPicker([
+                MessengerPickedMedia(
+                  file: File('a.pdf'),
+                  messageType: MessageType.file,
+                  displayName: 'a.pdf',
+                ),
+                MessengerPickedMedia(
+                  file: File('b.pdf'),
+                  messageType: MessageType.file,
+                  displayName: 'b.pdf',
+                ),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final composerBar =
+        tester.widget<MessengerComposerBar>(find.byType(MessengerComposerBar));
+    composerBar.onPickImage();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('a.pdf'), findsOneWidget);
+    expect(find.text('b.pdf'), findsOneWidget);
+    expect(find.text('Remove all'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Remove attachment').first);
+    await tester.pump();
+
+    expect(find.text('a.pdf'), findsNothing);
+    expect(find.text('b.pdf'), findsOneWidget);
   });
 
   testWidgets(
@@ -1418,11 +1506,35 @@ class _MobileDeleteThreadHarnessState extends State<_MobileDeleteThreadHarness> 
   }
 }
 
+class _QueueingMediaPicker implements MessengerMediaPicker {
+  const _QueueingMediaPicker(this.items);
+
+  final List<MessengerPickedMedia> items;
+
+  @override
+  Future<MessengerPickedMedia?> pick(MessengerMediaKind kind) async {
+    if (items.isEmpty) {
+      return null;
+    }
+    return items.first;
+  }
+
+  @override
+  Future<List<MessengerPickedMedia>> pickMany(MessengerMediaKind kind) async {
+    return items;
+  }
+}
+
 class _ThrowingMediaPicker implements MessengerMediaPicker {
   const _ThrowingMediaPicker();
 
   @override
   Future<MessengerPickedMedia?> pick(MessengerMediaKind kind) async {
+    throw const MessengerMediaPickerUnavailableException('missing plugin');
+  }
+
+  @override
+  Future<List<MessengerPickedMedia>> pickMany(MessengerMediaKind kind) async {
     throw const MessengerMediaPickerUnavailableException('missing plugin');
   }
 }

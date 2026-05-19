@@ -15,7 +15,13 @@ import '../models/messenger_user.dart';
 import '../models/messenger_user_directory.dart';
 import '../models/messenger_search_visibility.dart';
 import '../models/messenger_attachment.dart';
+import '../models/messenger_message_attachment.dart';
+import '../utils/messenger_composer_attachments.dart';
+import '../utils/messenger_media_url.dart';
 import '../models/messenger_typing.dart';
+import '../media/default_messenger_media_cache.dart';
+import '../media/messenger_media_cache.dart';
+import '../media/messenger_media_cache_scope.dart';
 import '../theme/messenger_theme.dart';
 import '../utils/messenger_thread_scroll.dart';
 import 'messenger_chat_thread.dart';
@@ -155,6 +161,11 @@ class MessengerChatShell extends StatefulWidget {
     this.attachmentCaptionTextStyle,
     this.attachmentOptionTextStyle,
     this.packageDialogTheme,
+    this.mediaCache,
+    this.mediaCacheHeaders,
+    this.mediaCacheHeadersForUrl,
+    this.clearMediaCacheOnLogout = true,
+    this.mediaBaseUrl,
   });
 
   final String currentUserId;
@@ -413,6 +424,24 @@ class MessengerChatShell extends StatefulWidget {
   /// `Theme.of(context).copyWith(dialogTheme: …)` so overrides stay complete.
   final ThemeData? packageDialogTheme;
 
+  /// Optional disk cache for message images and voice. Defaults to
+  /// [DefaultMessengerMediaCache] when null.
+  final MessengerMediaCache? mediaCache;
+
+  /// Static HTTP headers for cached media downloads (e.g. `Authorization`).
+  final Map<String, String>? mediaCacheHeaders;
+
+  /// Per-URL headers when static [mediaCacheHeaders] are insufficient.
+  final Future<Map<String, String>> Function(String url)?
+      mediaCacheHeadersForUrl;
+
+  /// When true (default), [onLogout] clears the media cache first.
+  final bool clearMediaCacheOnLogout;
+
+  /// Origin for resolving relative attachment URLs (e.g. API base URL).
+  /// When null, uses [mediaChatClient] config [ChatServiceConfig.apiBaseUrl].
+  final String? mediaBaseUrl;
+
   @override
   State<MessengerChatShell> createState() => _MessengerChatShellState();
 }
@@ -421,8 +450,8 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   String _openingDirectUserId = '';
   final Map<String, List<MessengerChatMessage>> _localMessagesByConversation =
       <String, List<MessengerChatMessage>>{};
-  final Map<String, MessengerPickedMedia> _pendingMediaByConversation =
-      <String, MessengerPickedMedia>{};
+  final Map<String, List<MessengerPickedMedia>> _pendingMediaByConversation =
+      <String, List<MessengerPickedMedia>>{};
   final Set<String> _mediaSendingConversationIds = <String>{};
   final ValueNotifier<int> _mobileThreadVersion = ValueNotifier<int>(0);
   /// Ensures at most one auto-[Navigator.maybePop] is scheduled for the
@@ -437,6 +466,8 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   MessengerMediaPicker? _cachedMediaPicker;
   MessengerAudioRecorder? _cachedMediaRecorder;
   bool? _lastReportedThreadVisible;
+  late MessengerMediaCache _mediaCache;
+  Timer? _mediaPrefetchDebounce;
 
   void _reportThreadVisibility(bool visible) {
     if (_lastReportedThreadVisible == visible) {
@@ -455,9 +486,82 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     _reportThreadVisibility(_hasSelectedConversation());
   }
 
+  String? get _mediaBaseOrigin {
+    final explicit = widget.mediaBaseUrl?.trim();
+    if (explicit != null && explicit.isNotEmpty) {
+      return messengerNormalizeMediaOrigin(explicit);
+    }
+    final apiBase = widget.mediaChatClient?.config.apiBaseUrl.trim() ?? '';
+    if (apiBase.isEmpty) {
+      return null;
+    }
+    return messengerNormalizeMediaOrigin(apiBase);
+  }
+
+  String _resolveMediaUrl(String url) {
+    return messengerAbsoluteMediaUrl(url, baseOrigin: _mediaBaseOrigin);
+  }
+
+  Map<String, String> get _resolvedStaticMediaHeaders {
+    if (widget.mediaCacheHeaders != null &&
+        widget.mediaCacheHeaders!.isNotEmpty) {
+      return widget.mediaCacheHeaders!;
+    }
+    return widget.mediaChatAuth?.toApiHeaders() ?? const {};
+  }
+
+  void _handleLogout() {
+    if (widget.clearMediaCacheOnLogout) {
+      unawaited(_mediaCache.clear());
+    }
+    widget.onLogout();
+  }
+
+  void _scheduleMediaPrefetch() {
+    _mediaPrefetchDebounce?.cancel();
+    _mediaPrefetchDebounce = Timer(const Duration(milliseconds: 400), () {
+      if (!mounted) {
+        return;
+      }
+      unawaited(_prefetchThreadImages());
+    });
+  }
+
+  Future<void> _prefetchThreadImages() async {
+    final urls = <String>{};
+    for (final message in widget.messages) {
+      for (final att in message.attachments) {
+        if (att.kind == MessengerMessageAttachmentKind.image &&
+            att.url.trim().isNotEmpty) {
+          urls.add(_resolveMediaUrl(att.url));
+        }
+      }
+      if (message.type == MessengerMessageType.image &&
+          message.content.trim().isNotEmpty) {
+        urls.add(_resolveMediaUrl(message.content));
+      }
+    }
+    if (urls.isEmpty) {
+      return;
+    }
+    final limited = urls.take(24);
+    if (widget.mediaCacheHeadersForUrl != null) {
+      for (final url in limited) {
+        final headers = await widget.mediaCacheHeadersForUrl!(url);
+        await _mediaCache.getFile(url, headers: headers);
+      }
+      return;
+    }
+    await _mediaCache.prefetch(
+      limited,
+      headers: _resolvedStaticMediaHeaders,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
+    _mediaCache = widget.mediaCache ?? DefaultMessengerMediaCache();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _syncDesktopThreadVisibility();
@@ -471,6 +575,9 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       }
       _runThreadScrollToBottom();
     });
+    if (widget.messages.isNotEmpty) {
+      _scheduleMediaPrefetch();
+    }
   }
 
   void _runThreadScrollToBottom() {
@@ -517,6 +624,63 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     return trimmed;
   }
 
+  List<MessengerPickedMedia> _pendingForKey(String? conversationId) {
+    final key = _conversationKey(conversationId);
+    if (key == null) {
+      return const [];
+    }
+    return List<MessengerPickedMedia>.from(
+      _pendingMediaByConversation[key] ?? const [],
+    );
+  }
+
+  void _appendPendingMedia(String conversationId, List<MessengerPickedMedia> items) {
+    if (items.isEmpty) {
+      return;
+    }
+    setState(() {
+      final current = List<MessengerPickedMedia>.from(
+        _pendingMediaByConversation[conversationId] ?? const [],
+      );
+      current.addAll(items);
+      _pendingMediaByConversation[conversationId] = current;
+    });
+  }
+
+  void _removePendingMediaAt(String conversationId, int index) {
+    setState(() {
+      final current = List<MessengerPickedMedia>.from(
+        _pendingMediaByConversation[conversationId] ?? const [],
+      );
+      if (index < 0 || index >= current.length) {
+        return;
+      }
+      current.removeAt(index);
+      if (current.isEmpty) {
+        _pendingMediaByConversation.remove(conversationId);
+      } else {
+        _pendingMediaByConversation[conversationId] = current;
+      }
+    });
+  }
+
+  void _clearPendingMedia(String conversationId) {
+    setState(() {
+      _pendingMediaByConversation.remove(conversationId);
+    });
+  }
+
+  void _setPendingMedia(String conversationId, List<MessengerPickedMedia> items) {
+    setState(() {
+      if (items.isEmpty) {
+        _pendingMediaByConversation.remove(conversationId);
+      } else {
+        _pendingMediaByConversation[conversationId] =
+            List<MessengerPickedMedia>.from(items);
+      }
+    });
+  }
+
   @override
   void didUpdateWidget(covariant MessengerChatShell oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -549,11 +713,16 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
         }
       });
     }
+
+    if (!identical(oldWidget.messages, widget.messages)) {
+      _scheduleMediaPrefetch();
+    }
   }
 
   @override
   void dispose() {
     _reportThreadVisibility(false);
+    _mediaPrefetchDebounce?.cancel();
     _mobileThreadVersion.dispose();
     super.dispose();
   }
@@ -682,10 +851,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
         : const <MessengerChatMessage>[];
     final threadMessages = rawThreadMessages;
     final pendingMediaKey = _conversationKey(selectedConversationId);
-    final pendingMedia = pendingMediaKey == null
-        ? null
-        : _pendingMediaByConversation[pendingMediaKey];
-    final hasPendingAttachment = pendingMedia != null;
+    final pendingAttachments = _pendingForKey(selectedConversationId);
     final isMediaSending = pendingMediaKey != null &&
         _mediaSendingConversationIds.contains(pendingMediaKey);
     final isPackageRecording = _packageRecording &&
@@ -792,17 +958,19 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       typingIndicatorPrefix: widget.typingIndicatorPrefix,
       onTypingStart: widget.onTypingStart,
       onTypingStop: widget.onTypingStop,
-      hasPendingAttachment: hasPendingAttachment,
-      pendingAttachmentLabel: pendingMedia?.displayName,
-      onClearPendingAttachment: !hasPendingAttachment
+      pendingAttachments: pendingAttachments,
+      onRemovePendingAttachment: pendingMediaKey == null
+          ? null
+          : (index) {
+              _removePendingMediaAt(pendingMediaKey, index);
+              _scheduleMobileThreadRefresh();
+            },
+      onClearAllPendingAttachments: pendingAttachments.isEmpty
           ? null
           : () {
-              setState(() {
-                final k = _conversationKey(selectedConversationId);
-                if (k != null) {
-                  _pendingMediaByConversation.remove(k);
-                }
-              });
+              if (pendingMediaKey != null) {
+                _clearPendingMedia(pendingMediaKey);
+              }
               _scheduleMobileThreadRefresh();
             },
       composerReplyDraft: widget.composerReplyDraft,
@@ -1022,10 +1190,10 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       setState(() {
         _packageRecording = false;
         _recordingConversationId = null;
-        if (picked != null && finishKey != null) {
-          _pendingMediaByConversation[finishKey] = picked;
-        }
       });
+      if (picked != null && finishKey != null) {
+        _appendPendingMedia(finishKey, [picked]);
+      }
       _scheduleMobileThreadRefresh();
     } catch (error) {
       if (mounted) {
@@ -1078,23 +1246,21 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       fallback();
       return;
     }
-    MessengerPickedMedia? picked;
+    List<MessengerPickedMedia> picked;
     try {
-      picked = await orchestrator.pickMedia(kind);
+      picked = await orchestrator.pickMediaMany(kind);
     } catch (error) {
       widget.onMediaSendError?.call('picker-${kind.name}', error);
       fallback();
       return;
     }
-    if (picked == null) {
+    if (picked.isEmpty) {
       return;
     }
     if (!mounted) {
       return;
     }
-    setState(() {
-      _pendingMediaByConversation[pickKey] = picked!;
-    });
+    _appendPendingMedia(pickKey, picked);
     _scheduleMobileThreadRefresh();
   }
 
@@ -1105,8 +1271,9 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       return;
     }
 
-    MessengerPickedMedia? pendingMedia =
-        _pendingMediaByConversation[selectionKey];
+    var pendingList = List<MessengerPickedMedia>.from(
+      _pendingMediaByConversation[selectionKey] ?? const [],
+    );
     var targetConversationId = selectionKey;
 
     final prepare = widget.prepareOutgoingConversation;
@@ -1122,23 +1289,33 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
         return;
       }
       targetConversationId = resolved.trim();
-      if (selectionKey != targetConversationId && pendingMedia != null) {
-        final media = pendingMedia;
+      if (selectionKey != targetConversationId) {
         if (mounted) {
           setState(() {
             _pendingMediaByConversation.remove(selectionKey);
-            _pendingMediaByConversation[targetConversationId] = media;
+            if (pendingList.isNotEmpty) {
+              _pendingMediaByConversation[targetConversationId] = pendingList;
+            }
           });
         }
-      } else if (selectionKey != targetConversationId) {
-        pendingMedia = _pendingMediaByConversation[targetConversationId];
+        pendingList = List<MessengerPickedMedia>.from(
+          _pendingMediaByConversation[targetConversationId] ?? pendingList,
+        );
       }
     }
     if (_mediaSendingConversationIds.contains(targetConversationId)) {
       return;
     }
-    if (pendingMedia == null) {
+    if (pendingList.isEmpty) {
       widget.onSend();
+      return;
+    }
+
+    if (pendingAttachmentsOverLimit(pendingList)) {
+      widget.onMediaSendError?.call(
+        'attachments-limit',
+        StateError('Attachments exceed the 25 MB combined limit.'),
+      );
       return;
     }
 
@@ -1155,19 +1332,34 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     }
 
     final caption = widget.composerController.text.trim();
-    final pending = MessengerChatMessage(
-      id: _tempMessageId(_mediaKindForMessageType(pendingMedia.messageType)),
+    final uploadSessionId =
+        'pending-upload-${DateTime.now().microsecondsSinceEpoch}';
+    final optimisticAttachments = pendingList
+        .map(
+          (item) => MessengerMessageAttachment(
+            url: item.file.path,
+            fileName: item.displayName,
+            kind: messengerAttachmentKindFromMimeAndName(
+              fileName: item.displayName,
+              fallbackType: _toUiType(item.messageType),
+            ),
+          ),
+        )
+        .toList(growable: false);
+    final optimistic = MessengerChatMessage(
+      id: uploadSessionId,
       senderId: widget.currentUserId,
       senderLabel: widget.currentUserName,
-      type: _toUiType(pendingMedia.messageType),
-      content: pendingMedia.file.path,
+      type: _toUiType(pendingList.first.messageType),
+      content: pendingList.first.file.path,
       caption: caption.isEmpty ? null : caption,
+      attachments: optimisticAttachments,
       createdAt: DateTime.now(),
       isUploading: true,
       uploadProgress: 0,
     );
-    _upsertLocalMessage(targetConversationId, pending);
-    widget.onMediaSendStart?.call(pending);
+    _upsertLocalMessage(targetConversationId, optimistic);
+    widget.onMediaSendStart?.call(optimistic);
     if (mounted) {
       setState(() {
         _mediaSendingConversationIds.add(targetConversationId);
@@ -1179,35 +1371,57 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     final replyToMessageId = trimmedReplyId.isEmpty ? null : trimmedReplyId;
 
     try {
-      final sent = await orchestrator.uploadAndSend(
+      final result = await orchestrator.sendPendingAttachments(
         conversationId: targetConversationId,
-        media: pendingMedia,
-        content: caption,
+        pending: pendingList,
+        caption: caption,
         replyToMessageId: replyToMessageId,
-        onUploadProgress: (progress) {
-          _updateUploadProgress(targetConversationId, pending.id, progress);
-          widget.onMediaSendProgress?.call(pending.id, progress);
+        onUploadProgress: (sentCount, progress) {
+          _updateUploadProgress(targetConversationId, uploadSessionId, progress);
+          widget.onMediaSendProgress?.call(uploadSessionId, progress);
         },
       );
-      _removeLocalMessage(targetConversationId, pending.id);
-      final sentUi = _toUiMessage(sent);
-      _upsertLocalMessage(targetConversationId, sentUi);
-      if (mounted) {
-        setState(() {
-          _pendingMediaByConversation.remove(targetConversationId);
-        });
-        widget.composerController.clear();
-        widget.onComposerReplyDraftChanged?.call(null);
-        _scheduleMobileThreadRefresh();
+      _removeLocalMessage(targetConversationId, uploadSessionId);
+
+      if (result.ok) {
+        final sentUi = _toUiMessage(result.lastMessage!);
+        _upsertLocalMessage(targetConversationId, sentUi);
+        if (mounted) {
+          _clearPendingMedia(targetConversationId);
+          widget.composerController.clear();
+          widget.onComposerReplyDraftChanged?.call(null);
+          _scheduleMobileThreadRefresh();
+        }
+        widget.onMediaMessageSent?.call(sentUi);
+        widget.onMediaMessageSentForConversation?.call(
+          targetConversationId,
+          sentUi,
+        );
+      } else {
+        final remaining = pendingList.sublist(
+          result.sentPendingCount.clamp(0, pendingList.length),
+        );
+        if (mounted) {
+          _setPendingMedia(targetConversationId, remaining);
+          if (result.lastMessage != null) {
+            final partialUi = _toUiMessage(result.lastMessage!);
+            _upsertLocalMessage(targetConversationId, partialUi);
+            widget.onMediaMessageSent?.call(partialUi);
+            widget.onMediaMessageSentForConversation?.call(
+              targetConversationId,
+              partialUi,
+            );
+          }
+          _scheduleMobileThreadRefresh();
+        }
+        widget.onMediaSendError?.call(
+          uploadSessionId,
+          StateError(result.error ?? 'Send failed'),
+        );
       }
-      widget.onMediaMessageSent?.call(sentUi);
-      widget.onMediaMessageSentForConversation?.call(
-        targetConversationId,
-        sentUi,
-      );
     } catch (error) {
-      _updateUploadFailure(targetConversationId, pending.id);
-      widget.onMediaSendError?.call(pending.id, error);
+      _updateUploadFailure(targetConversationId, uploadSessionId);
+      widget.onMediaSendError?.call(uploadSessionId, error);
     } finally {
       if (mounted) {
         setState(() {
@@ -1276,6 +1490,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
                   type: item.type,
                   content: item.content,
                   caption: item.caption,
+                  attachments: item.attachments,
                   createdAt: item.createdAt,
                   isDeleted: item.isDeleted,
                   deliveryStatus: item.deliveryStatus,
@@ -1309,6 +1524,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
                   type: item.type,
                   content: item.content,
                   caption: item.caption,
+                  attachments: item.attachments,
                   createdAt: item.createdAt,
                   isDeleted: item.isDeleted,
                   deliveryStatus: item.deliveryStatus,
@@ -1331,6 +1547,16 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     return 'pending-${kind.name}-${DateTime.now().microsecondsSinceEpoch}';
   }
 
+  List<MessengerMessageAttachment> _uiAttachmentsFromChatMessage(
+    ChatMessage message,
+  ) {
+    return messengerAttachmentsFromChatMessage(
+      message,
+      fallbackType: _toUiType(message.type),
+      mediaBaseOrigin: _mediaBaseOrigin,
+    );
+  }
+
   MessengerChatMessage _toUiMessage(ChatMessage message) {
     final body = message.content.trim();
     final deliveryStatus = message.senderId == widget.currentUserId
@@ -1339,7 +1565,8 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
             currentUserId: widget.currentUserId,
           )
         : MessengerDeliveryStatus.none;
-    if (message.attachments.isEmpty) {
+    final uiAttachments = _uiAttachmentsFromChatMessage(message);
+    if (uiAttachments.isEmpty) {
       return MessengerChatMessage(
         id: message.id,
         senderId: message.senderId,
@@ -1353,7 +1580,8 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
         quotedReply: _shellQuotedReply(message),
       );
     }
-    final url = message.attachments.first.url.trim();
+    final primary = uiAttachments.first;
+    final primaryUrl = _resolveMediaUrl(primary.url);
     return MessengerChatMessage(
       id: message.id,
       senderId: message.senderId,
@@ -1361,8 +1589,9 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
           ? widget.currentUserName
           : (message.sender?.name ?? message.senderId),
       type: _toUiType(message.type),
-      content: url.isNotEmpty ? url : body,
-      caption: url.isNotEmpty && body.isNotEmpty ? body : null,
+      content: primaryUrl.isNotEmpty ? primaryUrl : _resolveMediaUrl(body),
+      caption: body.isNotEmpty ? body : null,
+      attachments: uiAttachments,
       createdAt: message.createdAt,
       deliveryStatus: deliveryStatus,
       quotedReply: _shellQuotedReply(message),
@@ -1646,7 +1875,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       enablePullToRefresh: widget.enablePullToRefresh,
       isConversationListLoading: widget.isListPaneRefreshing,
       conversationListLoadingBuilder: widget.conversationListLoadingBuilder,
-      onLogout: widget.onLogout,
+      onLogout: _handleLogout,
       onOpenDirectChat: (user) async {
         setState(() => _openingDirectUserId = user.id);
         await widget.onOpenDirectChat(user);
@@ -1739,7 +1968,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       enablePullToRefresh: widget.enablePullToRefresh,
       isConversationListLoading: widget.isListPaneRefreshing,
       conversationListLoadingBuilder: widget.conversationListLoadingBuilder,
-      onLogout: widget.onLogout,
+      onLogout: _handleLogout,
       onOpenDirectChat: _mobileOpenDirectChatAndShowThread,
       onCreateGroupSelected: widget.onCreateGroupSelected == null
           ? null
@@ -1828,10 +2057,18 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       _reportThreadVisibility(false);
     }
 
+    final scoped = MessengerMediaCacheScope(
+      cache: _mediaCache,
+      staticHeaders: _resolvedStaticMediaHeaders,
+      headersForUrl: widget.mediaCacheHeadersForUrl,
+      mediaBaseOrigin: _mediaBaseOrigin,
+      child: shell,
+    );
+
     if (widget.theme == null) {
-      return shell;
+      return scoped;
     }
 
-    return MessengerTheme(data: widget.theme!, child: shell);
+    return MessengerTheme(data: widget.theme!, child: scoped);
   }
 }

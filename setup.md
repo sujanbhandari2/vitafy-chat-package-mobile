@@ -219,6 +219,23 @@ Vitafy loads **associated users** from its own REST API and resolves them to pac
 
 ---
 
+## Media cache (images and voice)
+
+`MessengerChatShell` wraps the UI in [`MessengerMediaCacheScope`](lib/lib/src/media/messenger_media_cache_scope.dart) with a default disk cache ([`DefaultMessengerMediaCache`](lib/lib/src/media/default_messenger_media_cache.dart), ~14-day stale period, JSON index — no `sqflite` plugin required). Thread images use [`MessengerCachedImage`](lib/lib/src/media/messenger_cached_image.dart) (fixed-size placeholder + spinner, then fade-in). Voice playback downloads through the same cache instead of ad-hoc temp files.
+
+After upgrading, do a **full stop + rebuild** of the host app (`flutter clean` if the cache error persists).
+
+**Host integration**
+
+- Map every attachment on incoming messages with `messengerAttachmentsFromChatMessage` so multi-image stacks render correctly (not only `attachments.first.url` in `content`).
+- Build conversation-list subtitles with `messengerConversationPreview` (same labels as reply chips: Photo, Voice message, File, Message deleted).
+- If media URLs require auth, pass `mediaCacheHeaders` or `mediaCacheHeadersForUrl` on `MessengerChatShell`, or rely on `mediaChatAuth` (shell merges `ChatAuth.toApiHeaders()` when static headers are omitted).
+- Relative attachment paths (e.g. `/api/upload/...`) are joined with `mediaBaseUrl` or `mediaChatClient.config.apiBaseUrl`. Host mappers should pass `mediaBaseOrigin` into `messengerAttachmentsFromChatMessage`.
+- Logout clears the cache automatically when `clearMediaCacheOnLogout` is true (default). To clear manually: `await MessengerMediaCacheScope.clearCache(context)`.
+- **Signed URLs:** cache keys are normalized URLs. Short-lived query tokens may prevent hits; supply a custom `mediaCache` with stable keys (e.g. message id + attachment index) if needed.
+
+---
+
 ## Parity and debugging
 
 - Enable debug logging: Vitafy passes `apiLogger` / `SocketPrettyLogger` when `kDebugMode`.

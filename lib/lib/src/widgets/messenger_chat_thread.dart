@@ -11,6 +11,7 @@ import '../models/messenger_thread_loading_style.dart';
 import '../models/messenger_typing.dart';
 import 'messenger_avatar.dart';
 import 'messenger_composer_bar.dart';
+import 'messenger_media_send_orchestrator.dart';
 import 'messenger_default_inline_loading.dart';
 import 'messenger_incoming_seen_reporter.dart';
 import 'messenger_message_bubble.dart';
@@ -70,9 +71,9 @@ class MessengerChatThread extends StatefulWidget {
     this.typingIndicatorPrefix = '',
     this.onTypingStart,
     this.onTypingStop,
-    this.hasPendingAttachment = false,
-    this.pendingAttachmentLabel,
-    this.onClearPendingAttachment,
+    this.pendingAttachments = const [],
+    this.onRemovePendingAttachment,
+    this.onClearAllPendingAttachments,
     this.threadLoadingStyle,
     this.threadFetchLoadingMode =
         MessengerThreadFetchLoadingMode.replaceMessageList,
@@ -136,9 +137,9 @@ class MessengerChatThread extends StatefulWidget {
   final String typingIndicatorPrefix;
   final Future<void> Function(String conversationId)? onTypingStart;
   final Future<void> Function(String conversationId)? onTypingStop;
-  final bool hasPendingAttachment;
-  final String? pendingAttachmentLabel;
-  final VoidCallback? onClearPendingAttachment;
+  final List<MessengerPickedMedia> pendingAttachments;
+  final ValueChanged<int>? onRemovePendingAttachment;
+  final VoidCallback? onClearAllPendingAttachments;
   final MessengerThreadLoadingStyle? threadLoadingStyle;
 
   /// When [messages] is not empty and [isConversationLoading] is true, controls
@@ -437,9 +438,9 @@ class _MessengerChatThreadState extends State<MessengerChatThread> {
             typingConversationId: widget.conversation?.id,
             onTypingStart: widget.onTypingStart,
             onTypingStop: widget.onTypingStop,
-            hasPendingAttachment: widget.hasPendingAttachment,
-            pendingAttachmentLabel: widget.pendingAttachmentLabel,
-            onClearPendingAttachment: widget.onClearPendingAttachment,
+            pendingAttachments: widget.pendingAttachments,
+            onRemovePendingAttachment: widget.onRemovePendingAttachment,
+            onClearAllPendingAttachments: widget.onClearAllPendingAttachments,
             replyDraft: widget.composerReplyDraft,
             onCancelReplyDraft: widget.onComposerReplyDraftChanged == null
                 ? null

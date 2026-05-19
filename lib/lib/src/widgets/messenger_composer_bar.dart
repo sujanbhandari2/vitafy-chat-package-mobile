@@ -1,10 +1,14 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../client/models/chat_message.dart';
 import '../models/messenger_attachment.dart';
 import '../models/messenger_message.dart';
 import '../theme/messenger_theme.dart';
+import '../utils/messenger_composer_attachments.dart';
+import 'messenger_media_send_orchestrator.dart';
 
 class MessengerComposerBar extends StatefulWidget {
   const MessengerComposerBar({
@@ -35,9 +39,9 @@ class MessengerComposerBar extends StatefulWidget {
     this.onTypingStop,
     this.typingStartMinInterval = const Duration(seconds: 2),
     this.typingStopIdle = const Duration(seconds: 2),
-    this.hasPendingAttachment = false,
-    this.pendingAttachmentLabel,
-    this.onClearPendingAttachment,
+    this.pendingAttachments = const [],
+    this.onRemovePendingAttachment,
+    this.onClearAllPendingAttachments,
     this.replyDraft,
     this.onCancelReplyDraft,
     this.textFieldFocusNode,
@@ -70,9 +74,9 @@ class MessengerComposerBar extends StatefulWidget {
   final Future<void> Function(String conversationId)? onTypingStop;
   final Duration typingStartMinInterval;
   final Duration typingStopIdle;
-  final bool hasPendingAttachment;
-  final String? pendingAttachmentLabel;
-  final VoidCallback? onClearPendingAttachment;
+  final List<MessengerPickedMedia> pendingAttachments;
+  final ValueChanged<int>? onRemovePendingAttachment;
+  final VoidCallback? onClearAllPendingAttachments;
   final MessengerComposerReplyDraft? replyDraft;
   final VoidCallback? onCancelReplyDraft;
   final FocusNode? textFieldFocusNode;
@@ -345,10 +349,16 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
         animation: widget.controller,
         builder: (context, _) {
           final hasText = widget.controller.text.trim().isNotEmpty;
-          final hasQueuedAttachment = widget.hasPendingAttachment;
+          final pending = widget.pendingAttachments;
+          final hasQueuedAttachment = pending.isNotEmpty;
+          final overLimit = pendingAttachmentsOverLimit(pending);
           final canSend = (hasText || hasQueuedAttachment) &&
               !widget.isSending &&
-              !widget.isRecording;
+              !widget.isRecording &&
+              !overLimit;
+          final effectiveHint = hasQueuedAttachment && !hasText
+              ? 'Add a caption… (optional)'
+              : widget.hintText;
 
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -484,48 +494,15 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
               if (hasQueuedAttachment)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: (widget.fieldBackgroundColor ??
-                              theme.composerFieldBackground)
-                          .withValues(alpha: 0.85),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: theme.border),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.attach_file_rounded,
-                            color: theme.primary, size: 18),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            widget.pendingAttachmentLabel ?? 'Attachment ready',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: const Color(0xFF0F172A),
-                              fontWeight: FontWeight.w600,
-                              fontSize: 12.5,
-                            ),
-                          ),
-                        ),
-                        if (widget.onClearPendingAttachment != null)
-                          GestureDetector(
-                            onTap: widget.isSending
-                                ? null
-                                : widget.onClearPendingAttachment,
-                            child: Icon(
-                              Icons.close_rounded,
-                              size: 18,
-                              color: widget.isSending
-                                  ? theme.mutedText
-                                  : theme.primary,
-                            ),
-                          ),
-                      ],
-                    ),
+                  child: _ComposerPendingAttachments(
+                    pending: pending,
+                    isSending: widget.isSending,
+                    overLimit: overLimit,
+                    fieldBackgroundColor: widget.fieldBackgroundColor ??
+                        theme.composerFieldBackground,
+                    theme: theme,
+                    onRemove: widget.onRemovePendingAttachment,
+                    onClearAll: widget.onClearAllPendingAttachments,
                   ),
                 ),
               Row(
@@ -556,7 +533,7 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
                                 minLines: 1,
                                 maxLines: 4,
                                 decoration: InputDecoration(
-                                  hintText: widget.hintText,
+                                  hintText: effectiveHint,
                                   hintStyle: widget.hintTextStyle ??
                                       TextStyle(color: theme.mutedText),
                                   border: InputBorder.none,
@@ -620,6 +597,217 @@ class _MessengerComposerBarState extends State<MessengerComposerBar> {
           );
         },
       ),
+    );
+  }
+}
+
+class _ComposerPendingAttachments extends StatelessWidget {
+  const _ComposerPendingAttachments({
+    required this.pending,
+    required this.isSending,
+    required this.overLimit,
+    required this.fieldBackgroundColor,
+    required this.theme,
+    this.onRemove,
+    this.onClearAll,
+  });
+
+  final List<MessengerPickedMedia> pending;
+  final bool isSending;
+  final bool overLimit;
+  final Color fieldBackgroundColor;
+  final MessengerThemeData theme;
+  final ValueChanged<int>? onRemove;
+  final VoidCallback? onClearAll;
+
+  @override
+  Widget build(BuildContext context) {
+    final totalBytes = pendingAttachmentsTotalBytes(pending);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: BoxDecoration(
+        color: fieldBackgroundColor.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: overLimit ? const Color(0xFFDC2626) : theme.border,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (overLimit)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                'These attachments total ${(totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB '
+                'combined (limit 25 MB). Remove some files or send in smaller batches.',
+                style: const TextStyle(
+                  color: Color(0xFFDC2626),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  height: 1.3,
+                ),
+              ),
+            ),
+          ...List.generate(pending.length, (index) {
+            final att = pending[index];
+            return Padding(
+              padding: EdgeInsets.only(bottom: index < pending.length - 1 ? 6 : 0),
+              child: _ComposerPendingRow(
+                att: att,
+                theme: theme,
+                isSending: isSending,
+                onRemove: onRemove == null
+                    ? null
+                    : () => onRemove!(index),
+              ),
+            );
+          }),
+          if (pending.length > 1 && onClearAll != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: isSending ? null : onClearAll,
+                  child: const Text('Remove all'),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ComposerPendingRow extends StatelessWidget {
+  const _ComposerPendingRow({
+    required this.att,
+    required this.theme,
+    required this.isSending,
+    this.onRemove,
+  });
+
+  final MessengerPickedMedia att;
+  final MessengerThemeData theme;
+  final bool isSending;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = att.fromRecorder
+        ? 'Voice recording'
+        : att.displayName;
+    return Row(
+      children: [
+        _ComposerPendingThumb(att: att),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF0F172A),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12.5,
+                ),
+              ),
+              Text(
+                _formatFileSize(att.file),
+                style: TextStyle(
+                  color: theme.mutedText,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (onRemove != null)
+          IconButton(
+            onPressed: isSending ? null : onRemove,
+            icon: Icon(
+              Icons.close_rounded,
+              size: 18,
+              color: isSending ? theme.mutedText : theme.primary,
+            ),
+            tooltip: 'Remove attachment',
+          ),
+      ],
+    );
+  }
+
+  String _formatFileSize(File file) {
+    try {
+      final bytes = file.lengthSync();
+      if (bytes < 1024) {
+        return '$bytes B';
+      }
+      if (bytes < 1024 * 1024) {
+        return '${(bytes / 1024).toStringAsFixed(1)} KB';
+      }
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    } catch (_) {
+      return '';
+    }
+  }
+}
+
+class _ComposerPendingThumb extends StatelessWidget {
+  const _ComposerPendingThumb({required this.att});
+
+  final MessengerPickedMedia att;
+
+  @override
+  Widget build(BuildContext context) {
+    const size = 40.0;
+    if (att.fromRecorder) {
+      return Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: const Color(0xFFEFF6FF),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Icon(Icons.mic_rounded, size: 20, color: Color(0xFF2563EB)),
+      );
+    }
+    if (att.messageType == MessageType.image) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.file(
+          att.file,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _typeIcon(Icons.image_outlined),
+        ),
+      );
+    }
+    if (att.messageType == MessageType.video) {
+      return _typeIcon(Icons.videocam_outlined);
+    }
+    if (att.messageType == MessageType.voice) {
+      return _typeIcon(Icons.graphic_eq_rounded);
+    }
+    return _typeIcon(Icons.description_outlined);
+  }
+
+  Widget _typeIcon(IconData icon) {
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Icon(icon, size: 20, color: const Color(0xFF64748B)),
     );
   }
 }

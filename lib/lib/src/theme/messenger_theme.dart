@@ -24,6 +24,8 @@ class MessengerThemeData {
     this.reactionBorder = const Color(0xFFE5E7EB),
     this.dateSeparatorBackground = const Color(0xFFE2E8F0),
     this.dateSeparatorText = const Color(0xFF475569),
+    this.mediaPlaceholderBackground,
+    this.mediaLoaderColor,
   });
 
   final Color primary;
@@ -48,6 +50,12 @@ class MessengerThemeData {
   final Color dateSeparatorBackground;
   final Color dateSeparatorText;
 
+  /// Optional override for attachment image/voice loading placeholders.
+  final Color? mediaPlaceholderBackground;
+
+  /// Optional override for attachment media loader spinners.
+  final Color? mediaLoaderColor;
+
   MessengerThemeData copyWith({
     Color? primary,
     Color? background,
@@ -70,6 +78,8 @@ class MessengerThemeData {
     Color? reactionBorder,
     Color? dateSeparatorBackground,
     Color? dateSeparatorText,
+    Color? mediaPlaceholderBackground,
+    Color? mediaLoaderColor,
   }) {
     return MessengerThemeData(
       primary: primary ?? this.primary,
@@ -96,6 +106,9 @@ class MessengerThemeData {
       dateSeparatorBackground:
           dateSeparatorBackground ?? this.dateSeparatorBackground,
       dateSeparatorText: dateSeparatorText ?? this.dateSeparatorText,
+      mediaPlaceholderBackground:
+          mediaPlaceholderBackground ?? this.mediaPlaceholderBackground,
+      mediaLoaderColor: mediaLoaderColor ?? this.mediaLoaderColor,
     );
   }
 }

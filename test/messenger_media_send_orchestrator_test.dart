@@ -6,6 +6,7 @@ import 'package:health_messenger_ui/lib/src/client/chat_auth.dart';
 import 'package:health_messenger_ui/lib/src/client/chat_client.dart';
 import 'package:health_messenger_ui/lib/src/client/chat_config.dart';
 import 'package:health_messenger_ui/lib/src/client/models/chat_message.dart';
+import 'package:health_messenger_ui/lib/src/utils/messenger_composer_attachments.dart';
 import 'package:health_messenger_ui/lib/src/widgets/messenger_media_send_orchestrator.dart';
 
 void main() {
@@ -116,6 +117,120 @@ void main() {
     );
   });
 
+  test('buildAttachmentSendBatches groups consecutive images', () {
+    final pending = [
+      MessengerPickedMedia(
+        file: File('a.jpg'),
+        messageType: MessageType.image,
+        displayName: 'a.jpg',
+      ),
+      MessengerPickedMedia(
+        file: File('b.jpg'),
+        messageType: MessageType.image,
+        displayName: 'b.jpg',
+      ),
+      MessengerPickedMedia(
+        file: File('doc.pdf'),
+        messageType: MessageType.file,
+        displayName: 'doc.pdf',
+      ),
+    ];
+    final batches = buildAttachmentSendBatches(pending, 'hello');
+    expect(batches.length, 2);
+    expect(batches[0].pendingIndices, [0, 1]);
+    expect(batches[0].messageType, MessageType.image);
+    expect(batches[0].includeCaption, isFalse);
+    expect(batches[1].pendingIndices, [2]);
+    expect(batches[1].messageType, MessageType.file);
+    expect(batches[1].includeCaption, isTrue);
+  });
+
+  test('sendPendingAttachments uploads image run in one message', () async {
+    final tempDir = await Directory.systemTemp.createTemp('media-batch');
+    final imageA = File('${tempDir.path}/a.png');
+    final imageB = File('${tempDir.path}/b.png');
+    await imageA.writeAsBytes(const <int>[1]);
+    await imageB.writeAsBytes(const <int>[2]);
+    addTearDown(() async {
+      await tempDir.delete(recursive: true);
+    });
+
+    final client = _FakeMediaClient();
+    final orchestrator = MessengerMediaSendOrchestrator(
+      client: client,
+      auth: const ChatAuth(apiKey: 'key'),
+      senderId: 'me',
+      picker: const _FakeMediaPicker(null),
+      recorder: _FakeAudioRecorder(null),
+    );
+
+    final result = await orchestrator.sendPendingAttachments(
+      conversationId: 'c1',
+      pending: [
+        MessengerPickedMedia(
+          file: imageA,
+          messageType: MessageType.image,
+          displayName: 'a.png',
+        ),
+        MessengerPickedMedia(
+          file: imageB,
+          messageType: MessageType.image,
+          displayName: 'b.png',
+        ),
+      ],
+      caption: 'two photos',
+    );
+
+    expect(result.ok, isTrue);
+    expect(client.uploadFilesCallCount, 1);
+    expect(client.sendCallCount, 1);
+    expect(client.lastSendType, MessageType.image);
+    expect(client.lastSendContent, 'two photos');
+    expect(client.lastSendAttachments.length, 2);
+  });
+
+  test('sendPendingAttachments retains progress on partial failure', () async {
+    final tempDir = await Directory.systemTemp.createTemp('media-partial');
+    final image = File('${tempDir.path}/a.png');
+    final doc = File('${tempDir.path}/b.pdf');
+    await image.writeAsBytes(const <int>[1]);
+    await doc.writeAsBytes(const <int>[2]);
+    addTearDown(() async {
+      await tempDir.delete(recursive: true);
+    });
+
+    final client = _PartialFailureMediaClient(failAfterSendCount: 1);
+    final orchestrator = MessengerMediaSendOrchestrator(
+      client: client,
+      auth: const ChatAuth(apiKey: 'key'),
+      senderId: 'me',
+      picker: const _FakeMediaPicker(null),
+      recorder: _FakeAudioRecorder(null),
+    );
+
+    final result = await orchestrator.sendPendingAttachments(
+      conversationId: 'c1',
+      pending: [
+        MessengerPickedMedia(
+          file: image,
+          messageType: MessageType.image,
+          displayName: 'a.png',
+        ),
+        MessengerPickedMedia(
+          file: doc,
+          messageType: MessageType.file,
+          displayName: 'b.pdf',
+        ),
+      ],
+      caption: 'caption',
+    );
+
+    expect(result.ok, isFalse);
+    expect(result.sentPendingCount, 1);
+    expect(result.error, contains('Sent 1 of 2'));
+    expect(client.sendCallCount, 2);
+  });
+
   test('inferUploadMessageType falls back to extension', () {
     expect(
       inferUploadMessageType(fileName: 'photo.JPG'),
@@ -143,6 +258,14 @@ class _FakeMediaPicker implements MessengerMediaPicker {
 
   @override
   Future<MessengerPickedMedia?> pick(MessengerMediaKind kind) async => result;
+
+  @override
+  Future<List<MessengerPickedMedia>> pickMany(MessengerMediaKind kind) async {
+    if (result == null) {
+      return const [];
+    }
+    return [result!];
+  }
 }
 
 class _FakeMediaClient extends ChatClient {
@@ -158,6 +281,9 @@ class _FakeMediaClient extends ChatClient {
   MessageType? lastSendType;
   String? lastSendContent;
   String? lastSendReplyToMessageId;
+  List<ChatAttachment> lastSendAttachments = const [];
+  int uploadFilesCallCount = 0;
+  int sendCallCount = 0;
 
   @override
   Future<ChatAttachment> uploadFile(
@@ -176,6 +302,23 @@ class _FakeMediaClient extends ChatClient {
   }
 
   @override
+  Future<List<ChatAttachment>> uploadFiles(
+    ChatAuth auth,
+    List<File> files, {
+    void Function(int sent, int total)? onSendProgress,
+    CancelToken? cancelToken,
+  }) async {
+    uploadFilesCallCount++;
+    return [
+      for (var i = 0; i < files.length; i++)
+        ChatAttachment(
+          url: 'https://example.com/uploaded/${files[i].uri.pathSegments.last}',
+          fileName: files[i].uri.pathSegments.last,
+        ),
+    ];
+  }
+
+  @override
   Future<ChatMessage> sendRestMessage(
     ChatAuth auth, {
     required String conversationId,
@@ -185,10 +328,12 @@ class _FakeMediaClient extends ChatClient {
     List<ChatAttachment> attachments = const [],
     String? replyToMessageId,
   }) async {
+    sendCallCount++;
     lastSendConversationId = conversationId;
     lastSendType = type;
     lastSendContent = content;
     lastSendReplyToMessageId = replyToMessageId;
+    lastSendAttachments = attachments;
     return ChatMessage.fromJson({
       'id': 'msg-media-1',
       'conversationId': conversationId,
@@ -199,6 +344,38 @@ class _FakeMediaClient extends ChatClient {
       'attachments': attachments.map((item) => item.toJson()).toList(),
       'createdAt': DateTime.now().toIso8601String(),
     });
+  }
+}
+
+class _PartialFailureMediaClient extends _FakeMediaClient {
+  _PartialFailureMediaClient({required this.failAfterSendCount});
+
+  final int failAfterSendCount;
+
+  @override
+  Future<ChatMessage> sendRestMessage(
+    ChatAuth auth, {
+    required String conversationId,
+    required String senderId,
+    required MessageType type,
+    String content = '',
+    List<ChatAttachment> attachments = const [],
+    String? replyToMessageId,
+  }) async {
+    final attempt = sendCallCount + 1;
+    if (attempt > failAfterSendCount) {
+      sendCallCount = attempt;
+      throw Exception('send failed');
+    }
+    return super.sendRestMessage(
+      auth,
+      conversationId: conversationId,
+      senderId: senderId,
+      type: type,
+      content: content,
+      attachments: attachments,
+      replyToMessageId: replyToMessageId,
+    );
   }
 }
 
