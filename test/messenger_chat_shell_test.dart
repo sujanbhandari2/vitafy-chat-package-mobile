@@ -348,6 +348,109 @@ void main() {
     expect(_DeferredOpenDirectHarnessState.latestOpenedConversationId, 'c2');
   });
 
+  testWidgets(
+    'mobile open-direct does not open thread when selection stays stale',
+    (tester) async {
+      final composer = TextEditingController();
+      final scroll = ScrollController();
+      addTearDown(() {
+        composer.dispose();
+        scroll.dispose();
+      });
+
+      const existingUser = MessengerUser(id: 'u1', username: 'alice_jones');
+      const newPeer = MessengerUser(id: 'u2', username: 'bob');
+      final c1 = MessengerConversation(
+        id: 'c1',
+        title: 'Alice Jones',
+        subtitle: 'Hello',
+        avatarLabel: 'A',
+        createdAt: DateTime.utc(2026),
+        peerUsers: const [existingUser],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MessengerTheme(
+            data: const MessengerThemeData(),
+            child: _FailedOpenDirectHarness(
+              composer: composer,
+              scroll: scroll,
+              initialConversations: [c1],
+              users: const [existingUser, newPeer],
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.edit_square));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Chat').at(1));
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsNothing);
+      expect(_FailedOpenDirectHarnessState.openDirectCallCount, 1);
+      expect(_FailedOpenDirectHarnessState.latestSelectedConversationId, 'c1');
+    },
+  );
+
+  testWidgets(
+    'mobile create-group does not open thread when selection stays stale',
+    (tester) async {
+      final composer = TextEditingController();
+      final scroll = ScrollController();
+      addTearDown(() {
+        composer.dispose();
+        scroll.dispose();
+      });
+
+      const existingUser = MessengerUser(id: 'u1', username: 'alice_jones');
+      const bob = MessengerUser(id: 'u2', username: 'bob');
+      const cara = MessengerUser(id: 'u3', username: 'cara');
+      final c1 = MessengerConversation(
+        id: 'c1',
+        title: 'Alice Jones',
+        subtitle: 'Hello',
+        avatarLabel: 'A',
+        createdAt: DateTime.utc(2026),
+        peerUsers: const [existingUser],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MessengerTheme(
+            data: const MessengerThemeData(),
+            child: _FailedGroupCreateHarness(
+              composer: composer,
+              scroll: scroll,
+              initialConversations: [c1],
+              users: const [existingUser, bob, cara],
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.edit_square));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('New group'));
+      await tester.pumpAndSettle();
+      final addButtons = find.widgetWithText(FilledButton, 'Add');
+      await tester.tap(addButtons.first);
+      await tester.pumpAndSettle();
+      await tester.tap(addButtons.first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Create group'));
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsNothing);
+      expect(_FailedGroupCreateHarnessState.latestSelectedConversationId, 'c1');
+    },
+  );
+
   testWidgets('desktop thread shows loading state instead of empty text',
       (tester) async {
     final composer = TextEditingController();
@@ -1772,6 +1875,137 @@ class _GroupCreateHarnessState extends State<_GroupCreateHarness> {
           });
           latestSelectedConversationId = widget.createdConversation.id;
         },
+        onSend: () {},
+        onPickImage: () {},
+        onPickAudio: () {},
+        onToggleRecording: () {},
+      ),
+    );
+  }
+}
+
+/// Host simulates failed direct open: callback returns without updating selection.
+class _FailedOpenDirectHarness extends StatefulWidget {
+  const _FailedOpenDirectHarness({
+    required this.composer,
+    required this.scroll,
+    required this.initialConversations,
+    required this.users,
+  });
+
+  final TextEditingController composer;
+  final ScrollController scroll;
+  final List<MessengerConversation> initialConversations;
+  final List<MessengerUser> users;
+
+  @override
+  State<_FailedOpenDirectHarness> createState() =>
+      _FailedOpenDirectHarnessState();
+}
+
+class _FailedOpenDirectHarnessState extends State<_FailedOpenDirectHarness> {
+  static int openDirectCallCount = 0;
+  static String? latestSelectedConversationId;
+
+  late List<MessengerConversation> conversations;
+  String? selectedConversationId;
+
+  @override
+  void initState() {
+    super.initState();
+    conversations = [...widget.initialConversations];
+    selectedConversationId = conversations.first.id;
+    openDirectCallCount = 0;
+    latestSelectedConversationId = selectedConversationId;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: MessengerChatShell(
+        currentUserId: 'me',
+        currentUserName: 'Me',
+        conversations: conversations,
+        users: widget.users,
+        selectedConversationId: selectedConversationId,
+        messages: const [],
+        composerController: widget.composer,
+        messagesScrollController: widget.scroll,
+        isSending: false,
+        isRecording: false,
+        onRefresh: () async {},
+        onLogout: () {},
+        onSelectConversation: (id) async {
+          setState(() => selectedConversationId = id);
+          latestSelectedConversationId = id;
+        },
+        onOpenDirectChat: (_) async {
+          openDirectCallCount++;
+        },
+        onSend: () {},
+        onPickImage: () {},
+        onPickAudio: () {},
+        onToggleRecording: () {},
+      ),
+    );
+  }
+}
+
+/// Host simulates failed group create: callback returns without updating selection.
+class _FailedGroupCreateHarness extends StatefulWidget {
+  const _FailedGroupCreateHarness({
+    required this.composer,
+    required this.scroll,
+    required this.initialConversations,
+    required this.users,
+  });
+
+  final TextEditingController composer;
+  final ScrollController scroll;
+  final List<MessengerConversation> initialConversations;
+  final List<MessengerUser> users;
+
+  @override
+  State<_FailedGroupCreateHarness> createState() =>
+      _FailedGroupCreateHarnessState();
+}
+
+class _FailedGroupCreateHarnessState extends State<_FailedGroupCreateHarness> {
+  static String? latestSelectedConversationId;
+
+  late List<MessengerConversation> conversations;
+  String? selectedConversationId;
+
+  @override
+  void initState() {
+    super.initState();
+    conversations = [...widget.initialConversations];
+    selectedConversationId = conversations.first.id;
+    latestSelectedConversationId = selectedConversationId;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: MessengerChatShell(
+        currentUserId: 'me',
+        currentUserName: 'Me',
+        conversations: conversations,
+        users: widget.users,
+        selectedConversationId: selectedConversationId,
+        messages: const [],
+        composerController: widget.composer,
+        messagesScrollController: widget.scroll,
+        isSending: false,
+        isRecording: false,
+        onRefresh: () async {},
+        onLogout: () {},
+        onSelectConversation: (id) async {
+          setState(() => selectedConversationId = id);
+          latestSelectedConversationId = id;
+        },
+        onOpenDirectChat: (_) async {},
+        onCreateGroupSelected: (_) async {},
         onSend: () {},
         onPickImage: () {},
         onPickAudio: () {},

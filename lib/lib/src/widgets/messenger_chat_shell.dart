@@ -1680,6 +1680,55 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     return null;
   }
 
+  bool _conversationIncludesUser(String conversationId, String userId) {
+    final conversation = _conversationForShellId(conversationId);
+    if (conversation == null) {
+      return false;
+    }
+    final uid = userId.trim();
+    if (uid.isEmpty) {
+      return false;
+    }
+    return conversation.peerUsers.any((peer) => peer.id.trim() == uid);
+  }
+
+  /// After [onOpenDirectChat], only reuse host [selectedConversationId] when it
+  /// changed from [beforeSelectedId] or already maps to [user]. Otherwise fall
+  /// back to an existing DM in [conversations]. Hosts signal failure by leaving
+  /// selection unchanged (no route is pushed).
+  String? _resolveMobileOpenDirectRouteId({
+    required String? beforeSelectedId,
+    required MessengerUser user,
+  }) {
+    final selected = widget.selectedConversationId?.trim();
+    final peerConversationId = _conversationIdForUser(user.id);
+    final userId = user.id.trim();
+
+    if (selected != null && selected.isNotEmpty) {
+      final selectionChanged =
+          !_conversationIdsEqual(selected, beforeSelectedId);
+      final selectionMatchesUser =
+          _conversationIncludesUser(selected, userId);
+      if (selectionChanged || selectionMatchesUser) {
+        return selected;
+      }
+    }
+    return peerConversationId;
+  }
+
+  /// After group-create callbacks, only open a thread when the host moved
+  /// selection away from [beforeSelectedId].
+  String? _resolveMobileCreateGroupRouteId(String? beforeSelectedId) {
+    final selected = widget.selectedConversationId?.trim();
+    if (selected == null || selected.isEmpty) {
+      return null;
+    }
+    if (_conversationIdsEqual(selected, beforeSelectedId)) {
+      return null;
+    }
+    return selected;
+  }
+
   bool _conversationIdsEqual(String? a, String? b) {
     if (a == null || b == null) {
       return false;
@@ -1731,6 +1780,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   }
 
   Future<void> _mobileOpenDirectChatAndShowThread(MessengerUser user) async {
+    final beforeSelectedId = widget.selectedConversationId?.trim();
     setState(() => _openingDirectUserId = user.id);
     await _runOpenDirectChat(user);
     if (!mounted) {
@@ -1740,11 +1790,10 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     if (!mounted) {
       return;
     }
-    final selected = widget.selectedConversationId?.trim();
-    // After [_waitUntilPostFrame], a non-empty host selection matches the opened DM.
-    final idForRoute = (selected != null && selected.isNotEmpty)
-        ? selected
-        : _conversationIdForUser(user.id);
+    final idForRoute = _resolveMobileOpenDirectRouteId(
+      beforeSelectedId: beforeSelectedId,
+      user: user,
+    );
     if (idForRoute == null || idForRoute.trim().isEmpty) {
       return;
     }
@@ -1759,6 +1808,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   Future<void> _mobileCreateGroupAndShowThread(
     List<MessengerUser> selectedUsers,
   ) async {
+    final beforeSelectedId = widget.selectedConversationId?.trim();
     await _runCreateGroupSelected(selectedUsers);
     if (!mounted) {
       return;
@@ -1767,14 +1817,14 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     if (!mounted) {
       return;
     }
-    final selected = widget.selectedConversationId?.trim();
-    if (selected == null || selected.isEmpty) {
+    final idForRoute = _resolveMobileCreateGroupRouteId(beforeSelectedId);
+    if (idForRoute == null) {
       return;
     }
     await _openThreadRouteInternal(
       context,
       themeData: MessengerTheme.of(context),
-      fallbackConversationId: selected,
+      fallbackConversationId: idForRoute,
       forceLoading: true,
     );
   }
@@ -1782,6 +1832,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   Future<void> _mobileCreateNamedGroupAndShowThread(
     MessengerGroupCreateRequest request,
   ) async {
+    final beforeSelectedId = widget.selectedConversationId?.trim();
     await _runCreateGroupRequested(request);
     if (!mounted) {
       return;
@@ -1790,14 +1841,14 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     if (!mounted) {
       return;
     }
-    final selected = widget.selectedConversationId?.trim();
-    if (selected == null || selected.isEmpty) {
+    final idForRoute = _resolveMobileCreateGroupRouteId(beforeSelectedId);
+    if (idForRoute == null) {
       return;
     }
     await _openThreadRouteInternal(
       context,
       themeData: MessengerTheme.of(context),
-      fallbackConversationId: selected,
+      fallbackConversationId: idForRoute,
       forceLoading: true,
     );
   }
