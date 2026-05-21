@@ -5,8 +5,12 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import '../media/messenger_cached_image.dart';
+import '../media/messenger_document_preview_kind.dart';
 import '../media/messenger_media_cache.dart';
 import '../media/messenger_media_cache_scope.dart';
+import '../media/messenger_media_download.dart';
+import 'messenger_document_preview_dialog.dart';
+import 'messenger_preview_chrome.dart';
 import '../models/messenger_message.dart';
 import '../models/messenger_message_attachment.dart';
 import '../theme/messenger_theme.dart';
@@ -874,6 +878,11 @@ class _MessageContent extends StatelessWidget {
             label: _labelForContent(message.content, fallback: 'File'),
             textColor: textColor,
             mutedColor: mutedColor,
+            onTap: () => _openFilePreview(
+              context,
+              source: message.content,
+              fileName: _labelForContent(message.content, fallback: 'File'),
+            ),
           ),
           _attachmentCaptionIfAny(),
         ],
@@ -1016,6 +1025,12 @@ class _MessageContent extends StatelessWidget {
             label: att.fileName ?? _labelForContent(att.url, fallback: 'File'),
             textColor: textColor,
             mutedColor: mutedColor,
+            onTap: () => _openFilePreview(
+              context,
+              source: att.url,
+              fileName: att.fileName,
+              mimeType: att.mimeType,
+            ),
           ),
         );
       case MessengerMessageAttachmentKind.voice:
@@ -1054,6 +1069,21 @@ class _MessageContent extends StatelessWidget {
   }
 
   bool _isNetworkUrl(String url) => messengerMediaSourceIsNetwork(url);
+
+  void _openFilePreview(
+    BuildContext context, {
+    required String source,
+    String? fileName,
+    String? mimeType,
+  }) {
+    openMessengerDocumentPreview(
+      context,
+      source: source,
+      fileName: fileName,
+      mimeType: mimeType,
+      packageDialogTheme: packageDialogTheme,
+    );
+  }
 
   void _openImageGallery(
     BuildContext context, {
@@ -1202,6 +1232,7 @@ class _MessengerImageLightbox extends StatefulWidget {
 class _MessengerImageLightboxState extends State<_MessengerImageLightbox> {
   late final PageController _pageController;
   late int _index;
+  bool _downloadInProgress = false;
 
   @override
   void initState() {
@@ -1228,17 +1259,61 @@ class _MessengerImageLightboxState extends State<_MessengerImageLightbox> {
     );
   }
 
+  Future<void> _downloadCurrentImage(BuildContext context) async {
+    if (_downloadInProgress) {
+      return;
+    }
+    setState(() => _downloadInProgress = true);
+    try {
+      final source = widget.sources[_index];
+      final result = await messengerDownloadMedia(
+        context: context,
+        source: source,
+        fileName: messengerMediaDownloadFileName(source: source),
+      );
+      if (!mounted) {
+        return;
+      }
+      if (result.success) {
+        showMessengerPreviewSnackBar(
+          context,
+          result.message ?? 'Download complete',
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _downloadInProgress = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasMany = widget.sources.length > 1;
     final size = MediaQuery.sizeOf(context);
 
-    return Material(
-      type: MaterialType.transparency,
-      child: Stack(
+    final currentSource = widget.sources[_index];
+    final title = messengerMediaDownloadFileName(source: currentSource);
+
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Stack(
         children: [
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: MessengerPreviewChrome(
+              title: title,
+              isDownloading: _downloadInProgress,
+              onClose: () => Navigator.of(context).pop(),
+              onDownload: () => unawaited(_downloadCurrentImage(context)),
+            ),
+          ),
           Positioned.fill(
-            child: GestureDetector(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 56),
+              child: GestureDetector(
               onTap: () => Navigator.of(context).pop(),
               child: PageView.builder(
                 controller: _pageController,
@@ -1268,18 +1343,6 @@ class _MessengerImageLightboxState extends State<_MessengerImageLightbox> {
                 },
               ),
             ),
-          ),
-          Positioned(
-            top: 16,
-            right: 16,
-            child: Material(
-              color: Colors.black54,
-              shape: const CircleBorder(),
-              child: IconButton(
-                onPressed: () => Navigator.of(context).pop(),
-                icon: const Icon(Icons.close_rounded, color: Colors.white),
-                tooltip: 'Close',
-              ),
             ),
           ),
           if (hasMany) ...[
@@ -1372,16 +1435,18 @@ class _MediaAssetTile extends StatelessWidget {
     required this.label,
     required this.textColor,
     required this.mutedColor,
+    this.onTap,
   });
 
   final IconData icon;
   final String label;
   final Color textColor;
   final Color mutedColor;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final tile = Container(
       constraints: const BoxConstraints(minWidth: 160),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
@@ -1406,6 +1471,18 @@ class _MediaAssetTile extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+    if (onTap == null) {
+      return tile;
+    }
+    return Semantics(
+      button: true,
+      label: 'Open $label',
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: tile,
       ),
     );
   }

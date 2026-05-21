@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 
 import '../client/chat_auth.dart';
@@ -232,7 +233,7 @@ class MessengerMediaSendOrchestrator {
     final batches = buildAttachmentSendBatches(pending, caption);
     final captionText = caption.trim();
     final totalPending = pending.length;
-    ChatMessage? lastSentMessage;
+    final sentMessages = <ChatMessage>[];
     var sentPendingCount = 0;
 
     for (final batch in batches) {
@@ -286,7 +287,7 @@ class MessengerMediaSendOrchestrator {
           attachments: uploaded,
           replyToMessageId: replyToMessageId,
         );
-        lastSentMessage = message;
+        sentMessages.add(message);
         sentPendingCount += batch.pendingIndices.length;
         onUploadProgress?.call(sentPendingCount, 1.0);
       } catch (err) {
@@ -299,21 +300,21 @@ class MessengerMediaSendOrchestrator {
         }
         return MessengerSendPendingAttachmentsResult.failure(
           sentPendingCount: sentPendingCount,
-          lastMessage: lastSentMessage,
+          sentMessages: sentMessages,
           error:
               'Sent $sentPendingCount of $totalPending attachments. $detail Try again for the rest.',
         );
       }
     }
 
-    if (lastSentMessage == null) {
+    if (sentMessages.isEmpty) {
       return MessengerSendPendingAttachmentsResult.failure(
         sentPendingCount: 0,
         error: 'No attachments to send',
       );
     }
     return MessengerSendPendingAttachmentsResult.success(
-      lastMessage: lastSentMessage,
+      sentMessages: sentMessages,
       sentPendingCount: sentPendingCount,
     );
   }
@@ -326,6 +327,8 @@ class DefaultMessengerAudioRecorder implements MessengerAudioRecorder {
   final AudioRecorder _recorder;
   String? _activePath;
   bool _recording = false;
+  static const String _microphoneRequiredMessage =
+      'Microphone access is required to record an audio.';
 
   @override
   bool get isRecording => _recording;
@@ -335,10 +338,10 @@ class DefaultMessengerAudioRecorder implements MessengerAudioRecorder {
     if (_recording) {
       return;
     }
-    final hasPermission = await _recorder.hasPermission();
+    final hasPermission = await _requestMicrophonePermissionWithRetry();
     if (!hasPermission) {
       throw const MessengerAudioRecordingException(
-        'Microphone permission is required to record voice messages.',
+        _microphoneRequiredMessage,
       );
     }
     final fileName = 'voice-${DateTime.now().millisecondsSinceEpoch}.m4a';
@@ -360,6 +363,24 @@ class DefaultMessengerAudioRecorder implements MessengerAudioRecorder {
       throw MessengerAudioRecordingException(
         'Unable to start recording: $error',
       );
+    }
+  }
+
+  Future<bool> _requestMicrophonePermissionWithRetry() async {
+    try {
+      final first = await Permission.microphone.request();
+      if (first.isGranted) {
+        return true;
+      }
+      // Retry once to re-trigger the OS prompt where possible.
+      final second = await Permission.microphone.request();
+      if (second.isGranted) {
+        return true;
+      }
+      // Keep record plugin state in sync when permission is granted externally.
+      return await _recorder.hasPermission();
+    } catch (_) {
+      return false;
     }
   }
 

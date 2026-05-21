@@ -92,35 +92,36 @@ class MessengerSendPendingAttachmentsResult {
   const MessengerSendPendingAttachmentsResult._({
     required this.ok,
     required this.sentPendingCount,
-    this.lastMessage,
+    this.sentMessages = const [],
     this.error,
   });
 
   final bool ok;
   final int sentPendingCount;
-  final ChatMessage? lastMessage;
+  final List<ChatMessage> sentMessages;
   final String? error;
+  ChatMessage? get lastMessage => sentMessages.isEmpty ? null : sentMessages.last;
 
   factory MessengerSendPendingAttachmentsResult.success({
-    required ChatMessage lastMessage,
+    required List<ChatMessage> sentMessages,
     required int sentPendingCount,
   }) {
     return MessengerSendPendingAttachmentsResult._(
       ok: true,
       sentPendingCount: sentPendingCount,
-      lastMessage: lastMessage,
+      sentMessages: sentMessages,
     );
   }
 
   factory MessengerSendPendingAttachmentsResult.failure({
     required int sentPendingCount,
-    ChatMessage? lastMessage,
+    List<ChatMessage> sentMessages = const [],
     required String error,
   }) {
     return MessengerSendPendingAttachmentsResult._(
       ok: false,
       sentPendingCount: sentPendingCount,
-      lastMessage: lastMessage,
+      sentMessages: sentMessages,
       error: error,
     );
   }

@@ -227,8 +227,52 @@ void main() {
 
     expect(result.ok, isFalse);
     expect(result.sentPendingCount, 1);
+    expect(result.sentMessages.length, 1);
     expect(result.error, contains('Sent 1 of 2'));
     expect(client.sendCallCount, 2);
+  });
+
+  test('sendPendingAttachments returns all sent messages for mixed batches',
+      () async {
+    final tempDir = await Directory.systemTemp.createTemp('media-mixed');
+    final image = File('${tempDir.path}/a.png');
+    final doc = File('${tempDir.path}/b.pdf');
+    await image.writeAsBytes(const <int>[1]);
+    await doc.writeAsBytes(const <int>[2]);
+    addTearDown(() async {
+      await tempDir.delete(recursive: true);
+    });
+
+    final client = _FakeMediaClient();
+    final orchestrator = MessengerMediaSendOrchestrator(
+      client: client,
+      auth: const ChatAuth(apiKey: 'key'),
+      senderId: 'me',
+      picker: const _FakeMediaPicker(null),
+      recorder: _FakeAudioRecorder(null),
+    );
+
+    final result = await orchestrator.sendPendingAttachments(
+      conversationId: 'c1',
+      pending: [
+        MessengerPickedMedia(
+          file: image,
+          messageType: MessageType.image,
+          displayName: 'a.png',
+        ),
+        MessengerPickedMedia(
+          file: doc,
+          messageType: MessageType.file,
+          displayName: 'b.pdf',
+        ),
+      ],
+      caption: 'caption',
+    );
+
+    expect(result.ok, isTrue);
+    expect(client.sendCallCount, 2);
+    expect(result.sentMessages.length, 2);
+    expect(result.lastMessage, isNotNull);
   });
 
   test('inferUploadMessageType falls back to extension', () {

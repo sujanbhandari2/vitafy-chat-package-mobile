@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../client/chat_auth.dart';
 import '../client/chat_client.dart';
@@ -447,6 +449,9 @@ class MessengerChatShell extends StatefulWidget {
 }
 
 class _MessengerChatShellState extends State<MessengerChatShell> {
+  static const String _microphonePermissionMessage =
+      'Microphone access is required to record an audio.';
+  bool _microphoneSettingsDialogOpen = false;
   String _openingDirectUserId = '';
   final Map<String, List<MessengerChatMessage>> _localMessagesByConversation =
       <String, List<MessengerChatMessage>>{};
@@ -1162,7 +1167,78 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       });
       _scheduleMobileThreadRefresh();
     } catch (error) {
+      if (error is MessengerAudioRecordingException) {
+        if (error.message == _microphonePermissionMessage) {
+          await _maybeShowMicrophoneSettingsPrompt();
+        }
+        widget.onMediaSendError?.call('record-start', error.message);
+        return;
+      }
       widget.onMediaSendError?.call('record-start', error);
+    }
+  }
+
+  Future<void> _maybeShowMicrophoneSettingsPrompt() async {
+    if (kIsWeb || !mounted) {
+      return;
+    }
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      await _showMicrophoneSettingsPrompt(
+        'Microphone access is required to record an audio. '
+        'If iOS is not showing the permission prompt again, enable it in Settings.',
+      );
+      return;
+    }
+    if (defaultTargetPlatform != TargetPlatform.android) {
+      return;
+    }
+    PermissionStatus status;
+    try {
+      status = await Permission.microphone.status;
+    } catch (_) {
+      return;
+    }
+    if (!status.isPermanentlyDenied) {
+      return;
+    }
+    await _showMicrophoneSettingsPrompt(
+      'Microphone access is required to record an audio. '
+      'Permission is set to "Don\'t ask again" on Android. Enable it in Settings.',
+    );
+  }
+
+  Future<void> _showMicrophoneSettingsPrompt(String message) async {
+    if (!mounted || _microphoneSettingsDialogOpen) {
+      return;
+    }
+    _microphoneSettingsDialogOpen = true;
+    try {
+      final shouldOpenSettings = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => wrapMessengerPackageDialogTheme(
+          ambientContext: context,
+          packageDialogTheme: widget.packageDialogTheme,
+          child: AlertDialog(
+            title: const Text('Microphone access required'),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Not now'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Open Settings'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (shouldOpenSettings == true && mounted) {
+        await openAppSettings();
+      }
+    } finally {
+      _microphoneSettingsDialogOpen = false;
     }
   }
 
@@ -1384,27 +1460,31 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       _removeLocalMessage(targetConversationId, uploadSessionId);
 
       if (result.ok) {
-        final sentUi = _toUiMessage(result.lastMessage!);
-        _upsertLocalMessage(targetConversationId, sentUi);
+        final sentUiMessages = result.sentMessages
+            .map(_toUiMessage)
+            .toList(growable: false);
+        for (final sentUi in sentUiMessages) {
+          _upsertLocalMessage(targetConversationId, sentUi);
+          widget.onMediaMessageSent?.call(sentUi);
+          widget.onMediaMessageSentForConversation?.call(
+            targetConversationId,
+            sentUi,
+          );
+        }
         if (mounted) {
           _clearPendingMedia(targetConversationId);
           widget.composerController.clear();
           widget.onComposerReplyDraftChanged?.call(null);
           _scheduleMobileThreadRefresh();
         }
-        widget.onMediaMessageSent?.call(sentUi);
-        widget.onMediaMessageSentForConversation?.call(
-          targetConversationId,
-          sentUi,
-        );
       } else {
         final remaining = pendingList.sublist(
           result.sentPendingCount.clamp(0, pendingList.length),
         );
         if (mounted) {
           _setPendingMedia(targetConversationId, remaining);
-          if (result.lastMessage != null) {
-            final partialUi = _toUiMessage(result.lastMessage!);
+          for (final sent in result.sentMessages) {
+            final partialUi = _toUiMessage(sent);
             _upsertLocalMessage(targetConversationId, partialUi);
             widget.onMediaMessageSent?.call(partialUi);
             widget.onMediaMessageSentForConversation?.call(
