@@ -22,6 +22,39 @@ void main() {
       expect(json.containsKey('providerId'), isFalse);
     });
 
+    test('lowercases user identifiers and strips tenant environment prefix', () {
+      final body = ChatUserRegistrationBody.resolve(
+        externalTenantId: ' UAT_7EB541E4-91A9-4DEB-BB7E-55813D3CA140 ',
+        externalUserId: ' Surya Bhai Legend ',
+        externalUserRole: ' user ',
+        email: ' Sujan@Example.COM ',
+      );
+
+      expect(body.externalTenantId, '7eb541e4-91a9-4deb-bb7e-55813d3ca140');
+      expect(body.externalUserId, 'surya bhai legend');
+      expect(body.email, 'sujan@example.com');
+
+      final json = body.toRegistrationJson();
+      expect(json['externalTenantId'],
+          '7eb541e4-91a9-4deb-bb7e-55813d3ca140');
+      expect(json['externalUserId'], 'surya bhai legend');
+      expect(json['email'], 'sujan@example.com');
+    });
+
+    test('normalizes directly constructed start-conversation user bodies', () {
+      const body = ChatUserRegistrationBody(
+        externalTenantId: 'DEV_ACME-TENANT',
+        externalUserId: 'Peer User',
+        externalUserRole: 'user',
+        email: 'Peer@Example.COM',
+      );
+
+      final json = body.toRegistrationJson();
+      expect(json['externalTenantId'], 'acme-tenant');
+      expect(json['externalUserId'], 'peer user');
+      expect(json['email'], 'peer@example.com');
+    });
+
     test('defaults empty externalUserRole to kChatUserDefaultExternalRole', () {
       final body = ChatUserRegistrationBody.resolve(
         externalTenantId: 't',

@@ -63,6 +63,9 @@ String messengerReplyPreviewSnippet(MessengerChatMessage message) {
   if (message.isUploading) {
     return 'Sending…';
   }
+  if (message.isUploadFailed) {
+    return 'Failed to send';
+  }
   final caption = message.caption?.trim() ?? '';
   if (caption.isNotEmpty) {
     return messengerTruncatePreview(caption);
@@ -106,6 +109,7 @@ class MessengerChatMessage {
     this.deliveryStatus = MessengerDeliveryStatus.none,
     this.reactions = const [],
     this.isUploading = false,
+    this.isUploadFailed = false,
     this.uploadProgress,
     this.senderAvatarUrl,
     this.quotedReply,
@@ -125,6 +129,7 @@ class MessengerChatMessage {
   final MessengerDeliveryStatus deliveryStatus;
   final List<MessengerMessageReaction> reactions;
   final bool isUploading;
+  final bool isUploadFailed;
   final double? uploadProgress;
   final String? senderAvatarUrl;
   final MessengerQuotedMessage? quotedReply;

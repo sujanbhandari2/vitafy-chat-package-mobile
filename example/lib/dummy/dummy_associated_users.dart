@@ -25,7 +25,7 @@ const List<AssociatedUserResponse> kDummyAssociatedUsers = [
     name: 'flutter demo2',
     tenantId: 'UAT_7EB541E4-91A9-4DEB-BB7E-55813D3CA140',
     tenantCode: 'KTMDPC',
-    chatUserRole: 'CLIENT',
+    chatUserRole: 'ADMIN',
     chatUid: 'KTMDPC_F4E58942-00D3-4159-9797-5B65D967279F_CLIENT',
   ),
   AssociatedUserResponse(
@@ -37,7 +37,7 @@ const List<AssociatedUserResponse> kDummyAssociatedUsers = [
     name: 'flutter demo3',
     tenantId: 'UAT_7EB541E4-91A9-4DEB-BB7E-55813D3CA140',
     tenantCode: 'KTMDPC',
-    chatUserRole: 'CLIENT',
+    chatUserRole: 'ADMIN',
     chatUid: 'KTMDPC_1f5ea656-6490-4b89-8309-72bfabedb6b6_CLIENT',
   ),
   AssociatedUserResponse(

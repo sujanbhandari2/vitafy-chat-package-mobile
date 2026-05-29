@@ -75,10 +75,14 @@ class ChatApi {
         throw ArgumentError(
             'startConversation requires a non-empty users list.');
       }
+      final serializedUsers = users.map((u) => u.toRegistrationJson()).toList();
       for (var i = 0; i < users.length; i++) {
-        final u = users[i];
-        if (u.externalTenantId.trim().isEmpty ||
-            u.externalUserId.trim().isEmpty) {
+        final u = serializedUsers[i];
+        final missingTenant =
+            u['externalTenantId']?.toString().trim().isEmpty ?? true;
+        final missingUser =
+            u['externalUserId']?.toString().trim().isEmpty ?? true;
+        if (missingTenant || missingUser) {
           throw ArgumentError(
             'startConversation: users[$i] is missing externalTenantId or externalUserId.',
           );
@@ -88,7 +92,7 @@ class ChatApi {
         _chatUri('users/start-conversation'),
         options: _authOptionsChatUser(auth),
         data: <String, dynamic>{
-          'users': users.map((u) => u.toRegistrationJson()).toList(),
+          'users': serializedUsers,
           if (groupName != null && groupName.trim().isNotEmpty)
             'groupName': groupName.trim(),
         },

@@ -54,6 +54,7 @@ class MessengerChatThread extends StatefulWidget {
     this.onReact,
     this.onRemoveReaction,
     this.onDelete,
+    this.onRetryUpload,
     this.onMarkSeen,
     this.canDeleteMessage,
     this.onEditMessage,
@@ -120,6 +121,7 @@ class MessengerChatThread extends StatefulWidget {
   final Future<void> Function(String messageId, String reactionType)?
       onRemoveReaction;
   final Future<void> Function(String messageId)? onDelete;
+  final Future<void> Function(String messageId)? onRetryUpload;
   final Future<void> Function(String messageId)? onMarkSeen;
   final bool Function(MessengerChatMessage message)? canDeleteMessage;
   final Future<void> Function(String messageId, String newText)? onEditMessage;
@@ -159,8 +161,7 @@ class MessengerChatThread extends StatefulWidget {
   final MessengerComposerReplyDraft? composerReplyDraft;
 
   /// Host updates reply draft (including clearing with `null` after send).
-  final ValueChanged<MessengerComposerReplyDraft?>?
-      onComposerReplyDraftChanged;
+  final ValueChanged<MessengerComposerReplyDraft?>? onComposerReplyDraftChanged;
 
   /// Optional focus node for the composer [TextField] (e.g. focus after swipe).
   final FocusNode? composerFocusNode;
@@ -268,8 +269,12 @@ class _MessengerChatThreadState extends State<MessengerChatThread> {
                 ? null
                 : (messageId, reactionType) =>
                     widget.onRemoveReaction!(messageId, reactionType),
-            onDelete:
-                widget.onDelete == null ? null : () => widget.onDelete!(message.id),
+            onDelete: widget.onDelete == null
+                ? null
+                : () => widget.onDelete!(message.id),
+            onRetryUpload: widget.onRetryUpload == null
+                ? null
+                : () => unawaited(widget.onRetryUpload!(message.id)),
             onMarkSeen: widget.onMarkSeen == null
                 ? null
                 : () => widget.onMarkSeen!(message.id),
@@ -290,6 +295,7 @@ class _MessengerChatThreadState extends State<MessengerChatThread> {
                       });
                     }
                   },
+            showDeliveryStatus: true,
           );
 
           return Column(
@@ -536,7 +542,8 @@ class _MessengerDeleteChatDialog extends StatefulWidget {
       _MessengerDeleteChatDialogState();
 }
 
-class _MessengerDeleteChatDialogState extends State<_MessengerDeleteChatDialog> {
+class _MessengerDeleteChatDialogState
+    extends State<_MessengerDeleteChatDialog> {
   bool _deleting = false;
 
   Future<void> _onDeletePressed() async {
@@ -769,8 +776,8 @@ class _ThreadHeaderState extends State<_ThreadHeader> {
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
     final c = widget.conversation;
-    final showOnlinePresence =
-        c != null && !c.isGroup && c.isOnline != null;
+    final roleLabel = _conversationRoleLabel(c);
+    final showOnlinePresence = c != null && !c.isGroup && c.isOnline != null;
     final menu = _overflowMenu(context, theme);
     return Container(
       decoration: BoxDecoration(
@@ -786,7 +793,7 @@ class _ThreadHeaderState extends State<_ThreadHeader> {
       padding: EdgeInsets.fromLTRB(widget.isMobile ? 4 : 12, 8, 8, 8),
       child: widget.isMobile
           ? SizedBox(
-              height: 48,
+              height: roleLabel.isEmpty ? 48 : 56,
               child: Row(
                 children: [
                   Row(
@@ -810,14 +817,36 @@ class _ThreadHeaderState extends State<_ThreadHeader> {
                     ],
                   ),
                   Expanded(
-                    child: Text(
-                      c?.title ?? 'No conversation',
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 16,
+                    child: Align(
+                      alignment: Alignment.center,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Text(
+                            c?.title ?? 'No conversation',
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 16,
+                            ),
+                          ),
+                          if (roleLabel.isNotEmpty) ...[
+                            const SizedBox(height: 1),
+                            Text(
+                              roleLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: theme.subtleText,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                   ),
@@ -840,15 +869,34 @@ class _ThreadHeaderState extends State<_ThreadHeader> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        c?.title ?? 'No conversation',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 16,
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              c?.title ?? 'No conversation',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
+                      if (roleLabel.isNotEmpty) ...[
+                        const SizedBox(height: 1),
+                        Text(
+                          roleLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: theme.subtleText,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -856,6 +904,19 @@ class _ThreadHeaderState extends State<_ThreadHeader> {
               ],
             ),
     );
+  }
+
+  String _conversationRoleLabel(MessengerConversation? conversation) {
+    if (conversation == null || conversation.isGroup) {
+      return '';
+    }
+    for (final user in conversation.peerUsers) {
+      final role = user.roleLabel.trim();
+      if (role.isNotEmpty) {
+        return role;
+      }
+    }
+    return '';
   }
 }
 
@@ -867,6 +928,7 @@ class _DateSeparator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
+    final localDate = date.toLocal();
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
       child: Center(
@@ -877,7 +939,7 @@ class _DateSeparator extends StatelessWidget {
             borderRadius: BorderRadius.circular(999),
           ),
           child: Text(
-            _formatDate(date),
+            _formatDate(localDate),
             style: TextStyle(
               color: theme.dateSeparatorText,
               fontSize: 11.5,
@@ -962,5 +1024,9 @@ class _ThreadLoadingPlaceholder extends StatelessWidget {
 }
 
 bool _isSameDay(DateTime a, DateTime b) {
-  return a.year == b.year && a.month == b.month && a.day == b.day;
+  final localA = a.toLocal();
+  final localB = b.toLocal();
+  return localA.year == localB.year &&
+      localA.month == localB.month &&
+      localA.day == localB.day;
 }

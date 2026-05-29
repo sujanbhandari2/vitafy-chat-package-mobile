@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:health_messenger_ui/lib/src/client/models/chat_message.dart';
 import 'package:health_messenger_ui/lib/src/widgets/messenger_media_send_orchestrator.dart';
@@ -222,8 +223,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.edit_square));
     await tester.pumpAndSettle();
-    // Start-new-chat sheet uses [FilledButton] labels, not row trailing icons.
-    await tester.tap(find.widgetWithText(FilledButton, 'Chat').at(1));
+    await tester.tap(find.text('Bob').last);
     await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsOneWidget);
@@ -279,14 +279,13 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.edit_square));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New group'));
+    await tester.tap(find.text('+ New group'));
     await tester.pumpAndSettle();
-    final addButtons = find.widgetWithText(FilledButton, 'Add');
-    await tester.tap(addButtons.first);
+    await tester.tap(find.text('Bob').last);
     await tester.pumpAndSettle();
-    await tester.tap(addButtons.first);
+    await tester.tap(find.text('Cara').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Create group'));
+    await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsOneWidget);
@@ -341,7 +340,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.edit_square));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Chat').at(1));
+    await tester.tap(find.text('Bob').last);
     await tester.pumpAndSettle();
 
     expect(find.text('Bob'), findsWidgets);
@@ -387,7 +386,7 @@ void main() {
 
       await tester.tap(find.byIcon(Icons.edit_square));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Chat').at(1));
+      await tester.tap(find.text('Bob').last);
       await tester.pumpAndSettle();
 
       expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsNothing);
@@ -436,14 +435,13 @@ void main() {
 
       await tester.tap(find.byIcon(Icons.edit_square));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('New group'));
+      await tester.tap(find.text('+ New group'));
       await tester.pumpAndSettle();
-      final addButtons = find.widgetWithText(FilledButton, 'Add');
-      await tester.tap(addButtons.first);
+      await tester.tap(find.text('Bob').last);
       await tester.pumpAndSettle();
-      await tester.tap(addButtons.first);
+      await tester.tap(find.text('Cara').last);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Create group'));
+      await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
       expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsNothing);
@@ -790,6 +788,77 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+      'microphone denied does not surface media send error callback',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    const user = MessengerUser(id: 'u1', username: 'alice_jones');
+    final conversation = MessengerConversation(
+      id: 'c1',
+      title: 'Alice Jones',
+      subtitle: 'Hello',
+      avatarLabel: 'A',
+      createdAt: DateTime.utc(2026),
+      peerUsers: const [user],
+    );
+
+    var mediaSendErrorCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerChatShell(
+              currentUserId: 'me',
+              currentUserName: 'Me',
+              conversations: [conversation],
+              users: const [user],
+              selectedConversationId: 'c1',
+              messages: const [],
+              composerController: composer,
+              messagesScrollController: scroll,
+              isSending: false,
+              isRecording: false,
+              onRefresh: () async {},
+              onLogout: () {},
+              onSelectConversation: (_) async {},
+              onOpenDirectChat: (_) async {},
+              onSend: () {},
+              onPickImage: () {},
+              onPickAudio: () {},
+              onToggleRecording: () {},
+              desktopBreakpoint: 200,
+              enablePackageMediaSending: true,
+              mediaChatClient: _NoopMediaClient(),
+              mediaChatAuth: const ChatAuth(apiKey: 'k'),
+              mediaSenderId: 'me',
+              mediaRecorder: _PermissionDeniedRecorder(),
+              onMediaSendError: (_, __) {
+                mediaSendErrorCalls++;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final composerBar =
+        tester.widget<MessengerComposerBar>(find.byType(MessengerComposerBar));
+    composerBar.onStartRecording?.call();
+    await tester.pump();
+
+    expect(mediaSendErrorCalls, 0);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('multi-pick queues attachments with per-item removal',
       (tester) async {
     final composer = TextEditingController();
@@ -872,6 +941,93 @@ void main() {
 
     expect(find.text('a.pdf'), findsNothing);
     expect(find.text('b.pdf'), findsOneWidget);
+  });
+
+  testWidgets(
+      'failed media send keeps bubble visible with retry action',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    const user = MessengerUser(id: 'u1', username: 'alice_jones');
+    final conversation = MessengerConversation(
+      id: 'c1',
+      title: 'Alice Jones',
+      subtitle: 'Hello',
+      avatarLabel: 'A',
+      createdAt: DateTime.utc(2026),
+      peerUsers: const [user],
+    );
+    final client = _AlwaysFailMediaClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerChatShell(
+              currentUserId: 'me',
+              currentUserName: 'Me',
+              conversations: [conversation],
+              users: const [user],
+              selectedConversationId: 'c1',
+              messages: const [],
+              composerController: composer,
+              messagesScrollController: scroll,
+              isSending: false,
+              isRecording: false,
+              onRefresh: () async {},
+              onLogout: () {},
+              onSelectConversation: (_) async {},
+              onOpenDirectChat: (_) async {},
+              onSend: () {},
+              onPickImage: () {},
+              onPickAudio: () {},
+              onToggleRecording: () {},
+              desktopBreakpoint: 200,
+              enablePackageMediaSending: true,
+              mediaChatClient: client,
+              mediaChatAuth: const ChatAuth(apiKey: 'k'),
+              mediaSenderId: 'me',
+              mediaPicker: _QueueingMediaPicker([
+                MessengerPickedMedia(
+                  file: File('failed.pdf'),
+                  messageType: MessageType.file,
+                  displayName: 'failed.pdf',
+                ),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    var composerBar =
+        tester.widget<MessengerComposerBar>(find.byType(MessengerComposerBar));
+    composerBar.onPickImage();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    composerBar =
+        tester.widget<MessengerComposerBar>(find.byType(MessengerComposerBar));
+    composerBar.onSend();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(client.sendAttempts, 1);
+    expect(find.text('failed.pdf'), findsWidgets);
+    expect(find.text('Retry'), findsOneWidget);
+
+    await tester.tap(find.text('Retry'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(client.sendAttempts, 2);
+    expect(find.text('Retry'), findsOneWidget);
   });
 
   testWidgets(
@@ -1106,8 +1262,7 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsWidgets);
   });
 
-  testWidgets(
-      'isListPaneRefreshing with non-empty inbox replaces list only',
+  testWidgets('isListPaneRefreshing with non-empty inbox replaces list only',
       (tester) async {
     final composer = TextEditingController();
     final scroll = ScrollController();
@@ -1551,7 +1706,8 @@ class _MobileDeleteThreadHarness extends StatefulWidget {
       _MobileDeleteThreadHarnessState();
 }
 
-class _MobileDeleteThreadHarnessState extends State<_MobileDeleteThreadHarness> {
+class _MobileDeleteThreadHarnessState
+    extends State<_MobileDeleteThreadHarness> {
   static const MessengerUser _peer =
       MessengerUser(id: 'u1', username: 'alice_jones');
 
@@ -1650,6 +1806,66 @@ class _NoopMediaClient extends ChatClient {
             socketUrl: 'https://example.com',
           ),
         );
+}
+
+class _AlwaysFailMediaClient extends ChatClient {
+  _AlwaysFailMediaClient()
+      : super(
+          config: const ChatServiceConfig(
+            apiBaseUrl: 'https://example.com',
+            socketUrl: 'https://example.com',
+          ),
+        );
+
+  int sendAttempts = 0;
+
+  @override
+  Future<ChatAttachment> uploadFile(
+    ChatAuth auth,
+    File file, {
+    void Function(int sent, int total)? onSendProgress,
+    CancelToken? cancelToken,
+  }) async {
+    onSendProgress?.call(1, 1);
+    return ChatAttachment(
+      url: file.path,
+      fileName: file.uri.pathSegments.isEmpty
+          ? 'attachment'
+          : file.uri.pathSegments.last,
+    );
+  }
+
+  @override
+  Future<ChatMessage> sendRestMessage(
+    ChatAuth auth, {
+    required String conversationId,
+    required String senderId,
+    required MessageType type,
+    String content = '',
+    List<ChatAttachment> attachments = const [],
+    String? replyToMessageId,
+  }) async {
+    sendAttempts++;
+    throw Exception('send failed');
+  }
+}
+
+class _PermissionDeniedRecorder implements MessengerAudioRecorder {
+  @override
+  bool get isRecording => false;
+
+  @override
+  Future<void> cancel() async {}
+
+  @override
+  Future<void> start() async {
+    throw const MessengerAudioRecordingException(
+      'Microphone access is required to record an audio.',
+    );
+  }
+
+  @override
+  Future<MessengerRecordedAudio?> stop() async => null;
 }
 
 /// Host defers updating [selectedConversationId] until after an async gap,

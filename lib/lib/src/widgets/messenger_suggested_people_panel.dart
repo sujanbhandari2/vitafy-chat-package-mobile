@@ -76,9 +76,9 @@ class MessengerSuggestedPeoplePanel extends StatefulWidget {
     this.onCreateGroupSelected,
     this.onCreateGroupRequested,
     this.isCreatingGroup = false,
-    this.groupSelectionButtonText = 'New group',
+    this.groupSelectionButtonText = '+ New group',
     this.groupSelectionActiveButtonText = 'Group mode',
-    this.groupCreateButtonText = 'Create group',
+    this.groupCreateButtonText = 'Create',
     this.groupCreateButtonBusyText = 'Creating…',
     this.groupCancelButtonText = 'Cancel',
     this.groupSelectionHelperText =
@@ -93,7 +93,7 @@ class MessengerSuggestedPeoplePanel extends StatefulWidget {
     this.groupNameRequiredErrorText = 'Enter a group name to continue.',
     this.defaultGroupNameWhenEmpty = 'Group',
     this.directory,
-  })  : assert(
+  }) : assert(
           groupMinSelectionCount > 0,
           'groupMinSelectionCount must be greater than zero.',
         );
@@ -511,7 +511,7 @@ class _MessengerSuggestedPeoplePanelState
               contentPadding: searchChrome.contentPadding,
               iconColor: searchChrome.iconColor,
               hintStyle: searchChrome.hintStyle,
-              inputTextStyle: searchChrome.typingStyle(theme),
+              inputTextStyle: searchChrome.inputTextStyle,
               errorText: _groupNameErrorText,
               onChanged: (_) {
                 if (_groupNameErrorText == null || !mounted) {
@@ -526,14 +526,10 @@ class _MessengerSuggestedPeoplePanelState
         SliverToBoxAdapter(
           child: _buildSelectedUsersSection(theme, selectedUsers),
         ),
-        const SliverToBoxAdapter(child: SizedBox(height: 10)),
-        SliverToBoxAdapter(
-          child: _buildGroupActions(theme, selectedUsers),
-        ),
       ],
       if (widget.showSearchField) ...[
         const SliverToBoxAdapter(child: SizedBox(height: 10)),
-        SliverToBoxAdapter(child: _buildSearchField(theme, searchChrome)),
+        SliverToBoxAdapter(child: _buildSearchField(searchChrome)),
       ],
       const SliverToBoxAdapter(child: SizedBox(height: 12)),
       ..._buildMainContentSlivers(
@@ -561,9 +557,12 @@ class _MessengerSuggestedPeoplePanelState
     return Semantics(
       container: true,
       label: widget.semanticsLabel,
-      child: Padding(
-        padding: widget.padding,
-        child: scrollView,
+      child: ColoredBox(
+        color: Colors.white,
+        child: Padding(
+          padding: widget.padding,
+          child: scrollView,
+        ),
       ),
     );
   }
@@ -597,7 +596,8 @@ class _MessengerSuggestedPeoplePanelState
       return [
         SliverFillRemaining(
           hasScrollBody: false,
-          child: widget.emptyBuilder?.call(context) ?? _buildDefaultEmpty(theme),
+          child:
+              widget.emptyBuilder?.call(context) ?? _buildDefaultEmpty(theme),
         ),
       ];
     }
@@ -652,49 +652,117 @@ class _MessengerSuggestedPeoplePanelState
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: widget.titleWidget ??
-                  Text(widget.titleText, style: defaultTitleStyle),
-            ),
-            if (_canCreateGroup) ...[
-              const SizedBox(width: 12),
-              _buildGroupModeToggleButton(theme),
-            ],
-          ],
-        ),
+        _buildHeaderActions(theme, defaultTitleStyle),
         const SizedBox(height: 4),
-        widget.helperWidget ?? Text(helper, style: defaultHelperStyle),
+        widget.helperWidget ??
+            Text(
+              helper,
+              style: defaultHelperStyle,
+              textAlign:
+                  _isGroupSelectionMode ? TextAlign.center : TextAlign.start,
+            ),
       ],
     );
   }
 
-  Widget _buildGroupModeToggleButton(MessengerThemeData theme) {
-    final isActive = _isGroupSelectionMode;
-    return TextButton(
-      onPressed: widget.isCreatingGroup ? null : _toggleGroupSelectionMode,
-      style: TextButton.styleFrom(
-        foregroundColor: isActive ? Colors.white : theme.primary,
-        backgroundColor:
-            isActive ? theme.primary : theme.primary.withValues(alpha: 0.12),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        minimumSize: Size.zero,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(999),
+  Widget _buildHeaderActions(MessengerThemeData theme, TextStyle titleStyle) {
+    if (!_canCreateGroup) {
+      return _buildCenteredTitle(titleStyle);
+    }
+    if (!_isGroupSelectionMode) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: widget.titleWidget ??
+                Text(
+                  widget.titleText,
+                  style: titleStyle,
+                ),
+          ),
+          TextButton(
+            onPressed:
+                widget.isCreatingGroup ? null : _toggleGroupSelectionMode,
+            style: TextButton.styleFrom(
+              foregroundColor: theme.primary,
+              backgroundColor: theme.primary.withValues(alpha: 0.12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            child: Text(
+              widget.groupSelectionButtonText,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    final selectedUsers = _resolveSelectedUsers(widget.users);
+    final canSubmit = !widget.isCreatingGroup &&
+        selectedUsers.length >= widget.groupMinSelectionCount;
+    return Row(
+      children: [
+        TextButton(
+          onPressed: widget.isCreatingGroup ? null : _resetGroupSelection,
+          style: TextButton.styleFrom(
+            foregroundColor: theme.subtleText,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: Text(
+            widget.groupCancelButtonText,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
         ),
-      ),
-      child: Text(
-        isActive
-            ? widget.groupSelectionActiveButtonText
-            : widget.groupSelectionButtonText,
-        style: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
+        Expanded(child: _buildCenteredTitle(titleStyle)),
+        FilledButton(
+          onPressed:
+              canSubmit ? () => _submitGroupSelection(selectedUsers) : null,
+          style: FilledButton.styleFrom(
+            backgroundColor: theme.primary,
+            foregroundColor: Colors.white,
+            disabledBackgroundColor:
+                widget.isCreatingGroup ? theme.primary : theme.border,
+            disabledForegroundColor:
+                widget.isCreatingGroup ? Colors.white : theme.subtleText,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: widget.isCreatingGroup
+              ? SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.1,
+                    color: Colors.white.withValues(alpha: 0.95),
+                  ),
+                )
+              : Text(
+                  widget.groupCreateButtonText,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
         ),
-      ),
+      ],
+    );
+  }
+
+  Widget _buildCenteredTitle(TextStyle titleStyle) {
+    return Center(
+      child: widget.titleWidget ??
+          Text(
+            widget.titleText,
+            style: titleStyle,
+            textAlign: TextAlign.center,
+          ),
     );
   }
 
@@ -705,7 +773,7 @@ class _MessengerSuggestedPeoplePanelState
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: theme.searchBackground,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: theme.border),
       ),
@@ -731,81 +799,27 @@ class _MessengerSuggestedPeoplePanelState
               ),
             )
           else
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: selectedUsers
-                  .map(
-                    (user) => _SelectedUserChip(
-                      user: user,
-                      onRemove: widget.isCreatingGroup
-                          ? null
-                          : () => _removeSelectedUser(user.id),
-                    ),
-                  )
-                  .toList(growable: false),
+            SizedBox(
+              height: 40,
+              child: ListView.separated(
+                primary: false,
+                shrinkWrap: true,
+                scrollDirection: Axis.horizontal,
+                itemCount: selectedUsers.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final user = selectedUsers[index];
+                  return _SelectedUserChip(
+                    user: user,
+                    onRemove: widget.isCreatingGroup
+                        ? null
+                        : () => _removeSelectedUser(user.id),
+                  );
+                },
+              ),
             ),
         ],
       ),
-    );
-  }
-
-  Widget _buildGroupActions(
-    MessengerThemeData theme,
-    List<MessengerUser> selectedUsers,
-  ) {
-    final busy = widget.isCreatingGroup;
-    final canSubmit = !busy &&
-        selectedUsers.length >= widget.groupMinSelectionCount;
-
-    return Row(
-      children: [
-        TextButton(
-          onPressed: busy ? null : _resetGroupSelection,
-          style: TextButton.styleFrom(
-            foregroundColor: theme.subtleText,
-            padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
-          ),
-          child: Text(
-            widget.groupCancelButtonText,
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
-        ),
-        const Spacer(),
-        FilledButton(
-          onPressed:
-              canSubmit ? () => _submitGroupSelection(selectedUsers) : null,
-          style: FilledButton.styleFrom(
-            backgroundColor: theme.primary,
-            foregroundColor: Colors.white,
-            disabledBackgroundColor: busy ? theme.primary : theme.border,
-            disabledForegroundColor: busy ? Colors.white : theme.subtleText,
-          ),
-          child: busy
-              ? Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.2,
-                        color: Colors.white.withValues(alpha: 0.95),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      widget.groupCreateButtonBusyText,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ],
-                )
-              : Text(
-                  widget.groupCreateButtonText,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-        ),
-      ],
     );
   }
 
@@ -870,16 +884,13 @@ class _MessengerSuggestedPeoplePanelState
     );
   }
 
-  Widget _buildSearchField(
-    MessengerThemeData theme,
-    _MessengerSearchFieldChrome chrome,
-  ) {
+  Widget _buildSearchField(_MessengerSearchFieldChrome chrome) {
     return MessengerListSearchField(
       controller: _searchFieldController,
       focusNode: _searchFocusNode,
       hintText: widget.searchHintText,
       hintStyle: chrome.hintStyle,
-      inputTextStyle: chrome.typingStyle(theme),
+      inputTextStyle: chrome.inputTextStyle,
       backgroundColor: chrome.backgroundColor,
       iconColor: chrome.iconColor,
       borderRadius: chrome.borderRadius,
@@ -906,20 +917,17 @@ class _MessengerSuggestedPeoplePanelState
     return _MessengerSearchFieldChrome(
       backgroundColor: widget.searchFieldBackgroundColor ??
           inherited?.backgroundColor ??
-          theme.searchBackground,
-      iconColor: widget.searchIconColor ??
-          inherited?.iconColor ??
-          theme.mutedText,
+          const Color(0xFFF3F4F6),
+      iconColor:
+          widget.searchIconColor ?? inherited?.iconColor ?? theme.mutedText,
       hintStyle: widget.searchHintTextStyle ??
           inherited?.hintStyle ??
           TextStyle(color: theme.mutedText),
       contentPadding:
           widget.searchFieldContentPadding ?? inherited?.contentPadding,
-      borderRadius: widget.searchFieldBorderRadius ??
-          inherited?.borderRadius ??
-          12,
-      inputTextStyle:
-          widget.searchInputTextStyle ?? inherited?.inputTextStyle,
+      borderRadius:
+          widget.searchFieldBorderRadius ?? inherited?.borderRadius ?? 12,
+      inputTextStyle: widget.searchInputTextStyle ?? inherited?.inputTextStyle,
     );
   }
 
@@ -974,7 +982,14 @@ class _MessengerSuggestedPeoplePanelState
               sepIndex < visibleUsers.length - 1) {
             return widget.separatorBuilder!(context, sepIndex);
           }
-          return SizedBox(height: widget.itemSpacing);
+          if (sepIndex < visibleUsers.length - 1) {
+            return const Divider(
+              height: 1,
+              thickness: 1,
+              color: Color(0xFFDADADA),
+            );
+          }
+          return const SizedBox(height: 8);
         },
         childCount: delegateChildCount,
       ),
@@ -1063,7 +1078,7 @@ class _MessengerSuggestedPeoplePanelState
         return;
       }
       setState(() {
-        _selectedUserIds = [..._selectedUserIds, id];
+        _selectedUserIds = [id, ..._selectedUserIds];
         _selectedUsersById[id] = user;
       });
       return;
@@ -1125,6 +1140,7 @@ class _MessengerSuggestedPeoplePanelState
     return source.where((user) {
       return user.username.toLowerCase().contains(q) ||
           user.roleLabel.toLowerCase().contains(q) ||
+          user.email.toLowerCase().contains(q) ||
           user.id.toLowerCase().contains(q);
     }).toList(growable: false);
   }
@@ -1146,13 +1162,6 @@ class _MessengerSearchFieldChrome {
   final double borderRadius;
   final EdgeInsetsGeometry? contentPadding;
   final TextStyle? inputTextStyle;
-
-  TextStyle typingStyle(MessengerThemeData theme) =>
-      inputTextStyle ??
-      TextStyle(
-        color: theme.bubbleOtherText,
-        fontSize: 14,
-      );
 }
 
 class _SelectedUserChip extends StatelessWidget {
@@ -1170,7 +1179,7 @@ class _SelectedUserChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: theme.surface,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: theme.border),
       ),
@@ -1224,7 +1233,8 @@ class _SuggestedUserRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
-    final subtitle = user.roleLabel.trim();
+    final role = user.roleLabel.trim();
+    final email = user.email.trim();
 
     return InkWell(
       onTap: isOpening ? null : onTap,
@@ -1245,20 +1255,30 @@ class _SuggestedUserRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    user.username,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14,
-                      color: theme.bubbleOtherText,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          user.username,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                            color: theme.bubbleOtherText,
+                          ),
+                        ),
+                      ),
+                      if (role.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        _SuggestedRoleChip(label: role),
+                      ],
+                    ],
                   ),
-                  if (subtitle.isNotEmpty) ...[
+                  if (email.isNotEmpty) ...[
                     const SizedBox(height: 2),
                     Text(
-                      subtitle,
+                      email,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -1276,14 +1296,6 @@ class _SuggestedUserRow extends StatelessWidget {
                 width: 18,
                 height: 18,
                 child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            else
-              Icon(
-                isSelectable
-                    ? Icons.add_circle_outline_rounded
-                    : Icons.chat_bubble_outline_rounded,
-                color: theme.primary,
-                size: 20,
               ),
           ],
         ),
@@ -1305,5 +1317,38 @@ class _SuggestedUserRow extends StatelessWidget {
       return part.substring(0, part.length >= 2 ? 2 : 1).toUpperCase();
     }
     return '${parts.first[0]}${parts[1][0]}'.toUpperCase();
+  }
+}
+
+class _SuggestedRoleChip extends StatelessWidget {
+  const _SuggestedRoleChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      alignment: Alignment.center,
+      constraints: const BoxConstraints(minHeight: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0F0F0),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: const Color(0xFFF0F0F0),
+        ),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: const Color(0xFF292929),
+          fontSize: 10.5,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
   }
 }

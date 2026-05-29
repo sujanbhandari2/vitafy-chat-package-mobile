@@ -67,9 +67,7 @@ class TenantUser {
         '';
     final accessToken = json['accessToken']?.toString().trim();
     // POST /chat/users always returns a JWT with `chatUserId`; some gateways omit `id` in JSON.
-    if (idStr.isEmpty &&
-        accessToken != null &&
-        accessToken.isNotEmpty) {
+    if (idStr.isEmpty && accessToken != null && accessToken.isNotEmpty) {
       idStr = _readChatUserIdFromJwt(accessToken) ?? '';
     }
     final provider = _firstNonEmptyString(json, const [
@@ -105,7 +103,13 @@ class TenantUser {
           DateTime.now(),
       avatarUrl: _firstNonEmptyString(
         json,
-        const ['avatarUrl', 'avatar_url', 'profile'],
+        const [
+          'avatarUrl',
+          'avatar_url',
+          'profile',
+          'profilePicture',
+          'profile_picture',
+        ],
       ),
       status: _firstNonEmptyString(json, const ['status']),
       accessToken: json['accessToken']?.toString(),

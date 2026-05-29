@@ -598,9 +598,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     final tenantScope = session.tenantScope;
     final registeredUser = session.currentUser;
     final sessionAuth = session.sessionAuth;
-    if (tenantScope == null ||
-        registeredUser == null ||
-        sessionAuth == null) {
+    if (tenantScope == null || registeredUser == null || sessionAuth == null) {
       setState(() {
         _isBootstrapping = false;
         _statusText = 'ChatSession is not bootstrapped yet.';
@@ -664,8 +662,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       return;
     }
 
-    for (final entry
-        in _remotePresenceStore!.onlineByUserId.value.entries) {
+    for (final entry in _remotePresenceStore!.onlineByUserId.value.entries) {
       _applyPresenceUpdate(entry.key, entry.value);
     }
 
@@ -932,7 +929,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       } catch (error, stackTrace) {
         _appendLog(
           'Refresh users failed',
-          data: {'error': error.toString(), 'stackTrace': stackTrace.toString()},
+          data: {
+            'error': error.toString(),
+            'stackTrace': stackTrace.toString()
+          },
         );
         if (!mounted) {
           return;
@@ -2115,8 +2115,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     _session = null;
     _isSocketConnected = false;
     if (_remotePresenceStore != null && _remotePresenceListener != null) {
-      _remotePresenceStore!
-          .onlineByUserId
+      _remotePresenceStore!.onlineByUserId
           .removeListener(_remotePresenceListener!);
     }
     _remotePresenceStore = null;
@@ -2314,7 +2313,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     if (index == -1) {
       next.insert(0, conversation);
     } else {
-      next[index] = conversation;
+      next[index] = _mergeConversationSnapshot(next[index], conversation);
     }
 
     if (!mounted) {
@@ -2324,6 +2323,89 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     setState(() {
       _conversations = next;
     });
+  }
+
+  Conversation _mergeConversationSnapshot(
+    Conversation existing,
+    Conversation incoming,
+  ) {
+    final participants = incoming.participants.isEmpty
+        ? existing.participants
+        : incoming.participants
+            .map((participant) => _mergeConversationParticipant(
+                  existing,
+                  participant,
+                ))
+            .toList(growable: false);
+
+    return Conversation(
+      id: incoming.id,
+      tenantId:
+          incoming.tenantId.isNotEmpty ? incoming.tenantId : existing.tenantId,
+      type: incoming.type.isNotEmpty ? incoming.type : existing.type,
+      title: (incoming.title?.trim().isNotEmpty ?? false)
+          ? incoming.title
+          : existing.title,
+      createdBy: (incoming.createdBy?.trim().isNotEmpty ?? false)
+          ? incoming.createdBy
+          : existing.createdBy,
+      createdAt: incoming.createdAt,
+      updatedAt: incoming.updatedAt.isAfter(existing.updatedAt)
+          ? incoming.updatedAt
+          : existing.updatedAt,
+      participants: participants,
+      unreadCount: incoming.unreadCount ?? existing.unreadCount,
+      latestMessage: incoming.latestMessage ?? existing.latestMessage,
+      latestMessageId: incoming.latestMessageId ?? existing.latestMessageId,
+      latestReaction: incoming.latestReaction ?? existing.latestReaction,
+      messageState: incoming.messageState ?? existing.messageState,
+      messageStatusByUserId: incoming.messageStatusByUserId.isNotEmpty
+          ? incoming.messageStatusByUserId
+          : existing.messageStatusByUserId,
+    );
+  }
+
+  ConversationParticipant _mergeConversationParticipant(
+    Conversation existing,
+    ConversationParticipant incoming,
+  ) {
+    final existingParticipant = existing.participants
+        .where((participant) =>
+            participant.user.id == incoming.user.id ||
+            participant.userId == incoming.userId)
+        .firstOrNull;
+    if (existingParticipant == null) {
+      return incoming;
+    }
+
+    final existingUser = existingParticipant.user;
+    final incomingUser = incoming.user;
+    return ConversationParticipant(
+      id: incoming.id.isNotEmpty ? incoming.id : existingParticipant.id,
+      userId: incoming.userId.isNotEmpty
+          ? incoming.userId
+          : existingParticipant.userId,
+      conversationId: incoming.conversationId.isNotEmpty
+          ? incoming.conversationId
+          : existingParticipant.conversationId,
+      user: ConversationParticipantUser(
+        id: incomingUser.id.isNotEmpty ? incomingUser.id : existingUser.id,
+        username: incomingUser.username.trim().isNotEmpty
+            ? incomingUser.username
+            : existingUser.username,
+        role: incomingUser.role,
+        email: (incomingUser.email?.trim().isNotEmpty ?? false)
+            ? incomingUser.email
+            : existingUser.email,
+        avatarUrl: (incomingUser.avatarUrl?.trim().isNotEmpty ?? false)
+            ? incomingUser.avatarUrl
+            : existingUser.avatarUrl,
+        status: (incomingUser.status?.trim().isNotEmpty ?? false)
+            ? incomingUser.status
+            : existingUser.status,
+        isOnline: incomingUser.isOnline || existingUser.isOnline,
+      ),
+    );
   }
 
   void _applyDeletedMessage(DeletedMessageEvent deletedMessage) {
@@ -2419,25 +2501,34 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
   void _applyReaction(String conversationId, MessageReaction reaction) {
     final messages = _messagesByConversation[conversationId];
-    if (messages == null) {
-      return;
+    List<ChatMessage>? nextMessages;
+    if (messages != null) {
+      final index =
+          messages.indexWhere((item) => item.id == reaction.messageId);
+      if (index != -1) {
+        final target = messages[index];
+        final nextReactions = List<MessageReaction>.from(target.reactions)
+          ..removeWhere((item) => item.userId == reaction.userId)
+          ..add(reaction);
+
+        nextMessages = List<ChatMessage>.from(messages);
+        nextMessages[index] = target.copyWith(reactions: nextReactions);
+      }
     }
-
-    final index = messages.indexWhere((item) => item.id == reaction.messageId);
-    if (index == -1) {
-      return;
-    }
-
-    final target = messages[index];
-    final nextReactions = List<MessageReaction>.from(target.reactions)
-      ..removeWhere((item) => item.userId == reaction.userId)
-      ..add(reaction);
-
-    final nextMessages = List<ChatMessage>.from(messages);
-    nextMessages[index] = target.copyWith(reactions: nextReactions);
 
     setState(() {
-      _messagesByConversation[conversationId] = nextMessages;
+      if (nextMessages != null) {
+        _messagesByConversation[conversationId] = nextMessages;
+      }
+      _conversations = _conversations
+          .map(
+            (conversation) => _mergeConversationWithReaction(
+              conversation,
+              conversationId: conversationId,
+              reaction: reaction,
+            ),
+          )
+          .toList(growable: false);
     });
   }
 
@@ -2565,6 +2656,48 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     );
   }
 
+  Conversation _mergeConversationWithReaction(
+    Conversation conversation, {
+    required String conversationId,
+    required MessageReaction reaction,
+  }) {
+    if (conversation.id != conversationId) {
+      return conversation;
+    }
+    final candidate = _latestReactionFromMessageReaction(reaction);
+    final previous = conversation.latestReaction;
+    if (previous != null && !candidate.createdAt.isAfter(previous.createdAt)) {
+      return conversation;
+    }
+    final nextUpdatedAt = candidate.createdAt.isAfter(conversation.updatedAt)
+        ? candidate.createdAt
+        : conversation.updatedAt;
+    return _copyConversation(
+      conversation,
+      updatedAt: nextUpdatedAt,
+      latestReaction: candidate,
+    );
+  }
+
+  LatestReaction _latestReactionFromMessageReaction(MessageReaction reaction) {
+    return LatestReaction(
+      id: reaction.id,
+      messageId: reaction.messageId,
+      chatUserId: reaction.userId,
+      reactionType: reaction.reactionType,
+      userName: _reactionUserName(reaction),
+      createdAt: reaction.createdAt ?? DateTime.now(),
+    );
+  }
+
+  String _reactionUserName(MessageReaction reaction) {
+    final fromPayload = reaction.user?.name?.trim() ?? '';
+    if (fromPayload.isNotEmpty) {
+      return fromPayload;
+    }
+    return _nameForUser(reaction.userId);
+  }
+
   bool _shouldReplaceConversationLatest(
     ChatMessage? currentLatest,
     ChatMessage candidate,
@@ -2591,6 +2724,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     int? unreadCount,
     ChatMessage? latestMessage,
     String? latestMessageId,
+    LatestReaction? latestReaction,
     Map<String, ConversationMessageStatus>? messageStatusByUserId,
     ConversationMessageStatus? messageState,
   }) {
@@ -2606,6 +2740,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       unreadCount: unreadCount ?? conversation.unreadCount,
       latestMessage: latestMessage ?? conversation.latestMessage,
       latestMessageId: latestMessageId ?? conversation.latestMessageId,
+      latestReaction: latestReaction ?? conversation.latestReaction,
       messageState: messageState ?? conversation.messageState,
       messageStatusByUserId:
           messageStatusByUserId ?? conversation.messageStatusByUserId,
@@ -2671,6 +2806,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                   .toList(),
               latestMessage: conversation.latestMessage,
               latestMessageId: conversation.latestMessageId,
+              latestReaction: conversation.latestReaction,
               messageState: conversation.messageState,
               messageStatusByUserId: conversation.messageStatusByUserId,
             ),
@@ -2782,6 +2918,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       id: user.id,
       username: user.displayName,
       roleLabel: user.role.label,
+      email: user.email,
       isOnline: user.isOnline,
       avatarUrl: user.avatarUrl,
     );
@@ -2798,6 +2935,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       id: a.userId.trim(),
       username: a.name.trim().isNotEmpty ? a.name.trim() : a.email.trim(),
       roleLabel: (a.chatUserRole ?? a.type).trim(),
+      email: a.email.trim(),
       isOnline: false,
       avatarUrl: pic.isEmpty ? null : pic,
     );
@@ -2808,9 +2946,31 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       id: user.id,
       username: user.username,
       roleLabel: user.role.label,
+      email: user.email?.trim() ?? '',
       isOnline: user.isOnline,
       avatarUrl: user.avatarUrl,
     );
+  }
+
+  MessengerUser _mapConversationPeerUser(ConversationParticipant participant) {
+    final mapped = _mapParticipantUser(participant.user);
+    return MessengerUser(
+      id: mapped.id,
+      username: mapped.username,
+      roleLabel: mapped.roleLabel,
+      email: mapped.email,
+      isOnline: mapped.isOnline,
+      avatarUrl: _avatarForParticipant(participant),
+    );
+  }
+
+  String? _avatarForParticipant(ConversationParticipant participant) {
+    final participantAvatar = participant.user.avatarUrl?.trim();
+    if (participantAvatar != null && participantAvatar.isNotEmpty) {
+      return participantAvatar;
+    }
+    return _avatarForUser(participant.user.id) ??
+        _avatarForUser(participant.userId);
   }
 
   MessengerConversation _mapConversation(
@@ -2823,18 +2983,26 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     final localLatest = messages.isEmpty ? null : messages.last;
     final restLatest = conversation.latestMessage;
     final previewSource = _newestChatMessage(localLatest, restLatest);
+    final latestReaction = conversation.latestReaction;
+    final reactionIsLatest = latestReaction != null &&
+        (previewSource == null ||
+            latestReaction.createdAt.isAfter(previewSource.createdAt));
     final subtitle = previewSource == null
         ? '${conversation.type} conversation'
         : _messagePreview(previewSource);
     final activityCandidate =
         _newestDateTime(localLatest?.createdAt, restLatest?.createdAt);
-    final lastActivityAt = activityCandidate != null &&
-            activityCandidate.isAfter(conversation.updatedAt)
-        ? activityCandidate
+    final latestActivityCandidate =
+        _newestDateTime(activityCandidate, latestReaction?.createdAt);
+    final lastActivityAt = latestActivityCandidate != null &&
+            latestActivityCandidate.isAfter(conversation.updatedAt)
+        ? latestActivityCandidate
         : conversation.updatedAt;
     final others = conversation.participants
         .where((participant) => participant.user.id != _currentUser?.id)
         .toList();
+    final directAvatarUrl =
+        others.length == 1 ? _avatarForParticipant(others.first) : null;
 
     return MessengerConversation(
       id: conversation.id,
@@ -2846,13 +3014,19 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       isGlobal: conversation.isGlobal,
       isGroup: conversation.type.toUpperCase() == 'GROUP',
       unreadCount: unreadMap[conversation.id] ?? 0,
-      avatarUrl: others.length == 1 ? others.first.user.avatarUrl : null,
+      avatarUrl: directAvatarUrl,
       isOnline: others.any((participant) => participant.user.isOnline),
-      peerUsers: others
-          .map((p) => _mapParticipantUser(p.user))
-          .toList(growable: false),
+      peerUsers: others.map(_mapConversationPeerUser).toList(growable: false),
       apiRank: orderSnapshot.apiRank[conversation.id],
       promotedAt: orderSnapshot.promotedAt[conversation.id],
+      latestReaction: reactionIsLatest
+          ? MessengerConversationLatestReaction(
+              chatUserId: latestReaction.chatUserId,
+              reactionType: latestReaction.reactionType,
+              userName: _displayNameForReaction(conversation, latestReaction),
+              createdAt: latestReaction.createdAt,
+            )
+          : null,
     );
   }
 
@@ -3105,6 +3279,31 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       return a;
     }
     return a.isBefore(b) ? b : a;
+  }
+
+  String _displayNameForReaction(
+    Conversation conversation,
+    LatestReaction reaction,
+  ) {
+    final fromReaction = reaction.userName.trim();
+    if (fromReaction.isNotEmpty) {
+      return fromReaction;
+    }
+
+    final user =
+        _users.where((item) => item.id == reaction.chatUserId).firstOrNull;
+    if (user != null) {
+      return user.displayName;
+    }
+
+    final participant = conversation.participants
+        .where((item) => item.user.id == reaction.chatUserId)
+        .firstOrNull;
+    if (participant != null) {
+      return participant.user.username;
+    }
+
+    return _nameForUser(reaction.chatUserId);
   }
 
   String _senderName(ChatMessage message) {
@@ -3524,7 +3723,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                             setState(() {
                               _statusText = 'Media send failed: $error';
                             });
-                            _showSnack('Media send failed: $error');
                           },
                           onMediaMessageSent: (_) {
                             setState(() {

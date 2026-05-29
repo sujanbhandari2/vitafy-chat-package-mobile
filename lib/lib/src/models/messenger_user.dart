@@ -3,6 +3,7 @@ class MessengerUser {
     required this.id,
     required this.username,
     this.roleLabel = '',
+    this.email = '',
     this.isOnline = false,
     this.avatarUrl,
   });
@@ -10,6 +11,7 @@ class MessengerUser {
   final String id;
   final String username;
   final String roleLabel;
+  final String email;
   final bool isOnline;
   final String? avatarUrl;
 }

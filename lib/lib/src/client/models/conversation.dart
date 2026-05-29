@@ -9,6 +9,81 @@ ChatMessage? _latestMessageFromJson(Map<String, dynamic> json) {
   return ChatMessage.fromJson(Map<String, dynamic>.from(raw));
 }
 
+LatestReaction? _latestReactionFromJson(Map<String, dynamic> json) {
+  final raw = json['latestReaction'] ?? json['latest_reaction'];
+  if (raw is! Map) {
+    return null;
+  }
+  final map = Map<String, dynamic>.from(raw);
+  final userMap =
+      map['user'] is Map ? Map<String, dynamic>.from(map['user'] as Map) : null;
+  final id = _trimToNull(map['id']);
+  final messageId = _trimToNull(map['messageId'] ?? map['message_id']);
+  final chatUserId = _trimToNull(map['chatUserId'] ??
+      map['chat_user_id'] ??
+      map['userId'] ??
+      map['user_id'] ??
+      userMap?['id']);
+  final createdAt = DateTime.tryParse(
+    _trimToNull(map['createdAt'] ?? map['created_at']) ?? '',
+  );
+  if (id == null ||
+      messageId == null ||
+      chatUserId == null ||
+      createdAt == null) {
+    return null;
+  }
+  return LatestReaction.fromJson(map);
+}
+
+/// Most recent reaction snapshot for conversation-list previews.
+class LatestReaction {
+  const LatestReaction({
+    required this.id,
+    required this.messageId,
+    required this.chatUserId,
+    required this.reactionType,
+    required this.userName,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String messageId;
+  final String chatUserId;
+  final String reactionType;
+  final String userName;
+  final DateTime createdAt;
+
+  factory LatestReaction.fromJson(Map<String, dynamic> json) {
+    final rawUser = json['user'];
+    final userMap = rawUser is Map ? Map<String, dynamic>.from(rawUser) : null;
+    final chatUserId = _trimToNull(json['chatUserId'] ??
+            json['chat_user_id'] ??
+            json['userId'] ??
+            json['user_id'] ??
+            userMap?['id']) ??
+        '';
+    final userName = _trimToNull(json['userName'] ??
+            json['user_name'] ??
+            userMap?['name'] ??
+            userMap?['username'] ??
+            userMap?['email']) ??
+        '';
+    return LatestReaction(
+      id: _trimToNull(json['id']) ?? '',
+      messageId: _trimToNull(json['messageId'] ?? json['message_id']) ?? '',
+      chatUserId: chatUserId,
+      reactionType:
+          _trimToNull(json['reactionType'] ?? json['reaction_type']) ?? '👍',
+      userName: userName,
+      createdAt: DateTime.tryParse(
+            _trimToNull(json['createdAt'] ?? json['created_at']) ?? '',
+          ) ??
+          DateTime.now(),
+    );
+  }
+}
+
 /// Per-user read/delivery pointers for a conversation.
 class ConversationMessageStatus {
   const ConversationMessageStatus({
@@ -58,6 +133,7 @@ class Conversation {
     this.unreadCount,
     this.latestMessage,
     this.latestMessageId,
+    this.latestReaction,
     this.messageState,
     this.messageStatusByUserId = const <String, ConversationMessageStatus>{},
   });
@@ -80,6 +156,9 @@ class Conversation {
   /// Latest message id on the conversation. Falls back to [latestMessage]?.id
   /// when the server only ships the embedded message.
   final String? latestMessageId;
+
+  /// Most recent reaction on the conversation from REST list payloads.
+  final LatestReaction? latestReaction;
 
   /// Current user's read/delivery pointers from REST list `messageState`.
   final ConversationMessageStatus? messageState;
@@ -203,6 +282,7 @@ class Conversation {
       participants: participants,
       latestMessage: latest,
       latestMessageId: (latestId == null || latestId.isEmpty) ? null : latestId,
+      latestReaction: _latestReactionFromJson(json),
       messageState: _messageStateFromJson(json),
       messageStatusByUserId: _messageStatusFromJson(json, rawParticipants),
     );
@@ -331,7 +411,10 @@ class ConversationParticipantUser {
   final bool isOnline;
 
   factory ConversationParticipantUser.fromJson(Map<String, dynamic> json) {
-    final rawRole = json['role']?.toString();
+    final rawRole = _firstNonEmpty(
+      json,
+      const ['externalUserRole', 'external_user_role', 'role'],
+    );
     final idStr =
         _firstNonEmpty(json, const ['id', 'chatUserId', 'chat_user_id'])
                 ?.trim() ??
@@ -344,7 +427,13 @@ class ConversationParticipantUser {
       email: _firstNonEmpty(json, const ['email']),
       avatarUrl: _firstNonEmpty(
         json,
-        const ['avatarUrl', 'avatar_url'],
+        const [
+          'avatarUrl',
+          'avatar_url',
+          'profile',
+          'profilePicture',
+          'profile_picture',
+        ],
       ),
       status: _firstNonEmpty(json, const ['status']),
       isOnline:

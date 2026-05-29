@@ -367,6 +367,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Care team'), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('groupConversationAvatar')), findsOneWidget);
+    expect(find.text('A'), findsOneWidget);
+    expect(find.text('+2'), findsOneWidget);
     expect(find.text('Alice Jones'), findsNothing);
     expect(find.text('Bob Smith'), findsNothing);
     expect(find.text('Cara Doe'), findsNothing);
@@ -576,6 +580,92 @@ void main() {
     expect(find.byType(FilledButton), findsNothing);
   });
 
+  testWidgets('shows role chip next to user name when role is present',
+      (tester) async {
+    const nurseUser = MessengerUser(
+      id: 'n1',
+      username: 'alex_green',
+      roleLabel: 'Nurse',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 420,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [nurseUser],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Alex Green'), findsOneWidget);
+    expect(find.text('Nurse'), findsWidgets);
+  });
+
+  testWidgets('start new chat rows show role chip and email', (tester) async {
+    const nurseUser = MessengerUser(
+      id: 'n1',
+      username: 'alex_green',
+      roleLabel: 'Nurse',
+      email: 'alex@example.com',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 420,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [nurseUser],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+                showHeaderComposeButton: true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.edit_square));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Start New Chat'), findsOneWidget);
+    expect(find.text('Nurse'), findsWidgets);
+    expect(find.text('alex@example.com'), findsOneWidget);
+  });
+
   testWidgets('pull to refresh invokes onRefresh', (tester) async {
     const alice = MessengerUser(id: 'a', username: 'alice');
     var refreshCount = 0;
@@ -661,6 +751,63 @@ void main() {
     expect(find.text('alice'), findsNothing);
   });
 
+  testWidgets('list keeps bottom clearance when start-chat FAB is visible',
+      (tester) async {
+    Future<void> pumpList({required bool showFab}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MessengerTheme(
+            data: const MessengerThemeData(),
+            child: Scaffold(
+              body: SizedBox(
+                height: 520,
+                width: 360,
+                child: MessengerConversationList(
+                  currentUserName: 'me',
+                  conversations: [
+                    MessengerConversation(
+                      id: 'c1',
+                      title: 'Chat 1',
+                      subtitle: 'Hello',
+                      avatarLabel: 'C1',
+                      createdAt: DateTime.utc(2026, 1, 1),
+                      peerUsers: const [
+                        MessengerUser(id: 'a', username: 'alice_jones'),
+                      ],
+                    ),
+                  ],
+                  users: const [
+                    MessengerUser(id: 'a', username: 'alice_jones')
+                  ],
+                  selectedConversationId: null,
+                  openingDirectUserId: '',
+                  onRefresh: () async {},
+                  onLogout: () {},
+                  onOpenDirectChat: (_) async {},
+                  onSelectConversation: (_) async {},
+                  searchVisibility: MessengerSearchVisibility.never,
+                  showStartChatFab: showFab,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await pumpList(showFab: false);
+    final noFabListView = tester.widget<ListView>(find.byType(ListView).first);
+    final noFabPadding = noFabListView.padding!.resolve(TextDirection.ltr);
+
+    await pumpList(showFab: true);
+    final withFabListView =
+        tester.widget<ListView>(find.byType(ListView).first);
+    final withFabPadding = withFabListView.padding!.resolve(TextDirection.ltr);
+
+    expect(withFabPadding.bottom, greaterThan(noFabPadding.bottom));
+  });
+
   testWidgets('start-new-chat bottom sheet supports group creation',
       (tester) async {
     const alice = MessengerUser(id: 'a', username: 'alice_jones');
@@ -706,24 +853,72 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Start New Chat'), findsOneWidget);
-    expect(find.text('New group'), findsOneWidget);
+    expect(find.text('+ New group'), findsOneWidget);
 
-    await tester.tap(find.text('New group'));
+    await tester.tap(find.text('+ New group'));
     await tester.pumpAndSettle();
 
     expect(find.text('Selected people (0)'), findsOneWidget);
-    await tester.tap(find.widgetWithText(FilledButton, 'Add').first);
+    await tester.tap(find.text('Alice Jones').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Add').first);
+    await tester.tap(find.text('Bob Smith').last);
     await tester.pumpAndSettle();
 
     expect(find.text('Selected people (2)'), findsOneWidget);
 
-    await tester.tap(find.text('Create group'));
+    await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
 
-    expect(createdIds, ['a', 'b']);
+    expect(createdIds, ['b', 'a']);
     expect(find.text('Start New Chat'), findsNothing);
+  });
+
+  testWidgets('start-new-chat sheet remains visible with keyboard open',
+      (tester) async {
+    addTearDown(() {
+      tester.view.reset();
+    });
+    tester.view
+      ..physicalSize = const Size(390, 844)
+      ..devicePixelRatio = 1
+      ..padding = const FakeViewPadding(top: 47, bottom: 34)
+      ..viewInsets = const FakeViewPadding(bottom: 336);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 844,
+              width: 390,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [
+                  MessengerUser(id: 'a', username: 'alice_jones'),
+                ],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showHeaderComposeButton: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add_rounded));
+    await tester.pumpAndSettle();
+
+    final titleTop = tester.getTopLeft(find.text('Start New Chat')).dy;
+    expect(titleTop, greaterThan(0));
   });
 
   testWidgets('start-new-chat group creation allows one selected peer',
@@ -766,16 +961,134 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.add_rounded));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New group'));
+    await tester.tap(find.text('+ New group'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Add').first);
+    await tester.tap(find.text('Alice Jones').last);
     await tester.pumpAndSettle();
 
     expect(find.text('Selected people (1)'), findsOneWidget);
-    await tester.tap(find.text('Create group'));
+    await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
 
     expect(createdIds, ['a']);
+  });
+
+  testWidgets('group mode scrolls selected-users section with list',
+      (tester) async {
+    final users = List<MessengerUser>.generate(
+      24,
+      (index) => MessengerUser(
+        id: 'u$index',
+        username: 'user_${index + 1}',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 560,
+              width: 390,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: users,
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onCreateGroupSelected: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showHeaderComposeButton: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add_rounded));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('+ New group'));
+    await tester.pumpAndSettle();
+
+    for (var i = 0; i < 8; i++) {
+      final userFinder = find.text('User ${i + 1}').last;
+      await tester.ensureVisible(userFinder);
+      await tester.tap(userFinder);
+      await tester.pumpAndSettle();
+    }
+
+    expect(find.text('Selected people (8)'), findsOneWidget);
+    final before = tester.getTopLeft(find.text('Selected people (8)')).dy;
+
+    await tester.drag(
+        find.byType(SingleChildScrollView), const Offset(0, -220));
+    await tester.pumpAndSettle();
+
+    final after = tester.getTopLeft(find.text('Selected people (8)')).dy;
+    expect(after, lessThanOrEqualTo(before));
+  });
+
+  testWidgets('group mode empty search keeps bottom sheet content tall',
+      (tester) async {
+    addTearDown(() {
+      tester.view.reset();
+    });
+    tester.view
+      ..physicalSize = const Size(390, 844)
+      ..devicePixelRatio = 1
+      ..padding = const FakeViewPadding(top: 47, bottom: 34)
+      ..viewInsets = const FakeViewPadding(bottom: 336);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 844,
+              width: 390,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [
+                  MessengerUser(id: 'a', username: 'alice_jones'),
+                ],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onCreateGroupSelected: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showHeaderComposeButton: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add_rounded));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('+ New group'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).last, 'zzzz-not-found');
+    await tester.pumpAndSettle();
+
+    expect(find.text('No people match your search.'), findsOneWidget);
+    final messageBottom =
+        tester.getBottomLeft(find.text('No people match your search.')).dy;
+    expect(messageBottom, lessThan(844 - 336));
   });
 
   testWidgets('group rows are interleaved by latest activity', (tester) async {
@@ -876,28 +1189,28 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.add_rounded));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New group'));
+    await tester.tap(find.text('+ New group'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Add').first);
+    await tester.tap(find.text('Alice Jones').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Add').first);
+    await tester.tap(find.text('Bob Smith').last);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Create group'));
+    await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
 
     expect(find.text('Enter a group name to continue.'), findsOneWidget);
     expect(request, isNull);
 
     await tester.enterText(find.byType(TextField).first, 'Clinical Team');
-    await tester.tap(find.text('Create group'));
+    await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
 
     expect(request, isNotNull);
     expect(request!.groupName, 'Clinical Team');
     expect(
       request!.selectedUsers.map((user) => user.id).toList(growable: false),
-      ['a', 'b'],
+      ['b', 'a'],
     );
   });
 
@@ -999,12 +1312,12 @@ void main() {
     await tester.tap(find.byIcon(Icons.add_rounded));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('New group'));
+    await tester.tap(find.text('+ New group'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Add').first);
+    await tester.tap(find.text('Alice Jones').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Add').first);
+    await tester.tap(find.text('Bob Smith').last);
     await tester.pumpAndSettle();
     expect(find.text('Selected people (2)'), findsOneWidget);
 
@@ -1015,10 +1328,10 @@ void main() {
 
     expect(find.text('Selected people (2)'), findsOneWidget);
 
-    await tester.tap(find.text('Create group'));
+    await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
 
-    expect(created.map((user) => user.id).toList(), ['a', 'b']);
+    expect(created.map((user) => user.id).toList(), ['b', 'a']);
     expect(find.text('Start New Chat'), findsNothing);
   });
 }

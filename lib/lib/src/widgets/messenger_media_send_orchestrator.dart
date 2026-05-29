@@ -368,17 +368,18 @@ class DefaultMessengerAudioRecorder implements MessengerAudioRecorder {
 
   Future<bool> _requestMicrophonePermissionWithRetry() async {
     try {
-      final first = await Permission.microphone.request();
-      if (first.isGranted) {
+      final currentStatus = await Permission.microphone.status;
+      if (currentStatus.isGranted) {
         return true;
       }
-      // Retry once to re-trigger the OS prompt where possible.
-      final second = await Permission.microphone.request();
-      if (second.isGranted) {
+      if (currentStatus.isPermanentlyDenied || currentStatus.isRestricted) {
+        return false;
+      }
+      final requestedStatus = await Permission.microphone.request();
+      if (requestedStatus.isGranted) {
         return true;
       }
-      // Keep record plugin state in sync when permission is granted externally.
-      return await _recorder.hasPermission();
+      return false;
     } catch (_) {
       return false;
     }

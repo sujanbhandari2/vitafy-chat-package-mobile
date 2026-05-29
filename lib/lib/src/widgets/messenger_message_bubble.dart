@@ -39,6 +39,8 @@ class MessengerMessageBubble extends StatefulWidget {
     this.onSwipeToReply,
     this.attachmentCaptionTextStyle,
     this.packageDialogTheme,
+    this.showDeliveryStatus = true,
+    this.onRetryUpload,
   });
 
   final MessengerChatMessage message;
@@ -49,6 +51,7 @@ class MessengerMessageBubble extends StatefulWidget {
   final Future<void> Function(String messageId, String reactionType)?
       onRemoveReaction;
   final FutureOr<void> Function()? onDelete;
+
   /// When set with [canEdit], long-press shows an "Edit message" action (text only).
   final VoidCallback? onEdit;
   final bool canEdit;
@@ -58,6 +61,7 @@ class MessengerMessageBubble extends StatefulWidget {
   final IconData deleteActionIcon;
   final TextStyle deleteActionTextStyle;
   final ValueChanged<MessengerChatMessage>? onSwipeToReply;
+
   /// Merged onto the default caption style under attachment payloads (image,
   /// video, file, voice). Omitted fields keep theme-derived defaults.
   final TextStyle? attachmentCaptionTextStyle;
@@ -65,6 +69,8 @@ class MessengerMessageBubble extends StatefulWidget {
   /// Merged with [Theme.of] for package dialogs opened from this bubble
   /// (e.g. image preview). See [MessengerChatShell.packageDialogTheme].
   final ThemeData? packageDialogTheme;
+  final bool showDeliveryStatus;
+  final VoidCallback? onRetryUpload;
 
   @override
   State<MessengerMessageBubble> createState() => _MessengerMessageBubbleState();
@@ -82,8 +88,7 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
         widget.isMine ? theme.bubbleMineText : theme.bubbleOtherText;
     final timeColor =
         widget.isMine ? theme.bubbleMineTime : theme.bubbleOtherTime;
-    final attachmentCaptionStyle =
-        _mergedAttachmentCaptionStyle(
+    final attachmentCaptionStyle = _mergedAttachmentCaptionStyle(
       textColor: textColor,
       override: widget.attachmentCaptionTextStyle,
     );
@@ -174,19 +179,19 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Text(
-                                      DateFormat('h:mm a')
-                                          .format(widget.message.createdAt),
+                                      DateFormat('h:mm a').format(
+                                          widget.message.createdAt.toLocal()),
                                       style: TextStyle(
                                         color: timeColor,
                                         fontSize: 10.5,
                                         fontWeight: FontWeight.w500,
                                       ),
                                     ),
-                                    if (widget.isMine) ...[
+                                    if (widget.isMine &&
+                                        widget.showDeliveryStatus) ...[
                                       const SizedBox(width: 4),
                                       _DeliveryTick(
-                                        status:
-                                            widget.message.deliveryStatus,
+                                        status: widget.message.deliveryStatus,
                                         bubbleColor: bubbleColor,
                                       ),
                                     ],
@@ -202,11 +207,42 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
                                     child: LinearProgressIndicator(
                                       minHeight: 3,
                                       value: widget.message.uploadProgress,
-                                      backgroundColor: timeColor
-                                          .withValues(alpha: 0.2),
-                                      valueColor:
-                                          AlwaysStoppedAnimation<Color>(
+                                      backgroundColor:
+                                          timeColor.withValues(alpha: 0.2),
+                                      valueColor: AlwaysStoppedAnimation<Color>(
                                         timeColor,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (widget.message.isUploadFailed &&
+                                  widget.isMine &&
+                                  widget.onRetryUpload != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: Align(
+                                    alignment: Alignment.centerRight,
+                                    child: TextButton.icon(
+                                      style: TextButton.styleFrom(
+                                        visualDensity: VisualDensity.compact,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 4,
+                                        ),
+                                      ),
+                                      onPressed: widget.onRetryUpload,
+                                      icon: Icon(
+                                        Icons.refresh_rounded,
+                                        size: 16,
+                                        color: timeColor,
+                                      ),
+                                      label: Text(
+                                        'Retry',
+                                        style: TextStyle(
+                                          color: timeColor,
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 12,
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -215,54 +251,55 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
                           ),
                         ),
                       ),
-                    if (widget.message.reactions.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Wrap(
-                        spacing: 4,
-                        children: widget.message.reactions.map(
-                          (reaction) {
-                            final canRemove = widget.onRemoveReaction != null &&
-                                widget.currentUserId != null &&
-                                reaction.userId == widget.currentUserId;
-                            final chip = Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 1,
-                              ),
-                              decoration: BoxDecoration(
-                                color: theme.reactionBackground,
-                                borderRadius: BorderRadius.circular(999),
-                                border: Border.all(
-                                  color: theme.reactionBorder,
+                      if (widget.message.reactions.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Wrap(
+                          spacing: 4,
+                          children: widget.message.reactions.map(
+                            (reaction) {
+                              final canRemove =
+                                  widget.onRemoveReaction != null &&
+                                      widget.currentUserId != null &&
+                                      reaction.userId == widget.currentUserId;
+                              final chip = Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 1,
                                 ),
-                              ),
-                              child: Text(
-                                reaction.reactionType,
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            );
-                            if (!canRemove) {
-                              return chip;
-                            }
-                            return Material(
-                              color: Colors.transparent,
-                              child: InkWell(
-                                onTap: () => widget.onRemoveReaction!(
-                                  widget.message.id,
+                                decoration: BoxDecoration(
+                                  color: theme.reactionBackground,
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(
+                                    color: theme.reactionBorder,
+                                  ),
+                                ),
+                                child: Text(
                                   reaction.reactionType,
+                                  style: const TextStyle(fontSize: 12),
                                 ),
-                                borderRadius: BorderRadius.circular(999),
-                                child: chip,
-                              ),
-                            );
-                          },
-                        ).toList(),
-                      ),
+                              );
+                              if (!canRemove) {
+                                return chip;
+                              }
+                              return Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  onTap: () => widget.onRemoveReaction!(
+                                    widget.message.id,
+                                    reaction.reactionType,
+                                  ),
+                                  borderRadius: BorderRadius.circular(999),
+                                  child: chip,
+                                ),
+                              );
+                            },
+                          ).toList(),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
-            ),
             ),
           ],
         ),
@@ -627,6 +664,7 @@ class _BubbleQuotedReply extends StatelessWidget {
   final Color textColor;
   final Color mutedColor;
   final Color accentColor;
+
   /// Caps quote text lines so [IntrinsicWidth] can shrink-wrap short previews.
   final double maxTextWidth;
 
@@ -721,8 +759,8 @@ class _DeliveryTick extends StatelessWidget {
   final MessengerDeliveryStatus status;
   final Color bubbleColor;
 
-  static const double _chipSize = 18;
-  static const double _iconSize = 13;
+  static const double _chipSize = 20;
+  static const double _iconSize = 16;
 
   @override
   Widget build(BuildContext context) {
@@ -1090,7 +1128,8 @@ class _MessageContent extends StatelessWidget {
     required List<String> urls,
     required int initialIndex,
   }) {
-    final sources = urls.map((u) => u.trim()).where((u) => u.isNotEmpty).toList();
+    final sources =
+        urls.map((u) => u.trim()).where((u) => u.isNotEmpty).toList();
     if (sources.isEmpty) {
       return;
     }
@@ -1184,9 +1223,7 @@ class _MessageImageStack extends StatelessWidget {
 
   Widget _stackedImage(String url, int index, {required bool showLoader}) {
     final yOffset = index * 3.0;
-    final rotate = index == 0
-        ? 0.0
-        : (index.isOdd ? -0.035 : 0.035);
+    final rotate = index == 0 ? 0.0 : (index.isOdd ? -0.035 : 0.035);
     final xOffset = index == 0 ? 0.0 : (index.isOdd ? -5.0 : 5.0);
 
     return Transform.translate(
@@ -1226,7 +1263,8 @@ class _MessengerImageLightbox extends StatefulWidget {
   final int initialIndex;
 
   @override
-  State<_MessengerImageLightbox> createState() => _MessengerImageLightboxState();
+  State<_MessengerImageLightbox> createState() =>
+      _MessengerImageLightboxState();
 }
 
 class _MessengerImageLightboxState extends State<_MessengerImageLightbox> {
@@ -1314,35 +1352,35 @@ class _MessengerImageLightboxState extends State<_MessengerImageLightbox> {
             child: Padding(
               padding: const EdgeInsets.only(top: 56),
               child: GestureDetector(
-              onTap: () => Navigator.of(context).pop(),
-              child: PageView.builder(
-                controller: _pageController,
-                itemCount: widget.sources.length,
-                onPageChanged: (page) => setState(() => _index = page),
-                itemBuilder: (context, pageIndex) {
-                  return Center(
-                    child: GestureDetector(
-                      onTap: () {},
-                      child: InteractiveViewer(
-                        minScale: 0.8,
-                        maxScale: 4.0,
-                        child: MessengerCachedImage(
-                          source: widget.sources[pageIndex],
-                          width: size.width,
-                          height: size.height,
-                          containFit: true,
-                          borderRadius: BorderRadius.zero,
-                          placeholderColor: Colors.white12,
-                          loaderColor: Colors.white70,
-                          loaderStrokeWidth: 3,
-                          errorMessage: 'Unable to load image',
+                onTap: () => Navigator.of(context).pop(),
+                child: PageView.builder(
+                  controller: _pageController,
+                  itemCount: widget.sources.length,
+                  onPageChanged: (page) => setState(() => _index = page),
+                  itemBuilder: (context, pageIndex) {
+                    return Center(
+                      child: GestureDetector(
+                        onTap: () {},
+                        child: InteractiveViewer(
+                          minScale: 0.8,
+                          maxScale: 4.0,
+                          child: MessengerCachedImage(
+                            source: widget.sources[pageIndex],
+                            width: size.width,
+                            height: size.height,
+                            containFit: true,
+                            borderRadius: BorderRadius.zero,
+                            placeholderColor: Colors.white12,
+                            loaderColor: Colors.white70,
+                            loaderStrokeWidth: 3,
+                            errorMessage: 'Unable to load image',
+                          ),
                         ),
                       ),
-                    ),
-                  );
-                },
+                    );
+                  },
+                ),
               ),
-            ),
             ),
           ),
           if (hasMany) ...[

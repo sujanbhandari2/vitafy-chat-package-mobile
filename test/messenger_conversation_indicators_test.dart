@@ -31,9 +31,9 @@ void main() {
       ),
     );
 
-    final avatar = tester.widget<MessengerAvatar>(find.byType(MessengerAvatar));
-    expect(avatar.showUnreadIndicator, isFalse);
-    expect(avatar.showOnlineIndicator, isFalse);
+    expect(find.byType(MessengerAvatar), findsNothing);
+    expect(
+        find.byKey(const ValueKey('groupConversationAvatar')), findsOneWidget);
 
     final title = tester.widget<Text>(
       find.text('Team Group'),
@@ -72,6 +72,78 @@ void main() {
     expect(avatar.showUnreadIndicator, isFalse);
     expect(avatar.showOnlineIndicator, isTrue);
     expect(avatar.isOnline, isTrue);
+  });
+
+  testWidgets('conversation tile shows latest reaction preview for self',
+      (tester) async {
+    final conversation = MessengerConversation(
+      id: 'd1',
+      title: 'Alice',
+      subtitle: 'Previous message',
+      avatarLabel: 'A',
+      createdAt: DateTime.utc(2026, 1, 1),
+      latestReaction: MessengerConversationLatestReaction(
+        chatUserId: 'me',
+        reactionType: '😂',
+        userName: 'Sujan Bhandari',
+        createdAt: DateTime.utc(2026, 1, 1, 12),
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerConversationTile(
+              conversation: conversation,
+              currentUserId: 'me',
+              isSelected: false,
+              onTap: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('you reacted 😂'), findsOneWidget);
+    expect(find.text('Previous message'), findsNothing);
+  });
+
+  testWidgets('conversation tile shows latest reaction preview for peer',
+      (tester) async {
+    final conversation = MessengerConversation(
+      id: 'd1',
+      title: 'Alice',
+      subtitle: 'Previous message',
+      avatarLabel: 'A',
+      createdAt: DateTime.utc(2026, 1, 1),
+      latestReaction: MessengerConversationLatestReaction(
+        chatUserId: 'peer',
+        reactionType: '😂',
+        userName: 'Sujan Bhandari',
+        createdAt: DateTime.utc(2026, 1, 1, 12),
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerConversationTile(
+              conversation: conversation,
+              currentUserId: 'me',
+              isSelected: false,
+              onTap: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Sujan Bhandari reacted 😂'), findsOneWidget);
+    expect(find.text('Previous message'), findsNothing);
   });
 
   testWidgets('group row in conversation list does not show Online subtitle',

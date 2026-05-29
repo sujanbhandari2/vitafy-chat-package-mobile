@@ -5,6 +5,8 @@ import 'package:health_messenger_ui/lib/src/models/messenger_message.dart';
 
 ChatMessage _outgoing({
   String? deliveryStatus,
+  int? deliveredToCount,
+  int? readByCount,
   List<Map<String, dynamic>> readReceipts = const [],
   List<Map<String, dynamic>> deliveredReceipts = const [],
 }) {
@@ -17,6 +19,8 @@ ChatMessage _outgoing({
     'content': 'x',
     'createdAt': DateTime.utc(2026).toIso8601String(),
     if (deliveryStatus != null) 'deliveryStatus': deliveryStatus,
+    if (deliveredToCount != null) 'deliveredToCount': deliveredToCount,
+    if (readByCount != null) 'readByCount': readByCount,
     'readReceipts': readReceipts,
     'deliveredReceipts': deliveredReceipts,
   });
@@ -141,6 +145,22 @@ void main() {
         currentUserId: 'me',
       );
       expect(s, MessengerDeliveryStatus.seen);
+    });
+
+    test('read count from any group peer implies seen', () {
+      final s = messengerDeliveryStatusFor(
+        _outgoing(deliveryStatus: 'DELIVERED', readByCount: 1),
+        currentUserId: 'me',
+      );
+      expect(s, MessengerDeliveryStatus.seen);
+    });
+
+    test('delivered count from any group peer implies delivered', () {
+      final s = messengerDeliveryStatusFor(
+        _outgoing(deliveryStatus: 'SENT', deliveredToCount: 1),
+        currentUserId: 'me',
+      );
+      expect(s, MessengerDeliveryStatus.delivered);
     });
 
     test('own read receipt does not imply seen', () {

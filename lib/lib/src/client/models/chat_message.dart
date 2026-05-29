@@ -384,6 +384,8 @@ class MessageReaction {
     required this.userId,
     required this.reactionType,
     this.conversationId,
+    this.createdAt,
+    this.user,
   });
 
   final String id;
@@ -391,10 +393,13 @@ class MessageReaction {
   final String userId;
   final String reactionType;
   final String? conversationId;
+  final DateTime? createdAt;
+  final ChatMessageSender? user;
 
   factory MessageReaction.fromJson(Map<String, dynamic> json) {
     final rawReaction =
         json['reactionType']?.toString() ?? json['emoji']?.toString() ?? '👍';
+    final rawUser = json['user'] ?? json['chatUser'];
     return MessageReaction(
       id: json['id']?.toString() ?? '',
       messageId:
@@ -406,6 +411,11 @@ class MessageReaction {
       reactionType: rawReaction,
       conversationId: json['conversationId']?.toString() ??
           json['conversation_id']?.toString(),
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+          DateTime.tryParse(json['created_at']?.toString() ?? ''),
+      user: rawUser is Map
+          ? ChatMessageSender.fromJson(Map<String, dynamic>.from(rawUser))
+          : null,
     );
   }
 
@@ -416,6 +426,8 @@ class MessageReaction {
       userId: userId,
       reactionType: reactionType,
       conversationId: conversationId ?? this.conversationId,
+      createdAt: createdAt,
+      user: user,
     );
   }
 }

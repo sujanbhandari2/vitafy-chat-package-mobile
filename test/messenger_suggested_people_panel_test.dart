@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 
-const _alice = MessengerUser(id: 'u1', username: 'alice');
-const _bob = MessengerUser(id: 'u2', username: 'bob');
+const _alice = MessengerUser(id: 'u1', username: 'alice', email: 'alice@acme.test');
+const _bob = MessengerUser(id: 'u2', username: 'bob', email: 'bob@acme.test');
 const _carol = MessengerUser(
   id: 'u3',
   username: 'carol',
   roleLabel: 'Nurse',
+  email: 'carol@acme.test',
 );
 
 void main() {
@@ -113,6 +114,21 @@ void main() {
 
     expect(tapped, isNotNull);
     expect(tapped!.id, 'u2');
+  });
+
+  testWidgets('default row shows role chip and email line', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        MessengerSuggestedPeoplePanel(
+          users: const [_carol],
+          onUserSelected: (_) {},
+        ),
+      ),
+    );
+
+    expect(find.text('carol'), findsOneWidget);
+    expect(find.text('Nurse'), findsOneWidget);
+    expect(find.text('carol@acme.test'), findsOneWidget);
   });
 
   testWidgets('empty state shows default emptyText', (tester) async {
@@ -291,11 +307,12 @@ void main() {
       ),
     );
 
-    expect(find.text('New group'), findsOneWidget);
-    await tester.tap(find.text('New group'));
+    expect(find.text('+ New group'), findsOneWidget);
+    await tester.tap(find.text('+ New group'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Group mode'), findsOneWidget);
+    expect(find.text('Create'), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
     expect(find.text('Selected people (0)'), findsOneWidget);
 
     await tester.tap(find.text('bob'));
@@ -304,8 +321,8 @@ void main() {
     expect(find.text('Selected people (1)'), findsOneWidget);
     expect(find.text('bob'), findsOneWidget);
 
-    final addIcons = find.byIcon(Icons.add_circle_outline_rounded);
-    expect(addIcons, findsNWidgets(2));
+    expect(find.byIcon(Icons.add_circle_outline_rounded), findsNothing);
+    expect(find.byIcon(Icons.chat_bubble_outline_rounded), findsNothing);
 
     final closeButtons = find.byIcon(Icons.close_rounded);
     expect(closeButtons, findsWidgets);
@@ -313,10 +330,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Selected people (0)'), findsOneWidget);
-    expect(find.byIcon(Icons.add_circle_outline_rounded), findsNWidgets(3));
+    expect(find.byIcon(Icons.add_circle_outline_rounded), findsNothing);
+    expect(find.byIcon(Icons.chat_bubble_outline_rounded), findsNothing);
   });
 
-  testWidgets('group mode create enabled with one selected peer', (tester) async {
+  testWidgets('group mode create enabled with one selected peer',
+      (tester) async {
     final created = <MessengerUser>[];
 
     await tester.pumpWidget(
@@ -333,13 +352,13 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('New group'));
+    await tester.tap(find.text('+ New group'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('alice'));
     await tester.pumpAndSettle();
 
     expect(find.text('Selected people (1)'), findsOneWidget);
-    await tester.tap(find.text('Create group'));
+    await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
 
     expect(created.map((user) => user.id).toList(), ['u1']);
@@ -365,7 +384,7 @@ void main() {
         ),
       );
 
-      await tester.tap(find.text('New group'));
+      await tester.tap(find.text('+ New group'));
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('carol'));
@@ -375,12 +394,12 @@ void main() {
 
       expect(find.text('Selected people (2)'), findsOneWidget);
 
-      await tester.tap(find.text('Create group'));
+      await tester.tap(find.text('Create'));
       await tester.pumpAndSettle();
 
       expect(openedDirectChats, 0);
-      expect(created.map((user) => user.id).toList(), ['u3', 'u1']);
-      expect(find.text('New group'), findsOneWidget);
+      expect(created.map((user) => user.id).toList(), ['u1', 'u3']);
+      expect(find.text('+ New group'), findsOneWidget);
       expect(find.text('Selected people (2)'), findsNothing);
     },
   );
@@ -554,7 +573,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('New group'));
+    await tester.tap(find.text('+ New group'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('alice'));
@@ -585,10 +604,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Selected people (2)'), findsOneWidget);
 
-    await tester.tap(find.text('Create group'));
+    await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
 
-    expect(created.map((user) => user.id).toList(), ['u1', 'u2']);
+    expect(created.map((user) => user.id).toList(), ['u2', 'u1']);
   });
 }
 

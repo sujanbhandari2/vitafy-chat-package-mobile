@@ -24,7 +24,7 @@ class MessengerGroupNameTextField extends StatelessWidget {
   });
 
   /// Same height as the start-new-chat search row.
-  static const double containerHeight = 38;
+  static const double containerHeight = 44;
 
   final TextEditingController controller;
   final String labelText;

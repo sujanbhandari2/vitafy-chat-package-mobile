@@ -4,6 +4,9 @@ import 'conversation.dart';
 /// Matches `CHAT_USER_DEFAULT_EXTERNAL_ROLE` in vitafy-generic-chat-frontend.
 const String kChatUserDefaultExternalRole = 'user';
 
+final RegExp _environmentTenantPrefixPattern =
+    RegExp(r'^(?:dev|uat|prod|qa)[_-]+', caseSensitive: false);
+
 /// One entry in `POST …/chat/users` or `users[]` for `POST …/users/start-conversation`.
 class ChatUserRegistrationBody {
   const ChatUserRegistrationBody({
@@ -23,6 +26,7 @@ class ChatUserRegistrationBody {
   final String? profile;
 
   /// Normalizes ids and role (empty role → [kChatUserDefaultExternalRole]).
+  /// Tenant ids have leading environment prefixes removed before lowercasing.
   ///
   /// Provide either `externalTenantId` / `externalUserId` or deprecated
   /// `providerId` / `providerUserId`.
@@ -47,10 +51,10 @@ class ChatUserRegistrationBody {
     var role = _firstNonEmpty(externalUserRole);
     role ??= kChatUserDefaultExternalRole;
     return ChatUserRegistrationBody(
-      externalTenantId: extT,
-      externalUserId: extU,
+      externalTenantId: _normalizeExternalTenantId(extT),
+      externalUserId: _normalizeLowercase(extU),
       externalUserRole: role,
-      email: _firstNonEmpty(email),
+      email: _normalizeOptionalLowercase(email),
       name: _firstNonEmpty(name),
       profile: _firstNonEmpty(profile),
     );
@@ -58,10 +62,11 @@ class ChatUserRegistrationBody {
 
   Map<String, dynamic> toRegistrationJson() {
     return <String, dynamic>{
-      'externalTenantId': externalTenantId,
-      'externalUserId': externalUserId,
+      'externalTenantId': _normalizeExternalTenantId(externalTenantId),
+      'externalUserId': _normalizeLowercase(externalUserId),
       'externalUserRole': externalUserRole,
-      if (email != null && email!.isNotEmpty) 'email': email!,
+      if (_normalizeOptionalLowercase(email) case final normalizedEmail?)
+        'email': normalizedEmail,
       if (name != null && name!.isNotEmpty) 'name': name!,
       if (profile != null && profile!.isNotEmpty) 'profile': profile!,
     };
@@ -71,6 +76,19 @@ class ChatUserRegistrationBody {
 String? _firstNonEmpty(String? value) {
   final t = value?.trim() ?? '';
   return t.isEmpty ? null : t;
+}
+
+String _normalizeLowercase(String value) => value.trim().toLowerCase();
+
+String? _normalizeOptionalLowercase(String? value) {
+  final t = _firstNonEmpty(value);
+  return t == null ? null : _normalizeLowercase(t);
+}
+
+String _normalizeExternalTenantId(String value) {
+  return _normalizeLowercase(
+    value.trim().replaceFirst(_environmentTenantPrefixPattern, ''),
+  );
 }
 
 /// Unwraps Vitafy `POST …/users/start-conversation` (`conversation` or nested `data`).
