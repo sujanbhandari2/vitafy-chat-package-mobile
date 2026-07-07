@@ -1,12 +1,9 @@
 import 'dart:io';
-import 'dart:typed_data';
-
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:gal/gal.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:simple_file_saver/simple_file_saver.dart';
 
 import '../utils/messenger_media_url.dart';
 import 'messenger_document_preview_kind.dart';
@@ -200,32 +197,7 @@ Future<MessengerMediaDownloadResult> _saveDocumentToPublicStorage(
   File file,
   String targetName,
 ) async {
-  if (kIsWeb || !_platformSupportsPublicFileSave()) {
-    return _saveViaFallbackDirectory(file, targetName);
-  }
-  final parts = _splitFileName(targetName);
-  try {
-    final savedPath = await SimpleFileSaver.saveFile(
-      fileInfo: FileSaveInfo.fromBytes(
-        bytes: Uint8List.fromList(await file.readAsBytes()),
-        basename: parts.$1,
-        extension: parts.$2,
-      ),
-    );
-    if (savedPath == null || savedPath.isEmpty) {
-      return const MessengerMediaDownloadResult(
-        success: false,
-        message: 'Could not save file',
-      );
-    }
-    return MessengerMediaDownloadResult(
-      success: true,
-      savedPath: savedPath,
-      message: _publicSaveSuccessMessage(),
-    );
-  } catch (_) {
-    return _saveViaFallbackDirectory(file, targetName);
-  }
+  return _saveViaFallbackDirectory(file, targetName);
 }
 
 Future<MessengerMediaDownloadResult> _saveViaFallbackDirectory(
@@ -241,33 +213,7 @@ Future<MessengerMediaDownloadResult> _saveViaFallbackDirectory(
 }
 
 bool _platformSupportsGallerySave() {
-  return Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
-}
-
-bool _platformSupportsPublicFileSave() {
   return Platform.isAndroid || Platform.isIOS;
-}
-
-String _publicSaveSuccessMessage() {
-  if (Platform.isIOS) {
-    return 'Saved to Files';
-  }
-  if (Platform.isAndroid) {
-    return 'Saved to Downloads';
-  }
-  return 'File saved';
-}
-
-(String, String) _splitFileName(String fileName) {
-  final sanitized = fileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
-  if (sanitized.isEmpty) {
-    return ('download', 'bin');
-  }
-  final dot = sanitized.lastIndexOf('.');
-  if (dot <= 0 || dot >= sanitized.length - 1) {
-    return (sanitized, 'bin');
-  }
-  return (sanitized.substring(0, dot), sanitized.substring(dot + 1));
 }
 
 Future<File> _copyToDownloads(File source, String targetName) async {

@@ -1204,6 +1204,117 @@ void main() {
     expect(find.byKey(const ValueKey('conversationListLoading')), findsNothing);
   });
 
+  testWidgets('emptyInboxBuilder replaces suggested people when inbox is empty',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerChatShell(
+              currentUserId: 'me',
+              currentUserName: 'Me',
+              conversations: const [],
+              users: const [
+                MessengerUser(id: 'u1', username: 'alice'),
+              ],
+              selectedConversationId: null,
+              messages: const [],
+              composerController: composer,
+              messagesScrollController: scroll,
+              isSending: false,
+              isRecording: false,
+              onRefresh: () async {},
+              onLogout: () {},
+              onSelectConversation: (_) async {},
+              onOpenDirectChat: (_) async {},
+              onSend: () {},
+              onPickImage: () {},
+              onPickAudio: () {},
+              onToggleRecording: () {},
+              emptyInboxBuilder: (context) => const Center(
+                child: Text('No users available'),
+              ),
+              suggestedPeopleBuilder: (context, users, _) =>
+                  MessengerSuggestedPeoplePanel(
+                users: users,
+                onUserSelected: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('No users available'), findsOneWidget);
+    expect(find.text('Suggested people'), findsNothing);
+    expect(find.text('alice'), findsNothing);
+  });
+
+  testWidgets(
+      'isListPaneRefreshing with emptyInboxBuilder shows spinner not custom pane',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 600,
+              width: 960,
+              child: MessengerChatShell(
+                currentUserId: 'me',
+                currentUserName: 'Me',
+                isListPaneRefreshing: true,
+                conversations: const [],
+                users: const [],
+                selectedConversationId: null,
+                messages: const [],
+                composerController: composer,
+                messagesScrollController: scroll,
+                isSending: false,
+                isRecording: false,
+                onRefresh: () async {},
+                onLogout: () {},
+                onSelectConversation: (_) async {},
+                onOpenDirectChat: (_) async {},
+                onSend: () {},
+                onPickImage: () {},
+                onPickAudio: () {},
+                onToggleRecording: () {},
+                desktopBreakpoint: 400,
+                emptyInboxBuilder: (context) => const Center(
+                  child: Text('No users available'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+
+    expect(find.text('No users available'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+  });
+
   testWidgets(
       'suggestedPeopleBuilder with isLoading uses panel spinner not list-pane key',
       (tester) async {
@@ -1617,6 +1728,92 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsNothing);
+  });
+
+  testWidgets('startNewChatController opens picker while shell is mounted',
+      (tester) async {
+    final controller = MessengerStartNewChatController();
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: Builder(
+              builder: (context) {
+                return Column(
+                  children: [
+                    TextButton(
+                      onPressed: () =>
+                          controller.openGroupChatPicker(context),
+                      child: const Text('Open group picker'),
+                    ),
+                    Expanded(
+                      child: MessengerChatShell(
+                        startNewChatController: controller,
+                        currentUserId: 'me',
+                        currentUserName: 'Me',
+                        conversations: [
+                          MessengerConversation(
+                            id: 'c1',
+                            title: 'Alice',
+                            subtitle: 'Hi',
+                            avatarLabel: 'A',
+                            createdAt: DateTime.utc(2026, 1, 1),
+                            peerUsers: const [
+                              MessengerUser(id: 'a', username: 'alice'),
+                            ],
+                          ),
+                        ],
+                        users: const [
+                          MessengerUser(id: 'a', username: 'alice'),
+                          MessengerUser(id: 'b', username: 'bob'),
+                        ],
+                        startNewChatUsers: const [
+                          MessengerUser(id: 'a', username: 'alice'),
+                          MessengerUser(id: 'b', username: 'bob'),
+                        ],
+                        selectedConversationId: 'c1',
+                        messages: const [],
+                        composerController: composer,
+                        messagesScrollController: scroll,
+                        isSending: false,
+                        isRecording: false,
+                        onRefresh: () async {},
+                        onLogout: () {},
+                        onSelectConversation: (_) async {},
+                        onOpenDirectChat: (_) async {},
+                        onCreateGroupSelected: (_) async {},
+                        onSend: () {},
+                        onPickImage: () {},
+                        onPickAudio: () {},
+                        onToggleRecording: () {},
+                        searchVisibility: MessengerSearchVisibility.never,
+                        showStartChatFab: false,
+                        desktopBreakpoint: 400,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(controller.isAttached, isTrue);
+    await tester.tap(find.text('Open group picker'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Start New Chat'), findsOneWidget);
+    expect(find.text('Create'), findsOneWidget);
   });
 }
 

@@ -9,8 +9,12 @@ import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 
 import 'dummy/associated_user_response.dart';
 import 'dummy/dummy_associated_users.dart';
+import 'example_empty_inbox_pane.dart';
 import 'example_models.dart';
 import 'example_chat_session_holder.dart';
+import 'example_start_new_chat_presenter.dart';
+
+enum ExampleMessengerUiVersion { v1, v2 }
 
 class ExampleChatPage extends StatefulWidget {
   const ExampleChatPage({
@@ -35,6 +39,17 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   /// When true, [MessengerChatShell.users] / suggested people use [kDummyAssociatedUsers].
   /// Set false to use live `getUsers` rows ([TenantUser]) instead.
   static const bool _useDummyAssociatedUsers = false;
+
+  /// When true, an empty inbox uses [MessengerChatShell.emptyInboxBuilder]
+  /// instead of [MessengerChatShell.suggestedPeopleBuilder]. Toggle from the
+  /// app bar to compare both host integrations.
+  bool _useCustomEmptyInbox = true;
+
+  /// v1 = package defaults (FAB + bottom sheet). v2 = host-driven entry points.
+  ExampleMessengerUiVersion _uiVersion = ExampleMessengerUiVersion.v2;
+
+  final MessengerStartNewChatController _startNewChatController =
+      MessengerStartNewChatController();
 
   final TextEditingController _composerController = TextEditingController();
   final ScrollController _messagesScrollController = ScrollController();
@@ -3489,6 +3504,48 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       appBar: AppBar(
         title: const Text('Messenger Chat'),
         actions: [
+          if (_uiVersion == ExampleMessengerUiVersion.v2) ...[
+            IconButton(
+              onPressed: () =>
+                  _startNewChatController.openDirectChatPicker(context),
+              tooltip: 'New chat (host entry point)',
+              icon: const Icon(Icons.chat_bubble_outline_rounded),
+            ),
+            IconButton(
+              onPressed: () =>
+                  _startNewChatController.openGroupChatPicker(context),
+              tooltip: 'New group (host entry point)',
+              icon: const Icon(Icons.group_add_outlined),
+            ),
+          ],
+          IconButton(
+            onPressed: () => setState(
+              () => _uiVersion = _uiVersion == ExampleMessengerUiVersion.v2
+                  ? ExampleMessengerUiVersion.v1
+                  : ExampleMessengerUiVersion.v2,
+            ),
+            tooltip: _uiVersion == ExampleMessengerUiVersion.v2
+                ? 'UI: v2 host-driven (tap for v1 package default)'
+                : 'UI: v1 package default (tap for v2 host-driven)',
+            icon: Icon(
+              _uiVersion == ExampleMessengerUiVersion.v2
+                  ? Icons.tune_rounded
+                  : Icons.auto_awesome_rounded,
+            ),
+          ),
+          IconButton(
+            onPressed: () => setState(
+              () => _useCustomEmptyInbox = !_useCustomEmptyInbox,
+            ),
+            tooltip: _useCustomEmptyInbox
+                ? 'Empty inbox: custom widget (tap for suggested people)'
+                : 'Empty inbox: suggested people (tap for custom widget)',
+            icon: Icon(
+              _useCustomEmptyInbox
+                  ? Icons.inbox_outlined
+                  : Icons.people_outline_rounded,
+            ),
+          ),
           IconButton(
             onPressed: _isRefreshing || _isBootstrapping
                 ? null
@@ -3528,6 +3585,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                   child: Text(
                     'Tenant: ${_tenantScope?.tenantId ?? 'pending'}  |  '
                     'Push: ${_pushIntegrationReady ? 'on' : 'off'}  |  '
+                    'Empty inbox: ${_useCustomEmptyInbox ? 'custom' : 'suggested'}  |  '
+                    'UI: ${_uiVersion == ExampleMessengerUiVersion.v2 ? 'v2 host' : 'v1 package'}  |  '
                     '$_statusText',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: const Color(0xFF475569),
@@ -3622,6 +3681,45 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                                     _preBootstrapOrder)
                                 .value;
                         return MessengerChatShell(
+                          showStartChatFab:
+                              _uiVersion == ExampleMessengerUiVersion.v1,
+                          showHeaderComposeButton:
+                              _uiVersion == ExampleMessengerUiVersion.v1,
+                          startNewChatController:
+                              _uiVersion == ExampleMessengerUiVersion.v2
+                                  ? _startNewChatController
+                                  : null,
+                          startNewChatPresenter:
+                              _uiVersion == ExampleMessengerUiVersion.v2
+                                  ? examplePresentStartNewChat
+                                  : null,
+                          groupSelectionListMode:
+                              _uiVersion == ExampleMessengerUiVersion.v2
+                                  ? MessengerGroupSelectionListMode
+                                      .inlineCheckmark
+                                  : MessengerGroupSelectionListMode
+                                      .separateSelectedSection,
+                          startNewChatUserItemBuilder:
+                              _uiVersion == ExampleMessengerUiVersion.v2
+                                  ? (context, data) =>
+                                      MessengerStartNewChatUserRow(
+                                        user: data.user,
+                                        isOpening: data.isOpening,
+                                        isSelectable: data.isSelectable,
+                                        isSelected: data.isSelected,
+                                        onTap: data.onTap,
+                                      )
+                                  : null,
+                        //   userListItemBuilder:(context, data){
+                        //     return Card(
+                        //       child: Column(
+                        //         children: [
+                        //           Text(data.displayTitle),
+                        //           Text(data.roleLabel),
+                        //         ],
+                        //       ),
+                        //     );
+                        // },
                           composerReplyDraft: _composerReplyDraft,
                           onComposerReplyDraftChanged: (draft) => setState(
                             () => _composerReplyDraft = draft,
@@ -3665,8 +3763,16 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           isCreatingGroup: _isCreatingSuggestedGroup,
                           groupNameInputBehavior:
                               MessengerGroupNameInputBehavior.required,
-                          suggestedPeopleBuilder:
-                              (context, users, openDirectChat) =>
+                          emptyInboxBuilder: _useCustomEmptyInbox
+                              ? (context) => ExampleEmptyInboxPane(
+                                    isRefreshing: _isConversationListLoading ||
+                                        _isBootstrapping,
+                                    onRefresh: () => _refreshAll(),
+                                  )
+                              : null,
+                          suggestedPeopleBuilder: _useCustomEmptyInbox
+                              ? null
+                              : (context, users, openDirectChat) =>
                                   MessengerSuggestedPeoplePanel(
                             users: users,
                             openingUserId: _suggestedPeopleOpeningUserId,
@@ -3675,6 +3781,12 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                             isCreatingGroup: _isCreatingSuggestedGroup,
                             groupNameInputBehavior:
                                 MessengerGroupNameInputBehavior.required,
+                            groupSelectionListMode:
+                                _uiVersion == ExampleMessengerUiVersion.v2
+                                    ? MessengerGroupSelectionListMode
+                                        .inlineCheckmark
+                                    : MessengerGroupSelectionListMode
+                                        .separateSelectedSection,
                             onPullToRefresh: () => _refreshAll(),
                             showSearchField: true,
                             searchQuery: _suggestedPeopleSearchQuery,

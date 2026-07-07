@@ -1,9 +1,8 @@
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 
 import '../client/chat_auth.dart';
@@ -74,13 +73,22 @@ class DefaultMessengerMediaPicker implements MessengerMediaPicker {
     try {
       switch (kind) {
         case MessengerMediaKind.image:
-          return _pickFiles(FileType.image, defaultType: MessageType.image);
+          return _pickFiles(
+            _typeGroupsForMimePrefix('image'),
+            defaultType: MessageType.image,
+          );
         case MessengerMediaKind.voice:
-          return _pickFiles(FileType.audio, defaultType: MessageType.voice);
+          return _pickFiles(
+            _typeGroupsForMimePrefix('audio'),
+            defaultType: MessageType.voice,
+          );
         case MessengerMediaKind.video:
-          return _pickFiles(FileType.video, defaultType: MessageType.video);
+          return _pickFiles(
+            _typeGroupsForMimePrefix('video'),
+            defaultType: MessageType.video,
+          );
         case MessengerMediaKind.file:
-          return _pickFiles(FileType.any, defaultType: MessageType.file);
+          return _pickFiles(const [], defaultType: MessageType.file);
         case MessengerMediaKind.camera:
           final picked =
               await _imagePicker.pickImage(source: ImageSource.camera);
@@ -107,30 +115,25 @@ class DefaultMessengerMediaPicker implements MessengerMediaPicker {
   }
 
   Future<List<MessengerPickedMedia>> _pickFiles(
-    FileType type, {
+    List<XTypeGroup> acceptedTypeGroups, {
     required MessageType defaultType,
   }) async {
-    final result = await FilePicker.platform.pickFiles(
-      type: type,
-      allowMultiple: true,
-      withData: false,
+    final pickedFiles = await openFiles(
+      acceptedTypeGroups: acceptedTypeGroups,
     );
-    if (result == null || result.files.isEmpty) {
+    if (pickedFiles.isEmpty) {
       return const [];
     }
     final out = <MessengerPickedMedia>[];
-    for (final picked in result.files) {
-      final path = picked.path;
-      if (path == null || path.trim().isEmpty) {
+    for (final picked in pickedFiles) {
+      final path = picked.path.trim();
+      if (path.isEmpty) {
         continue;
       }
       final fileName = picked.name.isNotEmpty
           ? picked.name
           : File(path).uri.pathSegments.last;
-      final inferredType = inferUploadMessageType(
-        mimeType: picked.extension != null ? null : null,
-        fileName: fileName,
-      );
+      final inferredType = inferUploadMessageType(fileName: fileName);
       out.add(
         MessengerPickedMedia(
           file: File(path),
@@ -140,6 +143,19 @@ class DefaultMessengerMediaPicker implements MessengerMediaPicker {
       );
     }
     return out;
+  }
+
+  List<XTypeGroup> _typeGroupsForMimePrefix(String prefix) {
+    return [
+      XTypeGroup(
+        label: prefix == 'image'
+            ? 'Images'
+            : prefix == 'video'
+                ? 'Videos'
+                : 'Audio',
+        mimeTypes: ['$prefix/*'],
+      ),
+    ];
   }
 }
 
@@ -368,18 +384,10 @@ class DefaultMessengerAudioRecorder implements MessengerAudioRecorder {
 
   Future<bool> _requestMicrophonePermissionWithRetry() async {
     try {
-      final currentStatus = await Permission.microphone.status;
-      if (currentStatus.isGranted) {
+      if (await _recorder.hasPermission(request: false)) {
         return true;
       }
-      if (currentStatus.isPermanentlyDenied || currentStatus.isRestricted) {
-        return false;
-      }
-      final requestedStatus = await Permission.microphone.request();
-      if (requestedStatus.isGranted) {
-        return true;
-      }
-      return false;
+      return _recorder.hasPermission(request: true);
     } catch (_) {
       return false;
     }

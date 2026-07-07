@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/messenger_group_create_request.dart';
+import '../models/messenger_start_new_chat.dart';
 import '../models/messenger_user.dart';
 import '../models/messenger_user_directory.dart';
 import '../theme/messenger_theme.dart';
@@ -93,6 +94,10 @@ class MessengerSuggestedPeoplePanel extends StatefulWidget {
     this.groupNameRequiredErrorText = 'Enter a group name to continue.',
     this.defaultGroupNameWhenEmpty = 'Group',
     this.directory,
+    this.groupSelectionListMode =
+        MessengerGroupSelectionListMode.separateSelectedSection,
+    this.groupItemBuilder,
+    this.selectedUsersSectionBuilder,
   }) : assert(
           groupMinSelectionCount > 0,
           'groupMinSelectionCount must be greater than zero.',
@@ -280,6 +285,16 @@ class MessengerSuggestedPeoplePanel extends StatefulWidget {
   /// the host-provided directory page (no local substring filtering).
   final MessengerSuggestedPeopleDirectory? directory;
 
+  /// How selected users appear in the group-creation user list.
+  final MessengerGroupSelectionListMode groupSelectionListMode;
+
+  /// Custom row builder used in group-selection mode.
+  final MessengerStartNewChatUserItemBuilder? groupItemBuilder;
+
+  /// Custom selected-users section for group mode (chips card).
+  final MessengerStartNewChatSelectedUsersSectionBuilder?
+      selectedUsersSectionBuilder;
+
   @override
   State<MessengerSuggestedPeoplePanel> createState() =>
       _MessengerSuggestedPeoplePanelState();
@@ -310,6 +325,13 @@ class _MessengerSuggestedPeoplePanelState
       widget.groupNameInputBehavior != MessengerGroupNameInputBehavior.hidden;
   bool get _groupNameIsRequired =>
       widget.groupNameInputBehavior == MessengerGroupNameInputBehavior.required;
+
+  bool get _inlineCheckmarkMode =>
+      widget.groupSelectionListMode ==
+      MessengerGroupSelectionListMode.inlineCheckmark;
+
+  bool get _showSelectedUsersSection =>
+      _isGroupSelectionMode && !_inlineCheckmarkMode && _canCreateGroup;
 
   @override
   void initState() {
@@ -486,7 +508,7 @@ class _MessengerSuggestedPeoplePanelState
         ? widget.users
         : _filterUsers(widget.users, normalizedSearchQuery);
     final selectedUsers = _resolveSelectedUsers(widget.users);
-    final visibleUsers = _isGroupSelectionMode
+    final visibleUsers = _isGroupSelectionMode && !_inlineCheckmarkMode
         ? filteredUsers
             .where((user) => !_selectedUserIds.contains(user.id.trim()))
             .toList(growable: false)
@@ -522,10 +544,12 @@ class _MessengerSuggestedPeoplePanelState
             ),
           ),
         ],
-        const SliverToBoxAdapter(child: SizedBox(height: 12)),
-        SliverToBoxAdapter(
-          child: _buildSelectedUsersSection(theme, selectedUsers),
-        ),
+        if (_showSelectedUsersSection) ...[
+          const SliverToBoxAdapter(child: SizedBox(height: 12)),
+          SliverToBoxAdapter(
+            child: _buildSelectedUsersSection(theme, selectedUsers),
+          ),
+        ],
       ],
       if (widget.showSearchField) ...[
         const SliverToBoxAdapter(child: SizedBox(height: 10)),
@@ -770,6 +794,14 @@ class _MessengerSuggestedPeoplePanelState
     MessengerThemeData theme,
     List<MessengerUser> selectedUsers,
   ) {
+    final custom = widget.selectedUsersSectionBuilder;
+    if (custom != null) {
+      return custom(
+        context,
+        selectedUsers,
+        widget.isCreatingGroup ? (_) {} : _removeSelectedUser,
+      );
+    }
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -967,13 +999,31 @@ class _MessengerSuggestedPeoplePanelState
               );
             }
             final user = visibleUsers[itemIndex];
+            final userId = user.id.trim();
+            final isSelected = _selectedUserIds.contains(userId);
             if (!_isGroupSelectionMode && widget.itemBuilder != null) {
               return widget.itemBuilder!(context, user, itemIndex);
+            }
+            if (_isGroupSelectionMode) {
+              final groupBuilder = widget.groupItemBuilder;
+              if (groupBuilder != null) {
+                return groupBuilder(
+                  context,
+                  MessengerUserPickerItemData(
+                    user: user,
+                    isSelected: isSelected,
+                    isSelectable: true,
+                    isOpening: false,
+                    onTap: () => _handleUserTap(user),
+                  ),
+                );
+              }
             }
             return _SuggestedUserRow(
               user: user,
               isOpening: !_isGroupSelectionMode && _isOpening(user.id),
               isSelectable: _isGroupSelectionMode,
+              isSelected: isSelected,
               onTap: () => _handleUserTap(user),
             );
           }
@@ -1074,7 +1124,24 @@ class _MessengerSuggestedPeoplePanelState
   Future<void> _handleUserTap(MessengerUser user) async {
     if (_isGroupSelectionMode) {
       final id = user.id.trim();
-      if (id.isEmpty || _selectedUserIds.contains(id)) {
+      if (id.isEmpty) {
+        return;
+      }
+      if (_inlineCheckmarkMode) {
+        setState(() {
+          if (_selectedUserIds.contains(id)) {
+            _selectedUserIds = _selectedUserIds
+                .where((selectedId) => selectedId.trim() != id)
+                .toList(growable: false);
+            _selectedUsersById.remove(id);
+          } else {
+            _selectedUserIds = [id, ..._selectedUserIds];
+            _selectedUsersById[id] = user;
+          }
+        });
+        return;
+      }
+      if (_selectedUserIds.contains(id)) {
         return;
       }
       setState(() {
@@ -1223,11 +1290,13 @@ class _SuggestedUserRow extends StatelessWidget {
     required this.isOpening,
     required this.isSelectable,
     required this.onTap,
+    this.isSelected = false,
   });
 
   final MessengerUser user;
   final bool isOpening;
   final bool isSelectable;
+  final bool isSelected;
   final VoidCallback onTap;
 
   @override
@@ -1296,6 +1365,14 @@ class _SuggestedUserRow extends StatelessWidget {
                 width: 18,
                 height: 18,
                 child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else if (isSelectable)
+              Icon(
+                isSelected
+                    ? Icons.check_circle_rounded
+                    : Icons.circle_outlined,
+                size: 22,
+                color: isSelected ? theme.primary : theme.mutedText,
               ),
           ],
         ),
