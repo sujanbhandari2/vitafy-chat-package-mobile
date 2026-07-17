@@ -13,6 +13,7 @@ import 'messenger_document_preview_dialog.dart';
 import 'messenger_preview_chrome.dart';
 import '../models/messenger_message.dart';
 import '../models/messenger_message_attachment.dart';
+import '../models/messenger_thread_view_overrides.dart';
 import '../theme/messenger_theme.dart';
 import 'messenger_avatar.dart';
 
@@ -41,6 +42,7 @@ class MessengerMessageBubble extends StatefulWidget {
     this.packageDialogTheme,
     this.showDeliveryStatus = true,
     this.onRetryUpload,
+    this.contentBuilders,
   });
 
   final MessengerChatMessage message;
@@ -71,6 +73,7 @@ class MessengerMessageBubble extends StatefulWidget {
   final ThemeData? packageDialogTheme;
   final bool showDeliveryStatus;
   final VoidCallback? onRetryUpload;
+  final MessengerMessageContentBuilders? contentBuilders;
 
   @override
   State<MessengerMessageBubble> createState() => _MessengerMessageBubbleState();
@@ -161,13 +164,12 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
                                 alignment: widget.isMine
                                     ? Alignment.centerRight
                                     : Alignment.centerLeft,
-                                child: _MessageContent(
-                                  message: widget.message,
+                                child: _buildMessageContent(
+                                  context,
                                   textColor: textColor,
                                   mutedColor: timeColor,
                                   attachmentCaptionStyle:
                                       attachmentCaptionStyle,
-                                  packageDialogTheme: widget.packageDialogTheme,
                                 ),
                               ),
                               const SizedBox(height: 4),
@@ -304,6 +306,59 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildMessageContent(
+    BuildContext context, {
+    required Color textColor,
+    required Color mutedColor,
+    required TextStyle attachmentCaptionStyle,
+  }) {
+    final message = widget.message;
+    final contentKind = messengerResolveMessageContentKind(message);
+    final data = MessengerMessageContentData(
+      message: message,
+      isMine: widget.isMine,
+      contentKind: contentKind,
+      textColor: textColor,
+      mutedColor: mutedColor,
+      attachmentCaptionStyle: attachmentCaptionStyle,
+      packageDialogTheme: widget.packageDialogTheme,
+      onRetryUpload: widget.onRetryUpload,
+      openImageGallery: (urls, initialIndex) {
+        MessengerDefaultMessageContent.openImageGallery(
+          context,
+          urls: urls,
+          initialIndex: initialIndex,
+          packageDialogTheme: widget.packageDialogTheme,
+        );
+      },
+      openFilePreview: ({
+        required String source,
+        String? fileName,
+        String? mimeType,
+      }) {
+        MessengerDefaultMessageContent.openFilePreview(
+          context,
+          source: source,
+          fileName: fileName,
+          mimeType: mimeType,
+          packageDialogTheme: widget.packageDialogTheme,
+        );
+      },
+    );
+    final customBuilder =
+        widget.contentBuilders?.builderForKind(contentKind);
+    if (customBuilder != null) {
+      return customBuilder(context, data);
+    }
+    return MessengerDefaultMessageContent(
+      message: message,
+      textColor: textColor,
+      mutedColor: mutedColor,
+      attachmentCaptionStyle: attachmentCaptionStyle,
+      packageDialogTheme: widget.packageDialogTheme,
     );
   }
 
@@ -812,8 +867,9 @@ class _DeliveryTick extends StatelessWidget {
   }
 }
 
-class _MessageContent extends StatelessWidget {
-  const _MessageContent({
+class MessengerDefaultMessageContent extends StatelessWidget {
+  const MessengerDefaultMessageContent({
+    super.key,
     required this.message,
     required this.textColor,
     required this.mutedColor,
@@ -1114,7 +1170,7 @@ class _MessageContent extends StatelessWidget {
     String? fileName,
     String? mimeType,
   }) {
-    openMessengerDocumentPreview(
+    openFilePreview(
       context,
       source: source,
       fileName: fileName,
@@ -1127,6 +1183,21 @@ class _MessageContent extends StatelessWidget {
     BuildContext context, {
     required List<String> urls,
     required int initialIndex,
+  }) {
+    MessengerDefaultMessageContent.openImageGallery(
+      context,
+      urls: urls,
+      initialIndex: initialIndex,
+      packageDialogTheme: packageDialogTheme,
+    );
+  }
+
+  /// Opens the package image lightbox. Usable from custom content builders.
+  static void openImageGallery(
+    BuildContext context, {
+    required List<String> urls,
+    required int initialIndex,
+    ThemeData? packageDialogTheme,
   }) {
     final sources =
         urls.map((u) => u.trim()).where((u) => u.isNotEmpty).toList();
@@ -1159,6 +1230,23 @@ class _MessageContent extends StatelessWidget {
           child: themed,
         );
       },
+    );
+  }
+
+  /// Opens the package document preview dialog. Usable from custom builders.
+  static void openFilePreview(
+    BuildContext context, {
+    required String source,
+    String? fileName,
+    String? mimeType,
+    ThemeData? packageDialogTheme,
+  }) {
+    openMessengerDocumentPreview(
+      context,
+      source: source,
+      fileName: fileName,
+      mimeType: mimeType,
+      packageDialogTheme: packageDialogTheme,
     );
   }
 }

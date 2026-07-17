@@ -14,6 +14,7 @@ import '../models/messenger_group_create_request.dart';
 import '../models/messenger_message.dart';
 import '../models/messenger_thread_fetch_loading_mode.dart';
 import '../models/messenger_thread_loading_style.dart';
+import '../models/messenger_thread_view_overrides.dart';
 import '../models/messenger_user.dart';
 import '../models/messenger_user_directory.dart';
 import '../models/messenger_search_visibility.dart';
@@ -177,6 +178,7 @@ class MessengerChatShell extends StatefulWidget {
     this.attachmentCaptionTextStyle,
     this.attachmentOptionTextStyle,
     this.packageDialogTheme,
+    this.threadViewOverrides,
     this.mediaCache,
     this.mediaCacheHeaders,
     this.mediaCacheHeadersForUrl,
@@ -484,6 +486,9 @@ class MessengerChatShell extends StatefulWidget {
   /// image preview). Pass a full [ThemeData] from
   /// `Theme.of(context).copyWith(dialogTheme: …)` so overrides stay complete.
   final ThemeData? packageDialogTheme;
+
+  /// Optional host overrides for thread header, messages, and composer.
+  final MessengerThreadViewOverrides? threadViewOverrides;
 
   /// Optional disk cache for message images and voice. Defaults to
   /// [DefaultMessengerMediaCache] when null.
@@ -953,6 +958,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     return MessengerChatThread(
       isMobile: isMobile,
       onBack: onBack,
+      threadViewOverrides: widget.threadViewOverrides,
       conversation: selectedConversation,
       messages: threadMessages,
       snapToBottomOnKeyboardInsetChange: widget.autoScrollThreadToBottom,

@@ -189,6 +189,20 @@ class ChatClient {
     );
   }
 
+  Future<void> removeParticipant(
+    ChatAuth auth, {
+    required String conversationId,
+    required String userId,
+    String? actorUserId,
+  }) {
+    return repository.removeParticipant(
+      auth,
+      conversationId: conversationId,
+      userId: userId,
+      actorUserId: actorUserId,
+    );
+  }
+
   Future<List<ChatAttachment>> uploadFiles(
     ChatAuth auth,
     List<File> files, {

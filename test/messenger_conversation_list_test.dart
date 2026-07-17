@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
@@ -1800,6 +1802,100 @@ void main() {
     expect(find.text('Start New Chat'), findsOneWidget);
     expect(find.text('Alice Jones'), findsOneWidget);
   });
+
+  testWidgets('ignores conversation taps while openingConversationId is set',
+      (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice_jones');
+    var selectCount = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 420,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: [
+                  MessengerConversation(
+                    id: 'c1',
+                    title: 'Alice Jones',
+                    subtitle: 'Hi',
+                    avatarLabel: 'A',
+                    createdAt: DateTime.utc(2026),
+                    peerUsers: const [alice],
+                  ),
+                ],
+                users: const [alice],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                openingConversationId: 'c1',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {
+                  selectCount++;
+                },
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Alice Jones'));
+    await tester.pumpAndSettle();
+
+    expect(selectCount, 0);
+  });
+
+  testWidgets('ignores rapid second conversation tap while first is in flight',
+      (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice_jones');
+    final selectStarted = Completer<void>();
+    final selectAllowedToFinish = Completer<void>();
+    var selectCount = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 420,
+              width: 360,
+              child: _OpeningConversationGuardHarness(
+                user: alice,
+                onSelect: () async {
+                  selectCount++;
+                  if (!selectStarted.isCompleted) {
+                    selectStarted.complete();
+                  }
+                  await selectAllowedToFinish.future;
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Alice Jones'));
+    await selectStarted.future;
+    await tester.pump();
+    await tester.tap(find.text('Alice Jones'));
+    await tester.pump();
+    selectAllowedToFinish.complete();
+    await tester.pumpAndSettle();
+
+    expect(selectCount, 1);
+  });
 }
 
 class _StartNewChatGroupSelectionHarness extends StatefulWidget {
@@ -1912,6 +2008,61 @@ class _StartNewChatSheetLiveHarnessState
           ),
         ),
       ),
+    );
+  }
+}
+
+class _OpeningConversationGuardHarness extends StatefulWidget {
+  const _OpeningConversationGuardHarness({
+    required this.user,
+    required this.onSelect,
+  });
+
+  final MessengerUser user;
+  final Future<void> Function() onSelect;
+
+  @override
+  State<_OpeningConversationGuardHarness> createState() =>
+      _OpeningConversationGuardHarnessState();
+}
+
+class _OpeningConversationGuardHarnessState
+    extends State<_OpeningConversationGuardHarness> {
+  String openingConversationId = '';
+
+  @override
+  Widget build(BuildContext context) {
+    return MessengerConversationList(
+      currentUserName: 'me',
+      conversations: [
+        MessengerConversation(
+          id: 'c1',
+          title: widget.user.username,
+          subtitle: 'Hi',
+          avatarLabel: 'A',
+          createdAt: DateTime.utc(2026),
+          peerUsers: [widget.user],
+        ),
+      ],
+      users: [widget.user],
+      selectedConversationId: null,
+      openingDirectUserId: '',
+      openingConversationId: openingConversationId,
+      onRefresh: () async {},
+      onLogout: () {},
+      onOpenDirectChat: (_) async {},
+      onSelectConversation: (id) async {
+        setState(() => openingConversationId = id);
+        try {
+          await widget.onSelect();
+        } finally {
+          if (mounted) {
+            setState(() => openingConversationId = '');
+          }
+        }
+      },
+      searchVisibility: MessengerSearchVisibility.never,
+      showStartChatFab: false,
     );
   }
 }

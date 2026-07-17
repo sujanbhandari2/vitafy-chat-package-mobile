@@ -304,6 +304,24 @@ class ChatSocketApi {
   }
 
   Map<String, dynamic> _mapPayload(dynamic payload) {
-    return Map<String, dynamic>.from(payload as Map);
+    dynamic current = payload;
+    // Socket.IO sometimes wraps ack args as a one-element list.
+    if (current is List && current.isNotEmpty) {
+      current = current.first;
+    }
+    if (current is! Map) {
+      throw StateError(
+        'Expected JSON object for socket ack, got ${current.runtimeType}',
+      );
+    }
+    var map = Map<String, dynamic>.from(current);
+    // Some gateways nest the message under `data` / `message`.
+    final nested = map['data'] ?? map['message'];
+    if (nested is Map &&
+        (map['id'] == null) &&
+        (nested['id'] != null || nested['content'] != null)) {
+      map = Map<String, dynamic>.from(nested);
+    }
+    return map;
   }
 }

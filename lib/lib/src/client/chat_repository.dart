@@ -78,6 +78,12 @@ abstract class ChatRepository {
     required String userId,
     String? actorUserId,
   });
+  Future<void> removeParticipant(
+    ChatAuth auth, {
+    required String conversationId,
+    required String userId,
+    String? actorUserId,
+  });
   Future<List<ChatAttachment>> uploadFiles(
     ChatAuth auth,
     List<File> files, {

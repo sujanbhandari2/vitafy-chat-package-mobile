@@ -6,6 +6,7 @@ export 'src/client/chat_connection_state.dart';
 export 'src/client/chat_dio.dart';
 export 'src/client/chat_exceptions.dart';
 export 'src/client/chat_session.dart';
+export 'src/client/messenger_host_actions.dart';
 export 'src/client/inbox/chat_inbox_controller.dart';
 export 'src/client/inbox/delivery_status.dart';
 export 'src/client/inbox/message_delivery_merge.dart';

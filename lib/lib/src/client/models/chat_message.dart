@@ -105,11 +105,14 @@ class ChatMessage {
   bool get isDeleted => deletedAt != null;
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
-    final rawReactions = json['reactions'] as List<dynamic>? ?? <dynamic>[];
-    final rawDelivered =
-        json['deliveredReceipts'] as List<dynamic>? ?? <dynamic>[];
-    final rawReceipts = json['readReceipts'] as List<dynamic>? ?? <dynamic>[];
-    final rawAttachments = json['attachments'] as List<dynamic>? ?? <dynamic>[];
+    final rawReactions = _asDynamicList(json['reactions']);
+    final rawDelivered = _asDynamicList(
+      json['deliveredReceipts'] ?? json['delivered_receipts'],
+    );
+    final rawReceipts = _asDynamicList(
+      json['readReceipts'] ?? json['read_receipts'],
+    );
+    final rawAttachments = _asDynamicList(json['attachments']);
     final rawType =
         json['type']?.toString() ?? json['messageType']?.toString() ?? 'TEXT';
 
@@ -123,11 +126,12 @@ class ChatMessage {
       senderId:
           json['senderId']?.toString() ?? json['sender_id']?.toString() ?? '',
       type: parseMessageType(rawType),
-      content: json['content']?.toString() ?? '',
+      content: _stringContentFromJson(json['content']),
       attachments: rawAttachments
+          .whereType<Map>()
           .map(
             (item) => ChatAttachment.fromJson(
-              Map<String, dynamic>.from(item as Map),
+              Map<String, dynamic>.from(item),
             ),
           )
           .toList(),
@@ -153,23 +157,26 @@ class ChatMessage {
         json['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
       ),
       reactions: rawReactions
+          .whereType<Map>()
           .map(
             (item) => MessageReaction.fromJson(
-              Map<String, dynamic>.from(item as Map),
+              Map<String, dynamic>.from(item),
             ),
           )
           .toList(),
       deliveredReceipts: rawDelivered
+          .whereType<Map>()
           .map(
             (item) => DeliveredReceipt.fromJson(
-              Map<String, dynamic>.from(item as Map),
+              Map<String, dynamic>.from(item),
             ),
           )
           .toList(),
       readReceipts: rawReceipts
+          .whereType<Map>()
           .map(
             (item) =>
-                ReadReceipt.fromJson(Map<String, dynamic>.from(item as Map)),
+                ReadReceipt.fromJson(Map<String, dynamic>.from(item)),
           )
           .toList(),
       sender: json['sender'] is Map
@@ -239,6 +246,41 @@ int? _intFromJson(dynamic raw) {
     return raw.toInt();
   }
   return int.tryParse(raw.toString());
+}
+
+/// Prisma JSONB / Nest payloads often send `attachments`/`reactions` as `{}`
+/// instead of `[]` — never cast those fields with `as List`.
+List<dynamic> _asDynamicList(dynamic raw) {
+  if (raw == null) {
+    return const <dynamic>[];
+  }
+  if (raw is List) {
+    return raw;
+  }
+  if (raw is Map) {
+    // Single attachment object → one-item list.
+    return <dynamic>[raw];
+  }
+  return const <dynamic>[];
+}
+
+String _stringContentFromJson(dynamic raw) {
+  if (raw == null) {
+    return '';
+  }
+  if (raw is String) {
+    return raw;
+  }
+  if (raw is Map) {
+    final map = Map<String, dynamic>.from(raw);
+    for (final key in const ['text', 'body', 'caption', 'content', 'message']) {
+      final value = map[key];
+      if (value is String && value.trim().isNotEmpty) {
+        return value;
+      }
+    }
+  }
+  return raw.toString();
 }
 
 String? _deliveryStatusFromJson(Map<String, dynamic> json) {
@@ -314,7 +356,7 @@ class ReplyToMessage {
       id: json['id']?.toString() ?? '',
       senderId: json['senderId']?.toString() ?? '',
       type: parseMessageType(json['type']?.toString() ?? 'TEXT'),
-      content: json['content']?.toString() ?? '',
+      content: _stringContentFromJson(json['content']),
       createdAt: DateTime.parse(
         json['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
       ),

@@ -224,6 +224,25 @@ class ChatApi {
     });
   }
 
+  Future<void> removeParticipant(
+    ChatAuth auth, {
+    required String conversationId,
+    required String userId,
+    String? actorUserId,
+  }) {
+    return _guard(() async {
+      await _dio.delete(
+        _chatUri('conversations/$conversationId/participants'),
+        options: _authOptionsChatUser(auth),
+        data: {
+          'userId': userId,
+          if (actorUserId != null && actorUserId.trim().isNotEmpty)
+            'actorUserId': actorUserId,
+        },
+      );
+    });
+  }
+
   Future<List<ChatAttachment>> uploadFiles(
     ChatAuth auth,
     List<File> files, {
@@ -256,11 +275,17 @@ class ChatApi {
       );
 
       final data = _asMap(_unwrapData(response.data));
-      final attachments = data['attachments'] as List<dynamic>? ?? <dynamic>[];
+      final attachmentsRaw = data['attachments'];
+      final attachments = attachmentsRaw is List
+          ? attachmentsRaw
+          : attachmentsRaw is Map
+              ? <dynamic>[attachmentsRaw]
+              : const <dynamic>[];
       return attachments
+          .whereType<Map>()
           .map(
             (item) =>
-                ChatAttachment.fromJson(Map<String, dynamic>.from(item as Map)),
+                ChatAttachment.fromJson(Map<String, dynamic>.from(item)),
           )
           .toList();
     });

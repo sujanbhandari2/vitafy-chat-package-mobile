@@ -267,7 +267,7 @@ class Conversation {
     return Conversation(
       id: json['id']?.toString() ?? '',
       tenantId: json['tenantId']?.toString() ?? '',
-      type: json['type']?.toString() ?? 'DIRECT',
+      type: _conversationTypeFromJson(json),
       title: (json['title'] ?? json['name'])?.toString(),
       createdBy: json['createdBy']?.toString(),
       createdAt: DateTime.parse(
@@ -345,6 +345,23 @@ Map<String, ConversationMessageStatus> _messageStatusFromJson(
   }
 
   return out;
+}
+
+String _conversationTypeFromJson(Map<String, dynamic> json) {
+  final raw = json['type'] ??
+      json['conversationType'] ??
+      json['conversation_type'];
+  if (raw != null) {
+    final value = raw.toString().trim();
+    if (value.isNotEmpty) {
+      return value;
+    }
+  }
+  final flagged = json['isGroup'] ?? json['is_group'];
+  if (flagged == true || flagged?.toString().toLowerCase() == 'true') {
+    return 'GROUP';
+  }
+  return 'DIRECT';
 }
 
 String? _trimToNull(Object? raw) {

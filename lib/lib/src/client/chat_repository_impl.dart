@@ -180,6 +180,21 @@ class BackendChatRepositoryImpl implements ChatRepository {
   }
 
   @override
+  Future<void> removeParticipant(
+    ChatAuth auth, {
+    required String conversationId,
+    required String userId,
+    String? actorUserId,
+  }) {
+    return _chatApi.removeParticipant(
+      auth,
+      conversationId: conversationId,
+      userId: userId,
+      actorUserId: actorUserId,
+    );
+  }
+
+  @override
   Future<List<ChatAttachment>> uploadFiles(
     ChatAuth auth,
     List<File> files, {

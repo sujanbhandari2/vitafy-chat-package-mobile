@@ -12,6 +12,8 @@ import 'dummy/dummy_associated_users.dart';
 import 'example_empty_inbox_pane.dart';
 import 'example_models.dart';
 import 'example_chat_session_holder.dart';
+import 'example_conversation_v2_overrides.dart';
+import 'example_conversation_v2_theme.dart';
 import 'example_start_new_chat_presenter.dart';
 
 enum ExampleMessengerUiVersion { v1, v2 }
@@ -47,6 +49,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
   /// v1 = package defaults (FAB + bottom sheet). v2 = host-driven entry points.
   ExampleMessengerUiVersion _uiVersion = ExampleMessengerUiVersion.v2;
+
+  /// v1 = legacy package conversation UI. v2 = custom host-styled thread.
+  ExampleConversationUiVersion _conversationUiVersion =
+      ExampleConversationUiVersion.v1Legacy;
 
   final MessengerStartNewChatController _startNewChatController =
       MessengerStartNewChatController();
@@ -1039,6 +1045,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }) async {
     conversationId = conversationId.trim();
     if (conversationId.isEmpty) {
+      return;
+    }
+
+    // Ignore repeated taps on the same conversation while it is still loading.
+    if (_loadingConversationId == conversationId) {
       return;
     }
 
@@ -3582,16 +3593,54 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                  child: Text(
-                    'Tenant: ${_tenantScope?.tenantId ?? 'pending'}  |  '
-                    'Push: ${_pushIntegrationReady ? 'on' : 'off'}  |  '
-                    'Empty inbox: ${_useCustomEmptyInbox ? 'custom' : 'suggested'}  |  '
-                    'UI: ${_uiVersion == ExampleMessengerUiVersion.v2 ? 'v2 host' : 'v1 package'}  |  '
-                    '$_statusText',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: const Color(0xFF475569),
-                          fontWeight: FontWeight.w600,
-                        ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Tenant: ${_tenantScope?.tenantId ?? 'pending'}  |  '
+                        'Push: ${_pushIntegrationReady ? 'on' : 'off'}  |  '
+                        'Empty inbox: ${_useCustomEmptyInbox ? 'custom' : 'suggested'}  |  '
+                        'Start chat: ${_uiVersion == ExampleMessengerUiVersion.v2 ? 'v2 host' : 'v1 package'}  |  '
+                        '$_statusText',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: const Color(0xFF475569),
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Text(
+                            'Conversation UI',
+                            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  color: const Color(0xFF334155),
+                                ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: SegmentedButton<ExampleConversationUiVersion>(
+                              segments: const [
+                                ButtonSegment(
+                                  value: ExampleConversationUiVersion.v1Legacy,
+                                  label: Text('v1 Legacy'),
+                                ),
+                                ButtonSegment(
+                                  value: ExampleConversationUiVersion.v2Custom,
+                                  label: Text('v2 Custom'),
+                                ),
+                              ],
+                              selected: {_conversationUiVersion},
+                              onSelectionChanged: (selection) {
+                                setState(() {
+                                  _conversationUiVersion = selection.first;
+                                });
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
                 // Container(
@@ -3680,7 +3729,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                             (_session?.inbox.conversationOrder ??
                                     _preBootstrapOrder)
                                 .value;
-                        return MessengerChatShell(
+                        // Optional conversation thread UI overrides (header, bubbles,
+                        // composer, floating overlay). Enabled for v2 custom demo.
+                        final useConversationV2 = _conversationUiVersion ==
+                            ExampleConversationUiVersion.v2Custom;
+                        final shell = MessengerChatShell(
                           showStartChatFab:
                               _uiVersion == ExampleMessengerUiVersion.v1,
                           showHeaderComposeButton:
@@ -3882,6 +3935,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           onTypingStart: _onTypingStart,
                           onTypingStop: _onTypingStop,
                           enableReactions: true,
+                          composerHintText: useConversationV2
+                              ? 'Type a message...'
+                              : 'Type your message...',
                           composerInputTextStyle: const TextStyle(
                             color: Color(0xFF0F172A),
                             fontSize: 14,
@@ -3907,7 +3963,14 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                                 horizontal: 12, vertical: 10),
                             borderRadius: 14,
                           ),
+                          threadViewOverrides: useConversationV2
+                              ? exampleConversationV2Overrides()
+                              : null,
+                          theme: useConversationV2
+                              ? ExampleConversationV2Theme.messengerTheme
+                              : null,
                         );
+                        return shell;
                       },
                     ),
                   ),
