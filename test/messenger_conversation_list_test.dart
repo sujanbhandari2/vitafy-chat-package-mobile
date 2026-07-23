@@ -1847,9 +1847,9 @@ void main() {
       ),
     );
 
-    await tester.pumpAndSettle();
+    await tester.pump();
     await tester.tap(find.text('Alice Jones'));
-    await tester.pumpAndSettle();
+    await tester.pump();
 
     expect(selectCount, 0);
   });

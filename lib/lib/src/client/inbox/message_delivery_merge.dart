@@ -36,7 +36,16 @@ ChatMessage mergeMessageDeliveryReadSnapshot(
   );
   final readByCount = _maxCount(existing.readByCount, incoming.readByCount);
 
+  // Sparse socket/REST echoes often omit attachments right after media send.
+  // Keep the richer existing payload so image bubbles do not break in-place.
+  final attachments = _hasUsableAttachments(incoming.attachments)
+      ? incoming.attachments
+      : (_hasUsableAttachments(existing.attachments)
+          ? existing.attachments
+          : incoming.attachments);
+
   return incoming.copyWith(
+    attachments: attachments,
     deliveredReceipts:
         delByUser.isEmpty ? incoming.deliveredReceipts : delByUser.values.toList(),
     readReceipts:
@@ -44,6 +53,10 @@ ChatMessage mergeMessageDeliveryReadSnapshot(
     deliveredToCount: deliveredToCount,
     readByCount: readByCount,
   );
+}
+
+bool _hasUsableAttachments(List<ChatAttachment> attachments) {
+  return attachments.any((item) => item.url.trim().isNotEmpty);
 }
 
 int _maxCount(int? a, int? b) {

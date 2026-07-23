@@ -2301,6 +2301,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }
 
   void _upsertMessage(String conversationId, ChatMessage message) {
+    // Ignore malformed socket echoes (empty id → blank "Message" / UU bubble).
+    if (message.id.trim().isEmpty || conversationId.trim().isEmpty) {
+      return;
+    }
     final existing = _messagesByConversation[conversationId] ?? const [];
     final next = List<ChatMessage>.from(existing);
     final index = next.indexWhere((item) => item.id == message.id);
@@ -3896,10 +3900,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           },
                           onMediaMessageSentForConversation:
                               (conversationId, message) {
-                            _upsertMessage(
-                              conversationId,
-                              _mapUiMessageToBackend(conversationId, message),
-                            );
+                            _upsertMessage(conversationId, message);
                             _session?.inbox.bumpConversation(conversationId);
                             setState(() {
                               _statusText =

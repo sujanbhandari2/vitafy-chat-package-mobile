@@ -303,7 +303,13 @@ class MessengerMediaSendOrchestrator {
           attachments: uploaded,
           replyToMessageId: replyToMessageId,
         );
-        sentMessages.add(message);
+        // Some send responses omit attachment URLs; keep the uploaded payload so
+        // the bubble can render immediately without waiting for a refetch.
+        sentMessages.add(
+          message.attachments.isEmpty
+              ? message.copyWith(attachments: uploaded)
+              : message,
+        );
         sentPendingCount += batch.pendingIndices.length;
         onUploadProgress?.call(sentPendingCount, 1.0);
       } catch (err) {

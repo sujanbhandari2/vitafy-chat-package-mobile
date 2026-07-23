@@ -258,6 +258,10 @@ List<dynamic> _asDynamicList(dynamic raw) {
     return raw;
   }
   if (raw is Map) {
+    // Empty `{}` means "no items" (Prisma JSONB default), not one blank object.
+    if (raw.isEmpty) {
+      return const <dynamic>[];
+    }
     // Single attachment object → one-item list.
     return <dynamic>[raw];
   }

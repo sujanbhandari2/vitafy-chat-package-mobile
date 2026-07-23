@@ -224,7 +224,22 @@ class MessengerConversationListItem extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              child: Text(data.isOpening ? '...' : actionLabel),
+              child: data.isOpening
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(actionLabel),
+            )
+          else if (data.isOpening)
+            const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
             ),
         ],
       ),

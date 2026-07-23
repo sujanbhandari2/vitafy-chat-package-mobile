@@ -79,6 +79,38 @@ void main() {
       expect(merged.deliveredToCount, 2);
       expect(merged.readByCount, 2);
     });
+
+    test('keeps existing attachments when sparse echo omits them', () {
+      final existing = ChatMessage.fromJson({
+        'id': 'm1',
+        'conversationId': 'c1',
+        'tenantId': 't',
+        'senderId': 's1',
+        'type': 'IMAGE',
+        'content': '',
+        'createdAt': DateTime.utc(2020).toIso8601String(),
+        'attachments': [
+          {
+            'url': 'https://cdn.example/photo.jpg',
+            'mimeType': 'image/jpeg',
+            'fileName': 'photo.jpg',
+          },
+        ],
+      });
+      final incoming = ChatMessage.fromJson({
+        'id': 'm1',
+        'conversationId': 'c1',
+        'tenantId': 't',
+        'senderId': 's1',
+        'type': 'IMAGE',
+        'content': '',
+        'createdAt': DateTime.utc(2020).toIso8601String(),
+        'attachments': {},
+      });
+      final merged = mergeMessageDeliveryReadSnapshot(existing, incoming);
+      expect(merged.attachments, hasLength(1));
+      expect(merged.attachments.first.url, 'https://cdn.example/photo.jpg');
+    });
   });
 
   group('receipt appliers', () {

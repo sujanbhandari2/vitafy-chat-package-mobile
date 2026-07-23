@@ -30,6 +30,16 @@ bool _isDirectOpenBusyForUser(String openingDirectUserId, String userId) {
   return open.isNotEmpty && open == userId.trim();
 }
 
+/// Avoid treating every row as "opening" when both ids are empty (`'' == ''`).
+bool _isConversationOpenBusy(
+  String openingConversationId,
+  String? conversationId,
+) {
+  final open = openingConversationId.trim();
+  final id = conversationId?.trim() ?? '';
+  return open.isNotEmpty && id.isNotEmpty && open == id;
+}
+
 class MessengerConversationList extends StatefulWidget {
   const MessengerConversationList({
     super.key,
@@ -39,6 +49,7 @@ class MessengerConversationList extends StatefulWidget {
     required this.users,
     required this.selectedConversationId,
     required this.openingDirectUserId,
+    this.openingConversationId = '',
     required this.onRefresh,
     this.enablePullToRefresh = true,
     this.isConversationListLoading = false,
@@ -104,6 +115,12 @@ class MessengerConversationList extends StatefulWidget {
   final List<MessengerUser> users;
   final String? selectedConversationId;
   final String openingDirectUserId;
+
+  /// Conversation id currently being opened (select / join in flight).
+  ///
+  /// When non-empty, list taps are ignored and the matching row reports
+  /// [MessengerUserListItemData.isOpening] so hosts can show a spinner.
+  final String openingConversationId;
 
   /// Reloads remote data (conversations, users, etc.). Awaited by pull-to-
   /// refresh and fire-and-forgotten from the header Edit action.
@@ -597,7 +614,15 @@ class MessengerConversationListState extends State<MessengerConversationList> {
         .toList(growable: false);
   }
 
+  bool get _isOpenInFlight =>
+      widget.openingConversationId.trim().isNotEmpty ||
+      widget.openingDirectUserId.trim().isNotEmpty;
+
   Future<void> _onPeerListEntryTap(_PeerListEntry entry) async {
+    // Ignore rapid re-taps while a conversation or direct open is in flight.
+    if (_isOpenInFlight) {
+      return;
+    }
     final convId = entry.conversationId;
     if (convId != null && convId.trim().isNotEmpty) {
       await widget.onSelectConversation(convId);
@@ -610,14 +635,19 @@ class MessengerConversationListState extends State<MessengerConversationList> {
     final showOnlinePresence = _peerEntryShowsOnlinePresence(entry);
     final messagePreview =
         entry.messagePreview.isEmpty ? null : entry.messagePreview;
+    final isOpening = _isDirectOpenBusyForUser(
+          widget.openingDirectUserId,
+          entry.user.id,
+        ) ||
+        _isConversationOpenBusy(
+          widget.openingConversationId,
+          entry.conversationId,
+        );
     final data = MessengerUserListItemData(
       user: entry.user,
       isSelected: entry.isInSelectedConversation,
       hasUnread: entry.hasUnread,
-      isOpening: _isDirectOpenBusyForUser(
-        widget.openingDirectUserId,
-        entry.user.id,
-      ),
+      isOpening: isOpening,
       messagePreview: messagePreview,
       onTap: () {
         unawaited(_onPeerListEntryTap(entry));

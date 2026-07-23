@@ -71,8 +71,13 @@ class ChatSocketApi {
         case SocketEventType.messageEdited:
           yield ChatSocketEvent(
             type: ChatSocketEventType.messageEdited,
-            editedMessage:
-                MessageEditedEvent.fromJson(_mapPayload(socketEvent.payload)),
+            // Keep the outer envelope (`conversationId` + nested `message`).
+            editedMessage: MessageEditedEvent.fromJson(
+              _mapPayload(
+                socketEvent.payload,
+                unwrapNestedMessage: false,
+              ),
+            ),
           );
           break;
         case SocketEventType.conversationCreated:
@@ -86,8 +91,14 @@ class ChatSocketApi {
         case SocketEventType.conversationMessage:
           yield ChatSocketEvent(
             type: ChatSocketEventType.conversationMessage,
+            // Keep the outer envelope (`conversationId` + nested `message` +
+            // unread). Unwrapping `message` here produced empty ChatMessage
+            // bubbles ("Message" / Unknown user) on every send/receive.
             conversationMessage: ConversationMessageEvent.fromJson(
-              _mapPayload(socketEvent.payload),
+              _mapPayload(
+                socketEvent.payload,
+                unwrapNestedMessage: false,
+              ),
             ),
           );
           break;
@@ -303,25 +314,48 @@ class ChatSocketApi {
     );
   }
 
-  Map<String, dynamic> _mapPayload(dynamic payload) {
-    dynamic current = payload;
-    // Socket.IO sometimes wraps ack args as a one-element list.
-    if (current is List && current.isNotEmpty) {
-      current = current.first;
-    }
-    if (current is! Map) {
-      throw StateError(
-        'Expected JSON object for socket ack, got ${current.runtimeType}',
-      );
-    }
-    var map = Map<String, dynamic>.from(current);
-    // Some gateways nest the message under `data` / `message`.
-    final nested = map['data'] ?? map['message'];
-    if (nested is Map &&
-        (map['id'] == null) &&
-        (nested['id'] != null || nested['content'] != null)) {
-      map = Map<String, dynamic>.from(nested);
-    }
+  Map<String, dynamic> _mapPayload(
+    dynamic payload, {
+    bool unwrapNestedMessage = true,
+  }) {
+    return mapChatSocketPayload(
+      payload,
+      unwrapNestedMessage: unwrapNestedMessage,
+    );
+  }
+}
+
+/// Normalizes Socket.IO ack / event payloads to a JSON map.
+///
+/// When [unwrapNestedMessage] is true (acks / room `message` broadcasts), a
+/// nested `data` / `message` object is promoted if the outer map has no `id`.
+/// Event envelopes such as `conversation_message` must pass
+/// `unwrapNestedMessage: false` so parsers can still read outer fields and the
+/// nested message body.
+Map<String, dynamic> mapChatSocketPayload(
+  dynamic payload, {
+  bool unwrapNestedMessage = true,
+}) {
+  dynamic current = payload;
+  // Socket.IO sometimes wraps ack args as a one-element list.
+  if (current is List && current.isNotEmpty) {
+    current = current.first;
+  }
+  if (current is! Map) {
+    throw StateError(
+      'Expected JSON object for socket ack, got ${current.runtimeType}',
+    );
+  }
+  var map = Map<String, dynamic>.from(current);
+  if (!unwrapNestedMessage) {
     return map;
   }
+  // Some gateways nest the message under `data` / `message`.
+  final nested = map['data'] ?? map['message'];
+  if (nested is Map &&
+      (map['id'] == null) &&
+      (nested['id'] != null || nested['content'] != null)) {
+    map = Map<String, dynamic>.from(nested);
+  }
+  return map;
 }

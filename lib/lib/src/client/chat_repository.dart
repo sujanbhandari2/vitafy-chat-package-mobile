@@ -352,13 +352,25 @@ class ConversationMessageEvent {
     }
 
     final rawMessage = json['message'];
+    final Map<String, dynamic> messageJson;
+    if (rawMessage is Map) {
+      messageJson = Map<String, dynamic>.from(rawMessage);
+    } else if (json['id'] != null) {
+      // Flat message payload (no envelope).
+      messageJson = Map<String, dynamic>.from(json);
+    } else {
+      messageJson = const <String, dynamic>{};
+    }
+
+    final conversationId = json['conversationId']?.toString() ??
+        json['conversation_id']?.toString() ??
+        messageJson['conversationId']?.toString() ??
+        messageJson['conversation_id']?.toString() ??
+        '';
+
     return ConversationMessageEvent(
-      conversationId: json['conversationId']?.toString() ??
-          json['conversation_id']?.toString() ??
-          '',
-      message: ChatMessage.fromJson(
-        Map<String, dynamic>.from(rawMessage as Map? ?? const {}),
-      ),
+      conversationId: conversationId,
+      message: ChatMessage.fromJson(messageJson),
       unreadCount: parseNullableInt(json['unreadCount']),
       unread: parseNullableInt(json['unread']),
     );
