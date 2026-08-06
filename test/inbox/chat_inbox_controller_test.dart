@@ -206,9 +206,12 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       expect(fake.markAsReadLog, isEmpty);
+      // Joined but not viewing: unread must still increase.
+      expect(controller.unreadByConversation.value['c-open'], 1);
 
       await controller.setThreadVisible(true);
       expect(fake.markConversationReadLog, ['c-open']);
+      expect(controller.unreadByConversation.value['c-open'], isNull);
 
       fake.emitSocket(
         ChatSocketEvent(
@@ -227,6 +230,52 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       expect(fake.markAsReadLog, contains('c-open:m2'));
+
+      await controller.dispose();
+      await connection.close();
+    });
+
+    test('setActiveConversation does not clear unread until thread visible',
+        () async {
+      final fake = FakeChatRepository();
+      final client = ChatClient(
+        config: const ChatServiceConfig(
+          apiBaseUrl: 'http://localhost',
+          socketUrl: 'http://localhost',
+        ),
+        repository: fake,
+      );
+      final connection = StreamController<ChatConnectionState>.broadcast();
+      final controller = ChatInboxController(
+        client: client,
+        currentUserId: 'user-1',
+        connectionState: connection.stream,
+      );
+
+      fake.emitSocket(
+        ChatSocketEvent(
+          type: ChatSocketEventType.messageReceived,
+          message: ChatMessage.fromJson({
+            'id': 'm-pre',
+            'conversationId': 'c-badge',
+            'tenantId': 't',
+            'senderId': 'user-2',
+            'type': 'TEXT',
+            'content': 'hello',
+            'createdAt': DateTime.utc(2026).toIso8601String(),
+          }),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.unreadByConversation.value['c-badge'], 1);
+
+      await controller.setActiveConversation('c-badge');
+      expect(controller.unreadByConversation.value['c-badge'], 1);
+      expect(fake.markConversationReadLog, isEmpty);
+
+      await controller.setThreadVisible(true);
+      expect(controller.unreadByConversation.value['c-badge'], isNull);
+      expect(fake.markConversationReadLog, ['c-badge']);
 
       await controller.dispose();
       await connection.close();

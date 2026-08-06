@@ -11,6 +11,7 @@ class TenantUser {
     required this.role,
     required this.isOnline,
     required this.createdAt,
+    this.externalUserRole,
     this.avatarUrl,
     this.status,
     this.accessToken,
@@ -26,6 +27,9 @@ class TenantUser {
   /// External id from the host app (`provider_user_id` on the wire).
   final String? providerUserId;
   final AppRole role;
+
+  /// Raw host role from the API (`externalUserRole`), preserved for display.
+  final String? externalUserRole;
   final bool isOnline;
   final DateTime createdAt;
   final String? avatarUrl;
@@ -58,7 +62,16 @@ class TenantUser {
   }
 
   factory TenantUser.fromJson(Map<String, dynamic> json) {
-    final rawRole = json['role']?.toString();
+    final rawExternalRole = _firstNonEmptyString(
+      json,
+      const ['externalUserRole', 'external_user_role'],
+    );
+    final fallbackRole = _firstNonEmptyString(json, const ['role']);
+    final effectiveRawRole = rawExternalRole ??
+        (fallbackRole != null &&
+                !parseRoleIgnoresMembershipLabel(fallbackRole)
+            ? fallbackRole
+            : null);
     // Vitafy API returns `id` (ChatUser primary key). Accept aliases for robustness.
     var idStr = _firstNonEmptyString(
           json,
@@ -90,7 +103,10 @@ class TenantUser {
           '',
       name: _firstNonEmptyString(json, const ['name', 'username']) ?? '',
       email: _firstNonEmptyString(json, const ['email']) ?? '',
-      role: rawRole == null ? AppRole.client : parseRole(rawRole),
+      role: effectiveRawRole == null
+          ? AppRole.client
+          : parseRole(effectiveRawRole),
+      externalUserRole: effectiveRawRole,
       isOnline:
           json['isOnline'] as bool? ?? json['is_online'] as bool? ?? false,
       createdAt: DateTime.tryParse(
@@ -104,6 +120,8 @@ class TenantUser {
       avatarUrl: _firstNonEmptyString(
         json,
         const [
+          'profilePreviewLink',
+          'profile_preview_link',
           'avatarUrl',
           'avatar_url',
           'profile',

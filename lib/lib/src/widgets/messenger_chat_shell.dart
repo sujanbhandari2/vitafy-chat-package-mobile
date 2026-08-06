@@ -572,8 +572,23 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     return id != null && id.isNotEmpty;
   }
 
+  bool _isDesktopLayout(BuildContext context) {
+    return MediaQuery.sizeOf(context).width >= widget.desktopBreakpoint;
+  }
+
   void _syncDesktopThreadVisibility() {
+    if (!mounted || !_isDesktopLayout(context)) {
+      return;
+    }
     _reportThreadVisibility(_hasSelectedConversation());
+  }
+
+  void _syncMobileThreadVisibility() {
+    if (!mounted || _isDesktopLayout(context)) {
+      return;
+    }
+    // List pane only reports hidden; the pushed thread route reports visible.
+    _reportThreadVisibility(_mobileThreadRouteActive);
   }
 
   String? get _mediaBaseOrigin {
@@ -655,8 +670,15 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     widget.startNewChatController?.attachHandler(_startNewChatOpener);
     _mediaCache = widget.mediaCache ?? DefaultMessengerMediaCache();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
+      if (!mounted) {
+        return;
+      }
+      // Never treat a list-only mobile selection as "thread visible" — that was
+      // marking conversations read without the user opening them.
+      if (_isDesktopLayout(context)) {
         _syncDesktopThreadVisibility();
+      } else {
+        _syncMobileThreadVisibility();
       }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -802,8 +824,13 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
 
     if (oldWidget.selectedConversationId != widget.selectedConversationId) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
+        if (!mounted) {
+          return;
+        }
+        if (_isDesktopLayout(context)) {
           _syncDesktopThreadVisibility();
+        } else {
+          _syncMobileThreadVisibility();
         }
       });
     }
@@ -2031,10 +2058,11 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     return conversation.peerUsers.any((peer) => peer.id.trim() == uid);
   }
 
-  /// After [onOpenDirectChat], only reuse host [selectedConversationId] when it
-  /// changed from [beforeSelectedId] or already maps to [user]. Otherwise fall
-  /// back to an existing DM in [conversations]. Hosts signal failure by leaving
-  /// selection unchanged (no route is pushed).
+  /// After [onOpenDirectChat], prefer host [selectedConversationId] when it
+  /// changed, already maps to [user], or is the existing DM for [user].
+  ///
+  /// When the DM was already selected before open, selection is unchanged —
+  /// still return that id so the mobile thread route is pushed (re-open).
   String? _resolveMobileOpenDirectRouteId({
     required String? beforeSelectedId,
     required MessengerUser user,
@@ -2048,6 +2076,13 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
           !_conversationIdsEqual(selected, beforeSelectedId);
       final selectionMatchesUser = _conversationIncludesUser(selected, userId);
       if (selectionChanged || selectionMatchesUser) {
+        return selected;
+      }
+      // Already on this conversation (e.g. re-open from + New). Peer id lookup
+      // can miss when the picker uses platform ids and peers use chat ids.
+      if (beforeSelectedId != null &&
+          beforeSelectedId.isNotEmpty &&
+          _conversationIdsEqual(selected, beforeSelectedId)) {
         return selected;
       }
     }
@@ -2120,7 +2155,12 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   Future<void> _mobileOpenDirectChatAndShowThread(MessengerUser user) async {
     final beforeSelectedId = widget.selectedConversationId?.trim();
     setState(() => _openingDirectUserId = user.id);
-    await _runOpenDirectChat(user);
+    try {
+      await _runOpenDirectChat(user);
+    } catch (_) {
+      // Host already surfaced the error; do not push a thread route.
+      return;
+    }
     if (!mounted) {
       return;
     }
@@ -2147,7 +2187,11 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     List<MessengerUser> selectedUsers,
   ) async {
     final beforeSelectedId = widget.selectedConversationId?.trim();
-    await _runCreateGroupSelected(selectedUsers);
+    try {
+      await _runCreateGroupSelected(selectedUsers);
+    } catch (_) {
+      return;
+    }
     if (!mounted) {
       return;
     }
@@ -2171,7 +2215,11 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     MessengerGroupCreateRequest request,
   ) async {
     final beforeSelectedId = widget.selectedConversationId?.trim();
-    await _runCreateGroupRequested(request);
+    try {
+      await _runCreateGroupRequested(request);
+    } catch (_) {
+      return;
+    }
     if (!mounted) {
       return;
     }
@@ -2353,6 +2401,26 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     final searchRadius = widget.searchFieldBorderRadius ?? 12;
     final topSafeInset =
         MediaQueryData.fromView(View.of(context)).padding.top;
+    final isMobile =
+        MediaQuery.sizeOf(context).width < widget.desktopBreakpoint;
+
+    // Match the conversation-list mobile path so empty-inbox / host presenters
+    // still push the thread after create or select.
+    final Future<void> Function(MessengerUser user) openDirect = isMobile
+        ? _mobileOpenDirectChatAndShowThread
+        : _desktopOpenDirectChat;
+    final Future<void> Function(List<MessengerUser> users)? createGroupSelected =
+        widget.onCreateGroupSelected == null
+            ? null
+            : (isMobile
+                ? _mobileCreateGroupAndShowThread
+                : _runCreateGroupSelected);
+    final Future<void> Function(MessengerGroupCreateRequest request)?
+        createGroupRequested = widget.onCreateGroupRequested == null
+            ? null
+            : (isMobile
+                ? _mobileCreateNamedGroupAndShowThread
+                : _runCreateGroupRequested);
 
     widget.startNewChatDirectory?.onSearchQueryDebounced?.call('');
 
@@ -2373,15 +2441,9 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
         searchHintText: widget.searchHintText,
         emptyUsersBuilder: widget.emptyUsersBuilder,
         emptyUsersMessage: widget.emptyUsersMessage,
-        onOpenDirectChat: (user) async {
-          setState(() => _openingDirectUserId = user.id);
-          await widget.onOpenDirectChat(user);
-          if (mounted) {
-            setState(() => _openingDirectUserId = '');
-          }
-        },
-        onCreateGroupSelected: widget.onCreateGroupSelected,
-        onCreateGroupRequested: widget.onCreateGroupRequested,
+        onOpenDirectChat: openDirect,
+        onCreateGroupSelected: createGroupSelected,
+        onCreateGroupRequested: createGroupRequested,
         groupNameInputBehavior: widget.groupNameInputBehavior,
         groupNameFieldLabelText: widget.groupNameFieldLabelText,
         groupNameFieldHintText: widget.groupNameFieldHintText,
@@ -2401,6 +2463,9 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
         context: context,
         mode: mode,
         buildPicker: buildPicker,
+        onOpenDirectChat: openDirect,
+        onCreateGroupRequested: createGroupRequested,
+        onCreateGroupSelected: createGroupSelected,
         presenter: widget.startNewChatPresenter,
         topSafeInset: topSafeInset,
       );
@@ -2609,17 +2674,19 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
           )
         : _buildMobileConversationPane();
 
-    if (isDesktop) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _syncDesktopThreadVisibility();
-        }
-      });
-    } else if (!_mobileThreadRouteActive) {
-      // List pane only — do not clear visibility while a thread route is open
-      // (rebuilds of this shell under the route would reintroduce host insets).
-      _reportThreadVisibility(false);
-    }
+    // Visibility must not be reported during build (side effects). Sync after
+    // the frame so list-only mobile never stays marked visible from a prior
+    // desktop-style selection sync.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      if (isDesktop) {
+        _syncDesktopThreadVisibility();
+      } else {
+        _syncMobileThreadVisibility();
+      }
+    });
 
     final scoped = MessengerMediaCacheScope(
       cache: _mediaCache,

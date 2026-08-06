@@ -92,6 +92,11 @@ class ChatInboxController {
     }
     _threadVisible = visible;
     if (visible) {
+      final active = _activeConversationId?.trim();
+      if (active != null && active.isNotEmpty) {
+        // Clear the badge only once the thread is actually on screen.
+        clearLocalUnread(active);
+      }
       await _markActiveConversationRead();
     }
   }
@@ -177,15 +182,17 @@ class ChatInboxController {
     if (previous == next) {
       await _joinActiveRoom(next);
       if (_threadVisible) {
+        clearLocalUnread(next);
         await _markActiveConversationRead();
       }
       return;
     }
 
-    // Optimistic clear only when switching threads (matches web selectConversation).
-    clearLocalUnread(next);
+    // Join the room for realtime, but only clear/mark read while the thread UI
+    // is on screen. Clearing on join alone made list-only selection look "seen".
     await _joinActiveRoom(next);
     if (_threadVisible) {
+      clearLocalUnread(next);
       await _markActiveConversationRead();
     }
   }
@@ -296,12 +303,18 @@ class ChatInboxController {
       bumpConversation(cid);
     }
 
+    // Treat a conversation as "open for unread/read policy" only while the
+    // thread UI is visible. Being joined/selected in the background must not
+    // suppress unread badges or imply the user has read new messages.
+    final openConversationId =
+        _threadVisible ? _activeConversationId : null;
+
     if (message.senderId == _currentUserId) {
       _unreadNotifier.value = UnreadMerger.applyOwnMessageInActiveThread(
         _unreadNotifier.value,
         message,
         currentUserId: _currentUserId,
-        activeConversationId: _activeConversationId,
+        activeConversationId: openConversationId,
       );
       return;
     }
@@ -312,7 +325,7 @@ class ChatInboxController {
         _unreadNotifier.value,
         message,
         currentUserId: _currentUserId,
-        activeConversationId: _activeConversationId,
+        activeConversationId: openConversationId,
         conversationMessageSeen: seen,
       );
     }

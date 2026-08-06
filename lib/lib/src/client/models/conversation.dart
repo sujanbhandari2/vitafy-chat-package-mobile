@@ -398,6 +398,31 @@ class ConversationParticipant {
       userMap['id'] = participantChatUserId;
     }
 
+    // Promote participant-level profile fields when nested chatUser omits them.
+    for (final key in const [
+      'profilePreviewLink',
+      'profile_preview_link',
+      'avatarUrl',
+      'avatar_url',
+      'profile',
+      'profilePicture',
+      'profile_picture',
+      'externalUserId',
+      'external_user_id',
+      'email',
+    ]) {
+      final nested = userMap[key];
+      final nestedEmpty = nested == null || nested.toString().trim().isEmpty;
+      if (!nestedEmpty) {
+        continue;
+      }
+      final fromParticipant = json[key];
+      if (fromParticipant != null &&
+          fromParticipant.toString().trim().isNotEmpty) {
+        userMap[key] = fromParticipant;
+      }
+    }
+
     return ConversationParticipant(
       id: json['id']?.toString() ?? '',
       userId:
@@ -413,6 +438,7 @@ class ConversationParticipantUser {
     required this.id,
     required this.username,
     required this.role,
+    this.externalUserRole,
     this.email,
     this.avatarUrl,
     this.status,
@@ -422,16 +448,29 @@ class ConversationParticipantUser {
   final String id;
   final String username;
   final AppRole role;
+
+  /// Raw host role from the API (`externalUserRole`), preserved for display.
+  /// Prefer this over [role].label when showing badges — [parseRole] collapses
+  /// many Vitafy roles into three enum values.
+  final String? externalUserRole;
   final String? email;
   final String? avatarUrl;
   final String? status;
   final bool isOnline;
 
   factory ConversationParticipantUser.fromJson(Map<String, dynamic> json) {
-    final rawRole = _firstNonEmpty(
+    // Prefer externalUserRole. Do not treat conversation membership `role`
+    // (MEMBER/OWNER) as the user's tenant role.
+    final rawExternalRole = _firstNonEmpty(
       json,
-      const ['externalUserRole', 'external_user_role', 'role'],
+      const ['externalUserRole', 'external_user_role'],
     );
+    final fallbackRole = _firstNonEmpty(json, const ['role']);
+    final effectiveRawRole = rawExternalRole ??
+        (fallbackRole != null &&
+                !parseRoleIgnoresMembershipLabel(fallbackRole)
+            ? fallbackRole
+            : null);
     final idStr =
         _firstNonEmpty(json, const ['id', 'chatUserId', 'chat_user_id'])
                 ?.trim() ??
@@ -440,11 +479,16 @@ class ConversationParticipantUser {
     return ConversationParticipantUser(
       id: idStr,
       username: label,
-      role: rawRole == null ? AppRole.client : parseRole(rawRole),
+      role: effectiveRawRole == null
+          ? AppRole.client
+          : parseRole(effectiveRawRole),
+      externalUserRole: effectiveRawRole,
       email: _firstNonEmpty(json, const ['email']),
       avatarUrl: _firstNonEmpty(
         json,
         const [
+          'profilePreviewLink',
+          'profile_preview_link',
           'avatarUrl',
           'avatar_url',
           'profile',

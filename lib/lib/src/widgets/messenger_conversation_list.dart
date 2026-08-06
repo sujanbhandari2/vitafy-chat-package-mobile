@@ -956,6 +956,19 @@ class MessengerConversationListState extends State<MessengerConversationList> {
         context: context,
         mode: mode,
         buildPicker: buildPicker,
+        onOpenDirectChat: (user) async {
+          await widget.onOpenDirectChat(user);
+        },
+        onCreateGroupRequested: widget.onCreateGroupRequested == null
+            ? null
+            : (request) async {
+                await widget.onCreateGroupRequested!(request);
+              },
+        onCreateGroupSelected: widget.onCreateGroupSelected == null
+            ? null
+            : (users) async {
+                await widget.onCreateGroupSelected!(users);
+              },
         presenter: widget.startNewChatPresenter,
         topSafeInset: topSafeInset,
       );

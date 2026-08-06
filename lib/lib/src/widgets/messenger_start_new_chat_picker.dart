@@ -67,12 +67,20 @@ Future<void> presentMessengerStartNewChat({
   required BuildContext context,
   required MessengerStartNewChatMode mode,
   required Widget Function() buildPicker,
+  required Future<void> Function(MessengerUser user) onOpenDirectChat,
+  Future<void> Function(MessengerGroupCreateRequest request)?
+      onCreateGroupRequested,
+  Future<void> Function(List<MessengerUser> selectedUsers)?
+      onCreateGroupSelected,
   MessengerStartNewChatPresenter? presenter,
   double? topSafeInset,
 }) {
   final request = MessengerStartNewChatOpenRequest(
     mode: mode,
     buildPicker: buildPicker,
+    onOpenDirectChat: onOpenDirectChat,
+    onCreateGroupRequested: onCreateGroupRequested,
+    onCreateGroupSelected: onCreateGroupSelected,
   );
   if (presenter != null) {
     return presenter(context, request);
