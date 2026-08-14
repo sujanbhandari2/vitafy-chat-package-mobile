@@ -163,6 +163,30 @@ class UnreadMerger {
     return next;
   }
 
+  /// When a peer adds a reaction and the thread is not open, mark the
+  /// conversation unread (bold preview in the list).
+  static Map<String, int> incrementForReaction(
+    Map<String, int> previous,
+    MessageReaction reaction, {
+    required String currentUserId,
+    String? activeConversationId,
+  }) {
+    if (reaction.userId.trim() == currentUserId.trim()) {
+      return previous;
+    }
+    final cid = reaction.conversationId?.trim() ?? '';
+    if (cid.isEmpty) {
+      return previous;
+    }
+    final active = activeConversationId?.trim() ?? '';
+    if (active.isNotEmpty && cid == active) {
+      return previous;
+    }
+    final next = Map<String, int>.from(previous);
+    next[cid] = (next[cid] ?? 0) + 1;
+    return next;
+  }
+
   /// Clears local unread when you send while the thread is open (web parity).
   static Map<String, int> applyOwnMessageInActiveThread(
     Map<String, int> previous,

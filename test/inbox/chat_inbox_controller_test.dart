@@ -536,5 +536,101 @@ void main() {
       await controller.dispose();
       await connection.close();
     });
+
+    test('messageReacted bumps conversation order', () async {
+      final fake = FakeChatRepository();
+      final client = ChatClient(
+        config: const ChatServiceConfig(
+          apiBaseUrl: 'http://localhost',
+          socketUrl: 'http://localhost',
+        ),
+        repository: fake,
+      );
+      final connection = StreamController<ChatConnectionState>.broadcast();
+      final controller = ChatInboxController(
+        client: client,
+        currentUserId: 'user-1',
+        connectionState: connection.stream,
+      );
+
+      final reactedAt = DateTime.utc(2026, 3, 1, 12);
+      fake.emitSocket(
+        ChatSocketEvent(
+          type: ChatSocketEventType.messageReacted,
+          reaction: MessageReaction.fromJson({
+            'id': 'r1',
+            'messageId': 'm1',
+            'userId': 'user-2',
+            'conversationId': 'c-react',
+            'reactionType': '😂',
+            'createdAt': reactedAt.toIso8601String(),
+          }),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        controller.conversationOrder.value.promotedAt['c-react'],
+        reactedAt,
+      );
+      expect(controller.unreadByConversation.value['c-react'], 1);
+
+      await controller.dispose();
+      await connection.close();
+    });
+
+    test('messageReacted does not unread own reaction in open thread',
+        () async {
+      final fake = FakeChatRepository();
+      final client = ChatClient(
+        config: const ChatServiceConfig(
+          apiBaseUrl: 'http://localhost',
+          socketUrl: 'http://localhost',
+        ),
+        repository: fake,
+      );
+      final connection = StreamController<ChatConnectionState>.broadcast();
+      final controller = ChatInboxController(
+        client: client,
+        currentUserId: 'user-1',
+        connectionState: connection.stream,
+      );
+
+      await controller.setActiveConversation('c-open');
+      await controller.setThreadVisible(true);
+
+      fake.emitSocket(
+        ChatSocketEvent(
+          type: ChatSocketEventType.messageReacted,
+          reaction: MessageReaction.fromJson({
+            'id': 'r-self',
+            'messageId': 'm1',
+            'userId': 'user-1',
+            'conversationId': 'c-open',
+            'reactionType': '👍',
+          }),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.unreadByConversation.value['c-open'], isNull);
+
+      fake.emitSocket(
+        ChatSocketEvent(
+          type: ChatSocketEventType.messageReacted,
+          reaction: MessageReaction.fromJson({
+            'id': 'r-peer',
+            'messageId': 'm1',
+            'userId': 'user-2',
+            'conversationId': 'c-open',
+            'reactionType': '😂',
+          }),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.unreadByConversation.value['c-open'], isNull);
+
+      await controller.dispose();
+      await connection.close();
+    });
   });
 }

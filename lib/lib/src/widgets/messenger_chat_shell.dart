@@ -11,6 +11,7 @@ import '../client/inbox/delivery_status.dart';
 import '../client/models/chat_message.dart';
 import '../models/messenger_conversation.dart';
 import '../models/messenger_group_create_request.dart';
+import '../models/messenger_inbox_people.dart';
 import '../models/messenger_message.dart';
 import '../models/messenger_thread_fetch_loading_mode.dart';
 import '../models/messenger_thread_loading_style.dart';
@@ -38,10 +39,33 @@ import 'messenger_media_send_orchestrator.dart';
 import 'messenger_start_new_chat_controller.dart';
 import 'messenger_start_new_chat_picker.dart';
 
+String _messengerRemoteTypingKey(List<MessengerTypingUser> users) {
+  if (users.isEmpty) {
+    return '';
+  }
+  return users.map((user) => user.userId).join('\u0001');
+}
+
+String _messengerDeliveryStatusKey(List<MessengerChatMessage> messages) {
+  final buffer = StringBuffer();
+  for (final message in messages) {
+    if (message.deliveryStatus == MessengerDeliveryStatus.none) {
+      continue;
+    }
+    buffer
+      ..write(message.id)
+      ..write(':')
+      ..write(message.deliveryStatus.name)
+      ..write(';');
+  }
+  return buffer.toString();
+}
+
 class MessengerChatShell extends StatefulWidget {
   const MessengerChatShell({
     super.key,
     required this.currentUserId,
+    this.currentPlatformUserId,
     required this.currentUserName,
     required this.conversations,
     required this.users,
@@ -175,11 +199,25 @@ class MessengerChatShell extends StatefulWidget {
     this.onDeleteConversation,
     this.composerReplyDraft,
     this.onComposerReplyDraftChanged,
+    this.composerEditMessageId,
     this.composerFocusNode,
     this.attachmentCaptionTextStyle,
     this.attachmentOptionTextStyle,
     this.packageDialogTheme,
     this.threadViewOverrides,
+    this.showAvailablePeopleOnMobileInbox = false,
+    this.availablePeopleUsers,
+    this.conversationSectionHeaderBuilder,
+    this.availablePeopleSectionHeaderBuilder,
+    this.availablePeopleItemBuilder,
+    this.availablePeopleEmptyMessage =
+        'No more people available to start a chat with.',
+    this.showAssociatedPeopleOnThread = false,
+    this.associatedPeopleUsers,
+    this.associatedPeopleSectionHeaderBuilder,
+    this.associatedPeopleItemBuilder,
+    this.associatedPeopleEmptyMessage =
+        'No more associated people available to start a chat with.',
     this.mediaCache,
     this.mediaCacheHeaders,
     this.mediaCacheHeadersForUrl,
@@ -188,6 +226,7 @@ class MessengerChatShell extends StatefulWidget {
   });
 
   final String currentUserId;
+  final String? currentPlatformUserId;
   final String currentUserName;
   final List<MessengerConversation> conversations;
   final List<MessengerUser> users;
@@ -484,6 +523,9 @@ class MessengerChatShell extends StatefulWidget {
   /// Host owns draft state; invoked when the user swipes to reply or cancels.
   final ValueChanged<MessengerComposerReplyDraft?>? onComposerReplyDraftChanged;
 
+  /// When set, the thread composer is editing this message id (host-owned).
+  final String? composerEditMessageId;
+
   /// Optional [FocusNode] for the thread composer field.
   final FocusNode? composerFocusNode;
 
@@ -497,6 +539,46 @@ class MessengerChatShell extends StatefulWidget {
 
   /// Optional host overrides for thread header, messages, and composer.
   final MessengerThreadViewOverrides? threadViewOverrides;
+
+  /// When true on mobile, appends a deduplicated available-people section below
+  /// conversation rows in the inbox list. Defaults to false (v1 unchanged).
+  final bool showAvailablePeopleOnMobileInbox;
+
+  /// People directory for the optional mobile available-people section.
+  final List<MessengerUser>? availablePeopleUsers;
+
+  /// Optional header above conversation rows when
+  /// [showAvailablePeopleOnMobileInbox] is active.
+  final Widget Function(BuildContext context, int conversationEntryCount)?
+      conversationSectionHeaderBuilder;
+
+  /// Optional header above the available-people inbox section.
+  final Widget Function(BuildContext context, int availablePeopleCount)?
+      availablePeopleSectionHeaderBuilder;
+
+  /// Custom row builder for available people without a conversation.
+  final Widget Function(BuildContext context, MessengerAvailablePersonData data)?
+      availablePeopleItemBuilder;
+
+  /// Empty copy for the available-people inbox section.
+  final String availablePeopleEmptyMessage;
+
+  /// When true, shows associated people below the conversation thread header.
+  final bool showAssociatedPeopleOnThread;
+
+  /// People directory for the optional associated-people thread panel.
+  final List<MessengerUser>? associatedPeopleUsers;
+
+  /// Optional header above associated people in the open thread.
+  final Widget Function(BuildContext context, int associatedPeopleCount)?
+      associatedPeopleSectionHeaderBuilder;
+
+  /// Custom builder for associated people rows in the open thread.
+  final Widget Function(BuildContext context, MessengerAvailablePersonData data)?
+      associatedPeopleItemBuilder;
+
+  /// Empty copy for the associated-people thread panel.
+  final String associatedPeopleEmptyMessage;
 
   /// Optional disk cache for message images and voice. Defaults to
   /// [DefaultMessengerMediaCache] when null.
@@ -807,7 +889,12 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
             oldWidget.isConversationLoading != widget.isConversationLoading ||
             oldWidget.loadingConversationId != widget.loadingConversationId ||
             oldWidget.composerReplyDraft?.targetMessageId !=
-                widget.composerReplyDraft?.targetMessageId;
+                widget.composerReplyDraft?.targetMessageId ||
+            oldWidget.composerEditMessageId != widget.composerEditMessageId ||
+            _messengerRemoteTypingKey(oldWidget.remoteTypingUsers) !=
+                _messengerRemoteTypingKey(widget.remoteTypingUsers) ||
+            _messengerDeliveryStatusKey(oldWidget.messages) !=
+                _messengerDeliveryStatusKey(widget.messages);
     if (shouldRefreshMobileThread) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
@@ -1129,6 +1216,19 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
               mobileRouteContextForDeletePop,
               widget.onDeleteConversation,
             ),
+      showAssociatedPeopleOnThread: widget.showAssociatedPeopleOnThread,
+      associatedPeopleUsers: widget.associatedPeopleUsers ??
+          widget.availablePeopleUsers ??
+          widget.users,
+      associatedPeopleSectionHeaderBuilder:
+          widget.associatedPeopleSectionHeaderBuilder,
+      associatedPeopleItemBuilder: widget.associatedPeopleItemBuilder,
+      associatedPeopleEmptyMessage: widget.associatedPeopleEmptyMessage,
+      openingDirectUserId: _openingDirectUserId,
+      currentPlatformUserId: widget.currentPlatformUserId,
+      onOpenAssociatedPerson: isMobile
+          ? _mobileOpenDirectChatAndShowThread
+          : _desktopOpenDirectChat,
     );
   }
 
@@ -2485,6 +2585,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       key: _conversationListKey,
       isMobile: false,
       currentUserId: widget.currentUserId,
+      currentPlatformUserId: widget.currentPlatformUserId,
       currentUserName: widget.currentUserName,
       conversations: widget.conversations,
       users: widget.users,
@@ -2552,6 +2653,15 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       userListItemSpacing: widget.userListItemSpacing,
       userListItemStyle: widget.userListItemStyle,
       userListItemBuilder: widget.userListItemBuilder,
+      showAvailablePeopleOnMobileInbox:
+          widget.showAvailablePeopleOnMobileInbox,
+      availablePeopleUsers: widget.availablePeopleUsers,
+      conversationSectionHeaderBuilder:
+          widget.conversationSectionHeaderBuilder,
+      availablePeopleSectionHeaderBuilder:
+          widget.availablePeopleSectionHeaderBuilder,
+      availablePeopleItemBuilder: widget.availablePeopleItemBuilder,
+      availablePeopleEmptyMessage: widget.availablePeopleEmptyMessage,
     );
   }
 
@@ -2563,6 +2673,7 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       key: _conversationListKey,
       isMobile: true,
       currentUserId: widget.currentUserId,
+      currentPlatformUserId: widget.currentPlatformUserId,
       currentUserName: widget.currentUserName,
       conversations: widget.conversations,
       users: widget.users,
@@ -2651,6 +2762,15 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       userListItemSpacing: widget.userListItemSpacing,
       userListItemStyle: widget.userListItemStyle,
       userListItemBuilder: widget.userListItemBuilder,
+      showAvailablePeopleOnMobileInbox:
+          widget.showAvailablePeopleOnMobileInbox,
+      availablePeopleUsers: widget.availablePeopleUsers,
+      conversationSectionHeaderBuilder:
+          widget.conversationSectionHeaderBuilder,
+      availablePeopleSectionHeaderBuilder:
+          widget.availablePeopleSectionHeaderBuilder,
+      availablePeopleItemBuilder: widget.availablePeopleItemBuilder,
+      availablePeopleEmptyMessage: widget.availablePeopleEmptyMessage,
     );
   }
 

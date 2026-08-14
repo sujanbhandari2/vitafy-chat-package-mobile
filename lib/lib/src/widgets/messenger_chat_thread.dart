@@ -6,7 +6,9 @@ import 'package:flutter/scheduler.dart';
 import '../models/messenger_conversation.dart';
 import '../models/messenger_message.dart';
 import '../models/messenger_attachment.dart';
+import '../models/messenger_inbox_people.dart';
 import '../models/messenger_thread_fetch_loading_mode.dart';
+import '../models/messenger_user.dart';
 import '../models/messenger_thread_loading_style.dart';
 import '../models/messenger_thread_view_overrides.dart';
 import '../models/messenger_typing.dart';
@@ -16,6 +18,7 @@ import 'messenger_media_send_orchestrator.dart';
 import 'messenger_default_inline_loading.dart';
 import 'messenger_incoming_seen_reporter.dart';
 import 'messenger_message_bubble.dart';
+import 'messenger_thread_associated_people_panel.dart';
 import '../theme/messenger_theme.dart';
 import '../utils/messenger_thread_scroll.dart';
 
@@ -92,6 +95,15 @@ class MessengerChatThread extends StatefulWidget {
     this.onDismissMobileThreadAfterConversationDelete,
     this.packageDialogTheme,
     this.threadViewOverrides,
+    this.showAssociatedPeopleOnThread = false,
+    this.associatedPeopleUsers,
+    this.associatedPeopleSectionHeaderBuilder,
+    this.associatedPeopleItemBuilder,
+    this.associatedPeopleEmptyMessage =
+        'No more associated people available to start a chat with.',
+    this.openingDirectUserId = '',
+    this.onOpenAssociatedPerson,
+    this.currentPlatformUserId,
   });
 
   final MessengerConversation? conversation;
@@ -191,6 +203,32 @@ class MessengerChatThread extends StatefulWidget {
 
   /// Optional overrides for header, bubbles, composer, and floating overlay.
   final MessengerThreadViewOverrides? threadViewOverrides;
+
+  /// When true, shows associated people below the thread header (opt-in v2).
+  final bool showAssociatedPeopleOnThread;
+
+  /// Tenant directory for the optional associated-people thread panel.
+  final List<MessengerUser>? associatedPeopleUsers;
+
+  /// Optional header above associated people in the thread panel.
+  final Widget Function(BuildContext context, int associatedPeopleCount)?
+      associatedPeopleSectionHeaderBuilder;
+
+  /// Custom row builder for associated people in the thread panel.
+  final Widget Function(BuildContext context, MessengerAvailablePersonData data)?
+      associatedPeopleItemBuilder;
+
+  /// Empty copy when every associated person is already in this conversation.
+  final String associatedPeopleEmptyMessage;
+
+  /// Mirrors inbox direct-open busy state for associated-person taps.
+  final String openingDirectUserId;
+
+  /// Opens a direct chat when an associated person is tapped in the thread.
+  final FutureOr<void> Function(MessengerUser user)? onOpenAssociatedPerson;
+
+  /// Optional platform user id excluded from associated people (matches inbox).
+  final String? currentPlatformUserId;
 
   @override
   State<MessengerChatThread> createState() => _MessengerChatThreadState();
@@ -520,6 +558,20 @@ class _MessengerChatThreadState extends State<MessengerChatThread> {
     final stage = Column(
       children: [
         header,
+        if (widget.showAssociatedPeopleOnThread &&
+            widget.conversation != null &&
+            widget.onOpenAssociatedPerson != null)
+          MessengerThreadAssociatedPeoplePanel(
+            conversation: widget.conversation,
+            allPeople: widget.associatedPeopleUsers ?? const [],
+            currentUserId: widget.currentUserId,
+            currentPlatformUserId: widget.currentPlatformUserId,
+            openingDirectUserId: widget.openingDirectUserId,
+            onOpenAssociatedPerson: widget.onOpenAssociatedPerson,
+            sectionHeaderBuilder: widget.associatedPeopleSectionHeaderBuilder,
+            itemBuilder: widget.associatedPeopleItemBuilder,
+            emptyMessage: widget.associatedPeopleEmptyMessage,
+          ),
         Expanded(
           child: ClipRect(child: messageViewport),
         ),

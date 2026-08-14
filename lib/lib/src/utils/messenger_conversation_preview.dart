@@ -3,6 +3,20 @@ import '../models/messenger_message.dart';
 import '../models/messenger_message_attachment.dart';
 import 'messenger_media_url.dart';
 
+/// Whether a reaction should replace the last-message preview in the inbox.
+///
+/// Reactions at or after the latest message timestamp count as the newest
+/// activity (same as treating a reaction like a new message for list previews).
+bool messengerReactionIsLatestInboxActivity({
+  required DateTime reactionCreatedAt,
+  DateTime? latestMessageCreatedAt,
+}) {
+  if (latestMessageCreatedAt == null) {
+    return true;
+  }
+  return !reactionCreatedAt.isBefore(latestMessageCreatedAt);
+}
+
 /// Inbox / conversation-list last-message preview for a server [ChatMessage].
 ///
 /// Uses the same media labels as [messengerReplyPreviewSnippet] (Photo, Voice

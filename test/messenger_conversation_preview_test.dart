@@ -30,6 +30,32 @@ void main() {
     );
   }
 
+  test('messengerReactionIsLatestInboxActivity treats equal timestamps as latest',
+      () {
+    final at = DateTime.utc(2026, 2, 1, 10);
+    expect(
+      messengerReactionIsLatestInboxActivity(
+        reactionCreatedAt: at,
+        latestMessageCreatedAt: at,
+      ),
+      isTrue,
+    );
+    expect(
+      messengerReactionIsLatestInboxActivity(
+        reactionCreatedAt: at,
+        latestMessageCreatedAt: at.subtract(const Duration(seconds: 1)),
+      ),
+      isTrue,
+    );
+    expect(
+      messengerReactionIsLatestInboxActivity(
+        reactionCreatedAt: at,
+        latestMessageCreatedAt: at.add(const Duration(seconds: 1)),
+      ),
+      isFalse,
+    );
+  });
+
   test('deleted message shows Message deleted', () {
     expect(
       messengerConversationPreview(

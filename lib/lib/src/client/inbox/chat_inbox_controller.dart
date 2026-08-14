@@ -242,6 +242,25 @@ class ChatInboxController {
           _onInboundMessage(message, fromConversationMessage: false);
         }
         break;
+      case ChatSocketEventType.messageReacted:
+        final reaction = event.reaction;
+        if (reaction != null) {
+          final cid = reaction.conversationId?.trim() ?? '';
+          if (cid.isNotEmpty) {
+            bumpConversation(
+              cid,
+              at: reaction.createdAt ?? DateTime.now(),
+            );
+            _unreadNotifier.value = UnreadMerger.incrementForReaction(
+              _unreadNotifier.value,
+              reaction,
+              currentUserId: _currentUserId,
+              activeConversationId:
+                  _threadVisible ? _activeConversationId : null,
+            );
+          }
+        }
+        break;
       case ChatSocketEventType.conversationMessage:
         final cm = event.conversationMessage;
         if (cm != null) {

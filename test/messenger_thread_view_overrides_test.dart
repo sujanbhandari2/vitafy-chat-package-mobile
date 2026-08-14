@@ -113,6 +113,7 @@ void main() {
 
       expect(find.text('Alice Jones'), findsOneWidget);
       expect(find.text('Hello world'), findsOneWidget);
+      expect(find.text('AJ'), findsOneWidget);
       expect(find.byType(MessengerComposerBar), findsOneWidget);
       expect(find.text('Type your message...'), findsOneWidget);
     });

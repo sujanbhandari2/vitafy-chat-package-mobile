@@ -467,5 +467,55 @@ void main() {
       );
       expect(out.containsKey('c1'), isFalse);
     });
+
+    test('incrementForReaction marks peer reaction unread when thread closed',
+        () {
+      final reaction = MessageReaction.fromJson({
+        'id': 'r1',
+        'messageId': 'm1',
+        'userId': 'peer',
+        'conversationId': 'c1',
+        'reactionType': '😂',
+      });
+      final out = UnreadMerger.incrementForReaction(
+        {},
+        reaction,
+        currentUserId: 'me',
+      );
+      expect(out['c1'], 1);
+    });
+
+    test('incrementForReaction ignores own reaction', () {
+      final reaction = MessageReaction.fromJson({
+        'id': 'r1',
+        'messageId': 'm1',
+        'userId': 'me',
+        'conversationId': 'c1',
+        'reactionType': '😂',
+      });
+      final out = UnreadMerger.incrementForReaction(
+        {},
+        reaction,
+        currentUserId: 'me',
+      );
+      expect(out, isEmpty);
+    });
+
+    test('incrementForReaction ignores peer reaction in open thread', () {
+      final reaction = MessageReaction.fromJson({
+        'id': 'r1',
+        'messageId': 'm1',
+        'userId': 'peer',
+        'conversationId': 'c1',
+        'reactionType': '😂',
+      });
+      final out = UnreadMerger.incrementForReaction(
+        {},
+        reaction,
+        currentUserId: 'me',
+        activeConversationId: 'c1',
+      );
+      expect(out, isEmpty);
+    });
   });
 }

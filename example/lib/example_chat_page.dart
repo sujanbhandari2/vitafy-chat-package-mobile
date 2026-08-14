@@ -104,6 +104,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   String _suggestedPeopleOpeningUserId = '';
   String _suggestedPeopleSearchQuery = '';
   bool _isCreatingSuggestedGroup = false;
+  bool _showAvailablePeopleOnMobileInbox = true;
 
   static const int _splitDirectoryPageSize = 8;
   List<MessengerUser> _suggestedDirectoryVisible = const [];
@@ -2560,6 +2561,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
           )
           .toList(growable: false);
     });
+    _session?.inbox.bumpConversation(
+      conversationId,
+      at: reaction.createdAt ?? DateTime.now(),
+    );
   }
 
   void _applyReactionRemoval(
@@ -2696,7 +2701,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     }
     final candidate = _latestReactionFromMessageReaction(reaction);
     final previous = conversation.latestReaction;
-    if (previous != null && !candidate.createdAt.isAfter(previous.createdAt)) {
+    if (previous != null &&
+        candidate.createdAt.isBefore(previous.createdAt)) {
       return conversation;
     }
     final nextUpdatedAt = candidate.createdAt.isAfter(conversation.updatedAt)
@@ -3015,8 +3021,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     final previewSource = _newestChatMessage(localLatest, restLatest);
     final latestReaction = conversation.latestReaction;
     final reactionIsLatest = latestReaction != null &&
-        (previewSource == null ||
-            latestReaction.createdAt.isAfter(previewSource.createdAt));
+        messengerReactionIsLatestInboxActivity(
+          reactionCreatedAt: latestReaction.createdAt,
+          latestMessageCreatedAt: previewSource?.createdAt,
+        );
     final subtitle = previewSource == null
         ? '${conversation.type} conversation'
         : _messagePreview(previewSource);
@@ -3510,6 +3518,191 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     );
   }
 
+  bool get _useMobileInboxAvailablePeople =>
+      _uiVersion == ExampleMessengerUiVersion.v2 &&
+      _showAvailablePeopleOnMobileInbox;
+
+  /// Full tenant directory for the optional mobile inbox people section.
+  /// Uses the same pool as start-new-chat (_uiUsers / dummy associated users).
+  List<MessengerUser> get _availablePeopleUsersForMobileInbox =>
+      _splitDirectoryPool;
+
+  Widget _exampleInboxSectionHeader({
+    required String title,
+    required int count,
+    required Color accent,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
+      child: Row(
+        children: [
+          Container(
+            width: 4,
+            height: 18,
+            decoration: BoxDecoration(
+              color: accent,
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            title,
+            style: TextStyle(
+              color: accent,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.2,
+            ),
+          ),
+          const Spacer(),
+          Text(
+            '$count',
+            style: TextStyle(
+              color: accent.withValues(alpha: 0.75),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _exampleConversationInboxRow(
+    BuildContext context,
+    MessengerUserListItemData data,
+  ) {
+    return Card(
+      elevation: 0,
+      color: data.isSelected
+          ? const Color(0xFFE0F2F1)
+          : const Color(0xFFF8FAFC),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(
+          color: data.hasUnread
+              ? const Color(0xFF0D9488)
+              : const Color(0xFFE2E8F0),
+        ),
+      ),
+      child: ListTile(
+        onTap: data.onTap,
+        title: Text(
+          data.displayTitle,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        subtitle: Text(data.subtitle),
+        trailing: data.isOpening
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : null,
+      ),
+    );
+  }
+
+  Widget _exampleAvailablePersonInboxRow(
+    BuildContext context,
+    MessengerAvailablePersonData data,
+  ) {
+    return Card(
+      elevation: 0,
+      color: const Color(0xFFFFF7ED),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: Color(0xFFFED7AA)),
+      ),
+      child: ListTile(
+        onTap: data.onTap,
+        leading: CircleAvatar(
+          backgroundColor: const Color(0xFFFB923C),
+          child: Text(
+            conversationListItemInitials(data.user.username),
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+          ),
+        ),
+        title: Text(
+          conversationListItemDisplayName(data.user.username),
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        subtitle: Text(
+          data.user.roleLabel.trim().isEmpty
+              ? 'Start a new conversation'
+              : '${data.user.roleLabel} • Start a new conversation',
+        ),
+        trailing: data.isOpening
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.chat_bubble_outline_rounded, size: 18),
+      ),
+    );
+  }
+
+  Widget _exampleThreadAssociatedPersonChip(
+    BuildContext context,
+    MessengerAvailablePersonData data,
+  ) {
+    return Material(
+      color: const Color(0xFFFFF7ED),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: data.isOpening ? null : data.onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          width: 84,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFFED7AA)),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: const Color(0xFFFB923C),
+                backgroundImage: data.user.avatarUrl == null
+                    ? null
+                    : NetworkImage(data.user.avatarUrl!),
+                child: data.user.avatarUrl == null
+                    ? Text(
+                        conversationListItemInitials(data.user.username),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 11,
+                        ),
+                      )
+                    : null,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                conversationListItemDisplayName(data.user.username),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF9A3412),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentUserName = _currentUser?.displayName ?? 'Example user';
@@ -3531,6 +3724,20 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                   _startNewChatController.openGroupChatPicker(context),
               tooltip: 'New group (host entry point)',
               icon: const Icon(Icons.group_add_outlined),
+            ),
+            IconButton(
+              onPressed: () => setState(
+                () => _showAvailablePeopleOnMobileInbox =
+                    !_showAvailablePeopleOnMobileInbox,
+              ),
+              tooltip: _showAvailablePeopleOnMobileInbox
+                  ? 'Mobile inbox: hide available people section'
+                  : 'Mobile inbox: show available people section (v2)',
+              icon: Icon(
+                _showAvailablePeopleOnMobileInbox
+                    ? Icons.person_search_rounded
+                    : Icons.person_search_outlined,
+              ),
             ),
           ],
           IconButton(
@@ -3605,6 +3812,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                         'Push: ${_pushIntegrationReady ? 'on' : 'off'}  |  '
                         'Empty inbox: ${_useCustomEmptyInbox ? 'custom' : 'suggested'}  |  '
                         'Start chat: ${_uiVersion == ExampleMessengerUiVersion.v2 ? 'v2 host' : 'v1 package'}  |  '
+                        'People (inbox+thread): ${_useMobileInboxAvailablePeople ? 'on' : 'off'}  |  '
                         '$_statusText',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: const Color(0xFF475569),
@@ -3644,6 +3852,31 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           ),
                         ],
                       ),
+                      if (_uiVersion == ExampleMessengerUiVersion.v2) ...[
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Show Chats + People on mobile inbox (v2 opt-in)',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelLarge
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFF334155),
+                                    ),
+                              ),
+                            ),
+                            Switch.adaptive(
+                              value: _showAvailablePeopleOnMobileInbox,
+                              onChanged: (value) => setState(
+                                () => _showAvailablePeopleOnMobileInbox = value,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -3737,6 +3970,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                         // composer, floating overlay). Enabled for v2 custom demo.
                         final useConversationV2 = _conversationUiVersion ==
                             ExampleConversationUiVersion.v2Custom;
+                        final useMobileInboxPeople = _useMobileInboxAvailablePeople;
                         final shell = MessengerChatShell(
                           showStartChatFab:
                               _uiVersion == ExampleMessengerUiVersion.v1,
@@ -3964,6 +4198,51 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                                 horizontal: 12, vertical: 10),
                             borderRadius: 14,
                           ),
+                          userListItemBuilder: useMobileInboxPeople
+                              ? _exampleConversationInboxRow
+                              : null,
+                          showAvailablePeopleOnMobileInbox:
+                              useMobileInboxPeople,
+                          availablePeopleUsers: useMobileInboxPeople
+                              ? _availablePeopleUsersForMobileInbox
+                              : null,
+                          conversationSectionHeaderBuilder:
+                              useMobileInboxPeople
+                                  ? (context, count) =>
+                                      _exampleInboxSectionHeader(
+                                        title: 'Chats',
+                                        count: count,
+                                        accent: const Color(0xFF0D9488),
+                                      )
+                                  : null,
+                          availablePeopleSectionHeaderBuilder:
+                              useMobileInboxPeople
+                                  ? (context, count) =>
+                                      _exampleInboxSectionHeader(
+                                        title: 'People',
+                                        count: count,
+                                        accent: const Color(0xFFEA580C),
+                                      )
+                                  : null,
+                          availablePeopleItemBuilder: useMobileInboxPeople
+                              ? _exampleAvailablePersonInboxRow
+                              : null,
+                          showAssociatedPeopleOnThread: useMobileInboxPeople,
+                          associatedPeopleUsers: useMobileInboxPeople
+                              ? _availablePeopleUsersForMobileInbox
+                              : null,
+                          associatedPeopleSectionHeaderBuilder:
+                              useMobileInboxPeople
+                                  ? (context, count) =>
+                                      _exampleInboxSectionHeader(
+                                        title: 'Associated people',
+                                        count: count,
+                                        accent: const Color(0xFFEA580C),
+                                      )
+                                  : null,
+                          associatedPeopleItemBuilder: useMobileInboxPeople
+                              ? _exampleThreadAssociatedPersonChip
+                              : null,
                           threadViewOverrides: useConversationV2
                               ? exampleConversationV2Overrides()
                               : null,

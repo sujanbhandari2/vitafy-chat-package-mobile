@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../models/messenger_conversation.dart';
 import '../models/messenger_thread_view_overrides.dart';
 import '../theme/messenger_theme.dart';
+import '../utils/messenger_thread_header_avatar.dart';
 import 'messenger_avatar.dart';
 
 enum _ThreadHeaderOverflowAction {
@@ -163,6 +164,8 @@ class _MessengerDefaultThreadHeaderState
     final c = widget.data.conversation;
     final roleLabel = _conversationRoleLabel(c);
     final showOnlinePresence = c != null && !c.isGroup && c.isOnline != null;
+    final avatarLabel = messengerThreadHeaderAvatarLabel(c);
+    final avatarUrl = messengerThreadHeaderAvatarUrl(c);
     final menu = _overflowMenu(context, theme);
     final isMobile = widget.data.isMobile;
     return Container(
@@ -193,8 +196,8 @@ class _MessengerDefaultThreadHeaderState
                         ),
                       ),
                       MessengerAvatar(
-                        label: c?.avatarLabel ?? 'CH',
-                        imageUrl: c?.avatarUrl,
+                        label: avatarLabel,
+                        imageUrl: avatarUrl,
                         compact: true,
                         size: 34,
                         showOnlineIndicator: showOnlinePresence,
@@ -243,8 +246,8 @@ class _MessengerDefaultThreadHeaderState
           : Row(
               children: [
                 MessengerAvatar(
-                  label: c?.avatarLabel ?? 'CH',
-                  imageUrl: c?.avatarUrl,
+                  label: avatarLabel,
+                  imageUrl: avatarUrl,
                   compact: true,
                   size: 34,
                   showOnlineIndicator: showOnlinePresence,

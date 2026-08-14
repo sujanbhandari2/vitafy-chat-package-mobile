@@ -6,6 +6,7 @@ class MessengerUser {
     this.email = '',
     this.isOnline = false,
     this.avatarUrl,
+    this.externalUserId,
   });
 
   final String id;
@@ -14,4 +15,7 @@ class MessengerUser {
   final String email;
   final bool isOnline;
   final String? avatarUrl;
+
+  /// Optional linked id used for inbox dedupe (e.g. chat user id vs platform id).
+  final String? externalUserId;
 }

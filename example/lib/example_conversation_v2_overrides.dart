@@ -39,7 +39,15 @@ Widget _buildHeaderWithAdvocateCard(
 }
 
 Widget _buildHeader(BuildContext context, MessengerThreadHeaderData data) {
-  final title = data.conversation?.title.trim();
+  final conversation = data.conversation;
+  final title = conversation?.title.trim();
+  final displayTitle =
+      (title != null && title.isNotEmpty) ? title : 'Conversation';
+  final avatarLabel = messengerThreadHeaderAvatarLabel(conversation);
+  final avatarUrl = messengerThreadHeaderAvatarUrl(conversation);
+  final showOnlinePresence =
+      conversation != null && !conversation.isGroup && conversation.isOnline != null;
+
   return Container(
     color: Colors.white,
     padding: EdgeInsets.fromLTRB(data.isMobile ? 0 : 8, 4, data.isMobile ? 0 : 8, 8),
@@ -53,10 +61,29 @@ Widget _buildHeader(BuildContext context, MessengerThreadHeaderData data) {
           )
         else
           const SizedBox(width: 8),
+        if (data.isMobile)
+          MessengerAvatar(
+            label: avatarLabel,
+            imageUrl: avatarUrl,
+            compact: true,
+            size: 36,
+            showOnlineIndicator: showOnlinePresence,
+            isOnline: conversation?.isOnline ?? false,
+          )
+        else
+          MessengerAvatar(
+            label: avatarLabel,
+            imageUrl: avatarUrl,
+            compact: true,
+            size: 36,
+            showOnlineIndicator: showOnlinePresence,
+            isOnline: conversation?.isOnline ?? false,
+          ),
+        const SizedBox(width: 10),
         Expanded(
           child: Text(
-            (title != null && title.isNotEmpty) ? title : 'Conversation',
-            textAlign: TextAlign.center,
+            displayTitle,
+            textAlign: data.isMobile ? TextAlign.center : TextAlign.start,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
@@ -93,8 +120,8 @@ Widget _buildAdvocateCard(
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
               child: MessengerAvatar(
-                label: conversation.avatarLabel,
-                imageUrl: conversation.avatarUrl,
+                label: messengerThreadHeaderAvatarLabel(conversation),
+                imageUrl: messengerThreadHeaderAvatarUrl(conversation),
                 size: 52,
                 compact: true,
               ),

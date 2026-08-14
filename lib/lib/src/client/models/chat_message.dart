@@ -123,8 +123,7 @@ class ChatMessage {
           '',
       tenantId:
           json['tenantId']?.toString() ?? json['tenant_id']?.toString() ?? '',
-      senderId:
-          json['senderId']?.toString() ?? json['sender_id']?.toString() ?? '',
+      senderId: _senderIdFromJson(json),
       type: parseMessageType(rawType),
       content: _stringContentFromJson(json['content']),
       attachments: rawAttachments
@@ -443,9 +442,12 @@ class MessageReaction {
   final ChatMessageSender? user;
 
   factory MessageReaction.fromJson(Map<String, dynamic> json) {
-    final rawReaction =
-        json['reactionType']?.toString() ?? json['emoji']?.toString() ?? '👍';
+    final rawReaction = json['reactionType']?.toString() ??
+        json['reaction_type']?.toString() ??
+        json['emoji']?.toString() ??
+        '👍';
     final rawUser = json['user'] ?? json['chatUser'];
+    final userMap = rawUser is Map ? Map<String, dynamic>.from(rawUser) : null;
     return MessageReaction(
       id: json['id']?.toString() ?? '',
       messageId:
@@ -453,12 +455,24 @@ class MessageReaction {
       userId: json['userId']?.toString() ??
           json['chatUserId']?.toString() ??
           json['user_id']?.toString() ??
+          json['chat_user_id']?.toString() ??
+          userMap?['id']?.toString() ??
           '',
-      reactionType: rawReaction,
+      reactionType: rawReaction.trim().isEmpty ? '👍' : rawReaction.trim(),
       conversationId: json['conversationId']?.toString() ??
           json['conversation_id']?.toString(),
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
-          DateTime.tryParse(json['created_at']?.toString() ?? ''),
+          DateTime.tryParse(json['created_at']?.toString() ?? '') ??
+          (json['createdAtMs'] is num
+              ? DateTime.fromMillisecondsSinceEpoch(
+                  (json['createdAtMs'] as num).toInt(),
+                )
+              : null) ??
+          (json['created_at_ms'] is num
+              ? DateTime.fromMillisecondsSinceEpoch(
+                  (json['created_at_ms'] as num).toInt(),
+                )
+              : null),
       user: rawUser is Map
           ? ChatMessageSender.fromJson(Map<String, dynamic>.from(rawUser))
           : null,
@@ -578,4 +592,26 @@ class DeletedMessageEvent {
           json['user_id']?.toString(),
     );
   }
+}
+
+String _senderIdFromJson(Map<String, dynamic> json) {
+  final rawSender = json['sender'];
+  final senderMap =
+      rawSender is Map ? Map<String, dynamic>.from(rawSender) : null;
+  for (final value in [
+    json['senderId'],
+    json['sender_id'],
+    json['chatUserId'],
+    json['chat_user_id'],
+    senderMap?['id'],
+  ]) {
+    if (value == null) {
+      continue;
+    }
+    final trimmed = value.toString().trim();
+    if (trimmed.isNotEmpty) {
+      return trimmed;
+    }
+  }
+  return '';
 }

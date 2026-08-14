@@ -94,9 +94,9 @@ String conversationListItemInitials(String username) {
 
   final first = chunks.first[0];
   final second = chunks.length > 1
-      ? chunks[1][0]
+      ? chunks.last[0]
       : (chunks.first.length > 1 ? chunks.first[1] : '');
-  return '$first$second';
+  return '$first$second'.toUpperCase();
 }
 
 /// Subtitle shown under the title when no message preview is available.

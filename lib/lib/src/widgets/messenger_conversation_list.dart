@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/messenger_conversation.dart';
 import '../models/messenger_group_create_request.dart';
+import '../models/messenger_inbox_people.dart';
 import '../models/messenger_search_visibility.dart';
 import '../models/messenger_start_new_chat.dart';
 import '../models/messenger_user.dart';
@@ -44,6 +45,7 @@ class MessengerConversationList extends StatefulWidget {
   const MessengerConversationList({
     super.key,
     this.currentUserId,
+    this.currentPlatformUserId,
     required this.currentUserName,
     required this.conversations,
     required this.users,
@@ -104,12 +106,20 @@ class MessengerConversationList extends StatefulWidget {
         MessengerGroupSelectionListMode.separateSelectedSection,
     this.startNewChatUserItemBuilder,
     this.selectedUsersSectionBuilder,
+    this.showAvailablePeopleOnMobileInbox = false,
+    this.availablePeopleUsers,
+    this.conversationSectionHeaderBuilder,
+    this.availablePeopleSectionHeaderBuilder,
+    this.availablePeopleItemBuilder,
+    this.availablePeopleEmptyMessage =
+        'No more people available to start a chat with.',
   }) : assert(
           groupMinSelectionCount > 0,
           'groupMinSelectionCount must be greater than zero.',
         );
 
   final String? currentUserId;
+  final String? currentPlatformUserId;
   final String currentUserName;
   final List<MessengerConversation> conversations;
   final List<MessengerUser> users;
@@ -221,6 +231,33 @@ class MessengerConversationList extends StatefulWidget {
   /// Custom selected-users section for group mode (chips card).
   final MessengerStartNewChatSelectedUsersSectionBuilder?
       selectedUsersSectionBuilder;
+
+  /// When true on mobile and conversations expose [MessengerConversation.peerUsers],
+  /// appends a deduplicated "available people" section below conversation rows.
+  ///
+  /// Defaults to false so v1 hosts are unchanged.
+  final bool showAvailablePeopleOnMobileInbox;
+
+  /// Directory for the available-people section. When null, uses
+  /// [startNewChatUsers] then [users].
+  final List<MessengerUser>? availablePeopleUsers;
+
+  /// Optional header above conversation rows when
+  /// [showAvailablePeopleOnMobileInbox] is active.
+  final Widget Function(BuildContext context, int conversationEntryCount)?
+      conversationSectionHeaderBuilder;
+
+  /// Optional header above the available-people section.
+  final Widget Function(BuildContext context, int availablePeopleCount)?
+      availablePeopleSectionHeaderBuilder;
+
+  /// Custom row for available people without an existing conversation.
+  final Widget Function(BuildContext context, MessengerAvailablePersonData data)?
+      availablePeopleItemBuilder;
+
+  /// Shown when the available-people section is enabled but empty after dedup
+  /// and search filtering.
+  final String availablePeopleEmptyMessage;
 
   @override
   State<MessengerConversationList> createState() =>
@@ -368,6 +405,12 @@ class MessengerConversationListState extends State<MessengerConversationList> {
   bool get _hasPeerUsers => widget.conversations
       .any((conversation) => conversation.peerUsers.isNotEmpty);
 
+  bool get _shouldShowAvailablePeopleSection =>
+      widget.showAvailablePeopleOnMobileInbox;
+
+  List<MessengerUser> get _availablePeopleSource =>
+      widget.availablePeopleUsers ?? widget.startNewChatUsers ?? widget.users;
+
   int _uniquePeerCount() {
     if (!_hasPeerUsers) {
       return widget.users.length;
@@ -430,6 +473,12 @@ class MessengerConversationListState extends State<MessengerConversationList> {
 
   List<_PeerListEntry> _orderedPeerEntries() {
     if (!_hasPeerUsers) {
+      if (_shouldShowAvailablePeopleSection) {
+        if (widget.conversations.isEmpty) {
+          return const [];
+        }
+        return _conversationOnlyPeerEntries();
+      }
       return _legacyUserEntries();
     }
 
@@ -477,6 +526,27 @@ class MessengerConversationListState extends State<MessengerConversationList> {
       }
     }
     return entries;
+  }
+
+  /// Unified inbox: one row per conversation when list payloads omit peers.
+  List<_PeerListEntry> _conversationOnlyPeerEntries() {
+    final orderedConversations = _conversationsByActivity();
+    final selected = _conversationForId(widget.selectedConversationId);
+    return orderedConversations
+        .map(
+          (conversation) => _PeerListEntry(
+            user: _conversationRowUser(conversation),
+            messagePreview: _previewForConversation(conversation),
+            hasUnread: conversation.unreadCount > 0,
+            isInSelectedConversation: selected?.id == conversation.id,
+            isConversationRow: _shouldRenderAsConversationRow(conversation),
+            useGroupAvatar: conversation.isGroup,
+            groupAvatarUsers:
+                conversation.isGroup ? conversation.peerUsers : const [],
+            conversationId: conversation.id.trim(),
+          ),
+        )
+        .toList(growable: false);
   }
 
   bool _shouldRenderAsConversationRow(MessengerConversation conversation) {
@@ -555,6 +625,25 @@ class MessengerConversationListState extends State<MessengerConversationList> {
     MessengerConversation conversation,
     MessengerUser user,
   ) {
+    if (user.email.trim().isNotEmpty) {
+      final email = user.email.trim().toLowerCase();
+      final title = conversation.title.toLowerCase();
+      final subtitle = _previewForConversation(conversation).toLowerCase();
+      if (title.contains(email) || subtitle.contains(email)) {
+        return true;
+      }
+    }
+
+    if (conversation.peerUsers.isNotEmpty) {
+      final userKeys = messengerUserIdentityKeys(user);
+      for (final peer in conversation.peerUsers) {
+        if (messengerUserIdentityKeys(peer).any(userKeys.contains)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
     final username = user.username.toLowerCase();
     final title = conversation.title.toLowerCase();
     final subtitle = _previewForConversation(conversation).toLowerCase();
@@ -610,6 +699,38 @@ class MessengerConversationListState extends State<MessengerConversationList> {
               e.user.roleLabel.toLowerCase().contains(queryLower) ||
               e.user.id.toLowerCase().contains(queryLower) ||
               e.messagePreview.toLowerCase().contains(queryLower),
+        )
+        .toList(growable: false);
+  }
+
+  List<MessengerUser> _orderedAvailablePeople(
+    List<_PeerListEntry> conversationEntries,
+  ) {
+    final visibleUsers = conversationEntries
+        .where((entry) => !entry.isConversationRow)
+        .map((entry) => entry.user)
+        .toList(growable: false);
+    return messengerAvailablePeopleExcludingConversations(
+      allPeople: _availablePeopleSource,
+      conversations: widget.conversations,
+      currentUserId: widget.currentUserId,
+      currentPlatformUserId: widget.currentPlatformUserId,
+      visibleConversationUsers: visibleUsers,
+    );
+  }
+
+  List<MessengerUser> _filterAvailablePeople(List<MessengerUser> users) {
+    if (_query.isEmpty) {
+      return users;
+    }
+    final queryLower = _query.toLowerCase();
+    return users
+        .where(
+          (user) =>
+              user.username.toLowerCase().contains(queryLower) ||
+              user.roleLabel.toLowerCase().contains(queryLower) ||
+              user.email.toLowerCase().contains(queryLower) ||
+              user.id.toLowerCase().contains(queryLower),
         )
         .toList(growable: false);
   }
@@ -674,6 +795,189 @@ class MessengerConversationListState extends State<MessengerConversationList> {
     return MessengerConversationListItem(
       data: data,
       style: widget.userListItemStyle,
+    );
+  }
+
+  Future<void> _openAvailablePerson(MessengerUser user) async {
+    await widget.onOpenDirectChat(user);
+  }
+
+  Widget _buildAvailablePersonItem(BuildContext context, MessengerUser user) {
+    final isOpening =
+        _isDirectOpenBusyForUser(widget.openingDirectUserId, user.id);
+    final data = MessengerAvailablePersonData(
+      user: user,
+      isOpening: isOpening,
+      onTap: () {
+        if (_isOpenInFlight) {
+          return;
+        }
+        unawaited(_openAvailablePerson(user));
+      },
+    );
+    final builder = widget.availablePeopleItemBuilder;
+    if (builder != null) {
+      return builder(context, data);
+    }
+
+    final showOnlinePresence = true;
+    final listData = MessengerUserListItemData(
+      user: user,
+      isSelected: false,
+      hasUnread: false,
+      isOpening: isOpening,
+      messagePreview: null,
+      onTap: data.onTap,
+      showOnlinePresence: showOnlinePresence,
+      displayTitle: conversationListItemDisplayName(user.username),
+      subtitle: conversationListItemSubtitle(
+        user: user,
+        messagePreview: null,
+        showOnlinePresence: showOnlinePresence,
+      ),
+      roleLabel: user.roleLabel.trim(),
+    );
+    return MessengerConversationListItem(
+      data: listData,
+      style: widget.userListItemStyle,
+    );
+  }
+
+  Widget _buildAvailablePeopleEmpty(BuildContext context) {
+    final theme = MessengerTheme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      child: Text(
+        widget.availablePeopleEmptyMessage,
+        style: TextStyle(
+          color: theme.mutedText,
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+        ),
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
+  Widget _buildInlineEmptyConversations(BuildContext context) {
+    if (widget.emptyConversationsBuilder != null) {
+      return widget.emptyConversationsBuilder!(context);
+    }
+    final theme = MessengerTheme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+      child: Text(
+        widget.emptyConversationsMessage,
+        style: TextStyle(
+          color: theme.subtleText,
+          fontWeight: FontWeight.w600,
+        ),
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
+  Widget _buildTwoSectionPeerScrollBody(
+    BuildContext context,
+    List<_PeerListEntry> filteredEntries,
+  ) {
+    final filteredAvailable =
+        _filterAvailablePeople(_orderedAvailablePeople(filteredEntries));
+    final showSearchNoResults = _query.isNotEmpty &&
+        filteredEntries.isEmpty &&
+        filteredAvailable.isEmpty;
+
+    if (showSearchNoResults) {
+      return LayoutBuilder(
+        builder: (ctx, constraints) => SingleChildScrollView(
+          physics: widget.enablePullToRefresh
+              ? const AlwaysScrollableScrollPhysics()
+              : const ClampingScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: _buildSearchNoResultsPeerList(context),
+          ),
+        ),
+      );
+    }
+
+    final children = <Widget>[];
+
+    void addSpacer() {
+      if (children.isNotEmpty) {
+        children.add(SizedBox(height: widget.userListItemSpacing));
+      }
+    }
+
+    void addSectionGap() {
+      if (children.isNotEmpty) {
+        children.add(SizedBox(height: widget.userListItemSpacing * 2));
+      }
+    }
+
+    final conversationHeader = widget.conversationSectionHeaderBuilder;
+    final hasConversationHeader =
+        conversationHeader != null && filteredEntries.isNotEmpty;
+    if (hasConversationHeader) {
+      children.add(conversationHeader(context, filteredEntries.length));
+      addSpacer();
+    }
+
+    if (filteredEntries.isEmpty) {
+      if (_query.isEmpty) {
+        children.add(_buildInlineEmptyConversations(context));
+      }
+    } else {
+      for (var i = 0; i < filteredEntries.length; i++) {
+        if (i > 0) {
+          addSpacer();
+        }
+        children.add(_buildMainUserListItem(context, filteredEntries[i]));
+      }
+    }
+
+    final availableHeader = widget.availablePeopleSectionHeaderBuilder;
+    final hasAvailableHeader = availableHeader != null;
+    if (hasConversationHeader || hasAvailableHeader) {
+      addSectionGap();
+    } else if (filteredEntries.isNotEmpty && filteredAvailable.isNotEmpty) {
+      addSpacer();
+    }
+
+    if (hasAvailableHeader) {
+      children.add(availableHeader(context, filteredAvailable.length));
+      addSpacer();
+    }
+
+    if (filteredAvailable.isEmpty) {
+      if (widget.availablePeopleEmptyMessage.trim().isNotEmpty) {
+        children.add(_buildAvailablePeopleEmpty(context));
+      }
+    } else {
+      for (var i = 0; i < filteredAvailable.length; i++) {
+        if (i > 0) {
+          addSpacer();
+        }
+        children.add(_buildAvailablePersonItem(context, filteredAvailable[i]));
+      }
+    }
+
+    final listPadding = _effectiveUserListPadding(context);
+    final scrollable = ListView(
+      primary: false,
+      physics: widget.enablePullToRefresh
+          ? const AlwaysScrollableScrollPhysics()
+          : null,
+      padding: listPadding,
+      children: children,
+    );
+
+    if (!widget.enablePullToRefresh) {
+      return scrollable;
+    }
+    return RefreshIndicator(
+      onRefresh: _onPullRefresh,
+      child: scrollable,
     );
   }
 
@@ -831,6 +1135,10 @@ class MessengerConversationListState extends State<MessengerConversationList> {
     BuildContext context,
     List<_PeerListEntry> filteredEntries,
   ) {
+    if (_shouldShowAvailablePeopleSection) {
+      return _buildTwoSectionPeerScrollBody(context, filteredEntries);
+    }
+
     final Widget scrollable;
     if (filteredEntries.isEmpty) {
       final emptyBody = _query.isNotEmpty
