@@ -74,9 +74,32 @@ class ChatInboxController {
   StreamSubscription<ChatConnectionState>? _connectionSubscription;
 
   String? _activeConversationId;
+  bool _threadVisible = false;
 
   /// Currently focused conversation id, if any.
   String? get activeConversationId => _activeConversationId;
+
+  /// Whether the message thread UI is on screen for [activeConversationId].
+  bool get threadVisible => _threadVisible;
+
+  /// Host/shell should call when the thread pane opens or closes.
+  ///
+  /// Read receipts and [markConversationRead] run only while visible so list-only
+  /// or background selection does not mark messages seen.
+  Future<void> setThreadVisible(bool visible) async {
+    if (_threadVisible == visible) {
+      return;
+    }
+    _threadVisible = visible;
+    if (visible) {
+      final active = _activeConversationId?.trim();
+      if (active != null && active.isNotEmpty) {
+        // Clear the badge only once the thread is actually on screen.
+        clearLocalUnread(active);
+      }
+      await _markActiveConversationRead();
+    }
+  }
 
   ValueListenable<Map<String, int>> get unreadByConversation => _unreadNotifier;
 
@@ -110,6 +133,7 @@ class ChatInboxController {
       list,
       currentUserId: _currentUserId,
       activeConversationId: _activeConversationId,
+      clearActiveConversationUnread: _threadVisible,
     );
     final liveIds = list.map((item) => item.id.trim()).toSet();
     _promotedAt.removeWhere((key, _) => !liveIds.contains(key));
@@ -151,23 +175,37 @@ class ChatInboxController {
     _activeConversationId = next;
 
     if (next == null) {
+      _threadVisible = false;
       return;
     }
 
     if (previous == next) {
-      await _joinAndMarkRead(next);
+      await _joinActiveRoom(next);
+      if (_threadVisible) {
+        clearLocalUnread(next);
+        await _markActiveConversationRead();
+      }
       return;
     }
 
-    // Optimistic clear only when switching threads (matches web selectConversation).
-    clearLocalUnread(next);
-    await _joinAndMarkRead(next);
+    // Join the room for realtime, but only clear/mark read while the thread UI
+    // is on screen. Clearing on join alone made list-only selection look "seen".
+    await _joinActiveRoom(next);
+    if (_threadVisible) {
+      clearLocalUnread(next);
+      await _markActiveConversationRead();
+    }
   }
 
-  Future<void> _joinAndMarkRead(String conversationId) async {
+  Future<void> _joinActiveRoom(String conversationId) async {
     try {
       await _client.joinConversation(conversationId);
-    } catch (_) {
+    } catch (_) {}
+  }
+
+  Future<void> _markActiveConversationRead() async {
+    final conversationId = _activeConversationId?.trim();
+    if (conversationId == null || conversationId.isEmpty) {
       return;
     }
     try {
@@ -186,7 +224,12 @@ class ChatInboxController {
     if (state == ChatConnectionState.connected) {
       final active = _activeConversationId;
       if (active != null) {
-        unawaited(_joinAndMarkRead(active));
+        unawaited(() async {
+          await _joinActiveRoom(active);
+          if (_threadVisible) {
+            await _markActiveConversationRead();
+          }
+        }());
       }
     }
   }
@@ -197,6 +240,25 @@ class ChatInboxController {
         final message = event.message;
         if (message != null) {
           _onInboundMessage(message, fromConversationMessage: false);
+        }
+        break;
+      case ChatSocketEventType.messageReacted:
+        final reaction = event.reaction;
+        if (reaction != null) {
+          final cid = reaction.conversationId?.trim() ?? '';
+          if (cid.isNotEmpty) {
+            bumpConversation(
+              cid,
+              at: reaction.createdAt ?? DateTime.now(),
+            );
+            _unreadNotifier.value = UnreadMerger.incrementForReaction(
+              _unreadNotifier.value,
+              reaction,
+              currentUserId: _currentUserId,
+              activeConversationId:
+                  _threadVisible ? _activeConversationId : null,
+            );
+          }
         }
         break;
       case ChatSocketEventType.conversationMessage:
@@ -260,12 +322,18 @@ class ChatInboxController {
       bumpConversation(cid);
     }
 
+    // Treat a conversation as "open for unread/read policy" only while the
+    // thread UI is visible. Being joined/selected in the background must not
+    // suppress unread badges or imply the user has read new messages.
+    final openConversationId =
+        _threadVisible ? _activeConversationId : null;
+
     if (message.senderId == _currentUserId) {
       _unreadNotifier.value = UnreadMerger.applyOwnMessageInActiveThread(
         _unreadNotifier.value,
         message,
         currentUserId: _currentUserId,
-        activeConversationId: _activeConversationId,
+        activeConversationId: openConversationId,
       );
       return;
     }
@@ -276,7 +344,7 @@ class ChatInboxController {
         _unreadNotifier.value,
         message,
         currentUserId: _currentUserId,
-        activeConversationId: _activeConversationId,
+        activeConversationId: openConversationId,
         conversationMessageSeen: seen,
       );
     }
@@ -285,40 +353,60 @@ class ChatInboxController {
       return;
     }
 
-    unawaited(_emitDeliveredAndRead(message));
+    final activeId = _activeConversationId?.trim();
+    final inJoinedThread =
+        activeId != null && activeId.isNotEmpty && cid == activeId;
+
+    // Web parity: list delivery ACK via per-user `conversation_message`; room
+    // `message` only delivers when this conversation is the joined active thread.
+    if (fromConversationMessage || inJoinedThread) {
+      unawaited(_emitDelivered(message));
+    }
+
+    if (_threadVisible && inJoinedThread) {
+      unawaited(_emitRead(message));
+    }
   }
 
-  Future<void> _emitDeliveredAndRead(ChatMessage message) async {
-    final convId = message.conversationId;
-    final msgId = message.id;
+  Future<void> _emitDelivered(ChatMessage message) async {
+    final convId = message.conversationId.trim();
+    final msgId = message.id.trim();
     if (convId.isEmpty || msgId.isEmpty) {
       return;
     }
 
-    if (!_deliveredEmitted.contains(msgId)) {
-      _deliveredEmitted.add(msgId);
-      try {
-        await _client.markAsDelivered(
-          conversationId: convId,
-          messageId: msgId,
-        );
-      } catch (_) {
-        _deliveredEmitted.remove(msgId);
-      }
+    if (_deliveredEmitted.contains(msgId)) {
+      return;
+    }
+    _deliveredEmitted.add(msgId);
+    try {
+      await _client.markAsDelivered(
+        conversationId: convId,
+        messageId: msgId,
+      );
+    } catch (_) {
+      _deliveredEmitted.remove(msgId);
+    }
+  }
+
+  Future<void> _emitRead(ChatMessage message) async {
+    final convId = message.conversationId.trim();
+    final msgId = message.id.trim();
+    if (convId.isEmpty || msgId.isEmpty) {
+      return;
     }
 
-    if (message.conversationId == _activeConversationId) {
-      if (!_readEmitted.contains(msgId)) {
-        _readEmitted.add(msgId);
-        try {
-          await _client.markAsRead(
-            conversationId: convId,
-            messageId: msgId,
-          );
-        } catch (_) {
-          _readEmitted.remove(msgId);
-        }
-      }
+    if (_readEmitted.contains(msgId)) {
+      return;
+    }
+    _readEmitted.add(msgId);
+    try {
+      await _client.markAsRead(
+        conversationId: convId,
+        messageId: msgId,
+      );
+    } catch (_) {
+      _readEmitted.remove(msgId);
     }
   }
 

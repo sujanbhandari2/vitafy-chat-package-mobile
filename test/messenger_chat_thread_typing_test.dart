@@ -158,4 +158,118 @@ void main() {
     expect(find.text('visible-when-idle'), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
   });
+
+  testWidgets('MessengerChatThread shows peer role chip in header',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerChatThread(
+              conversation: MessengerConversation(
+                id: 'c1',
+                title: 'Alice',
+                subtitle: 'Sub',
+                avatarLabel: 'A',
+                createdAt: DateTime.utc(2026),
+                peerUsers: const [
+                  MessengerUser(
+                    id: 'u1',
+                    username: 'alice',
+                    roleLabel: 'Doctor',
+                  ),
+                ],
+              ),
+              messages: const [],
+              currentUserId: 'me',
+              composerController: composer,
+              messagesScrollController: scroll,
+              isSending: false,
+              isRecording: false,
+              onSend: () {},
+              onPickImage: () {},
+              onPickAudio: () {},
+              onStartRecording: () {},
+              onFinishRecording: () {},
+              onCancelRecording: () {},
+              onToggleRecording: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    expect(find.text('Doctor'), findsOneWidget);
+  });
+
+  testWidgets(
+      'MessengerChatThread shows delivery status in group conversations',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerChatThread(
+              conversation: MessengerConversation(
+                id: 'g1',
+                title: 'Care Team',
+                subtitle: 'Sub',
+                avatarLabel: 'CT',
+                createdAt: DateTime.utc(2026),
+                isGroup: true,
+              ),
+              messages: [
+                MessengerChatMessage(
+                  id: 'm1',
+                  senderId: 'me',
+                  senderLabel: 'Me',
+                  type: MessengerMessageType.text,
+                  content: 'hello',
+                  createdAt: DateTime.utc(2026),
+                  deliveryStatus: MessengerDeliveryStatus.seen,
+                ),
+              ],
+              currentUserId: 'me',
+              composerController: composer,
+              messagesScrollController: scroll,
+              isSending: false,
+              isRecording: false,
+              onSend: () {},
+              onPickImage: () {},
+              onPickAudio: () {},
+              onStartRecording: () {},
+              onFinishRecording: () {},
+              onCancelRecording: () {},
+              onToggleRecording: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is Icon && widget.icon == Icons.done_all,
+      ),
+      findsOneWidget,
+    );
+  });
 }

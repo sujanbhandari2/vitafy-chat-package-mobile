@@ -12,6 +12,15 @@ abstract class ChatRepository {
   Future<void> connectSocket(ChatAuth auth);
   void disconnectSocket();
 
+  /// Best-effort client → server presence hint before the socket goes away.
+  ///
+  /// The server is expected to handle it alongside disconnect; presence is
+  /// ultimately authoritative via server socket ref-count / heartbeats.
+  void emitGoingOffline({
+    required String userId,
+    required String reason,
+  });
+
   Stream<ChatSocketEvent> get socketEvents;
 
   Future<ChatTenantScope> getTenantScope(ChatAuth auth);
@@ -27,7 +36,8 @@ abstract class ChatRepository {
     String? profile,
   });
 
-  /// Batch merge users + create DIRECT (two users, no [groupName]) or GROUP.
+  /// Batch merge users + create DIRECT (two users, no [groupName]) or GROUP
+  /// (non-empty [groupName], including two-user groups).
   Future<Conversation> startConversation(
     ChatAuth auth, {
     required List<ChatUserRegistrationBody> users,
@@ -63,6 +73,12 @@ abstract class ChatRepository {
     String? actorUserId,
   });
   Future<ConversationParticipant> addParticipant(
+    ChatAuth auth, {
+    required String conversationId,
+    required String userId,
+    String? actorUserId,
+  });
+  Future<void> removeParticipant(
     ChatAuth auth, {
     required String conversationId,
     required String userId,
@@ -336,13 +352,25 @@ class ConversationMessageEvent {
     }
 
     final rawMessage = json['message'];
+    final Map<String, dynamic> messageJson;
+    if (rawMessage is Map) {
+      messageJson = Map<String, dynamic>.from(rawMessage);
+    } else if (json['id'] != null) {
+      // Flat message payload (no envelope).
+      messageJson = Map<String, dynamic>.from(json);
+    } else {
+      messageJson = const <String, dynamic>{};
+    }
+
+    final conversationId = json['conversationId']?.toString() ??
+        json['conversation_id']?.toString() ??
+        messageJson['conversationId']?.toString() ??
+        messageJson['conversation_id']?.toString() ??
+        '';
+
     return ConversationMessageEvent(
-      conversationId: json['conversationId']?.toString() ??
-          json['conversation_id']?.toString() ??
-          '',
-      message: ChatMessage.fromJson(
-        Map<String, dynamic>.from(rawMessage as Map? ?? const {}),
-      ),
+      conversationId: conversationId,
+      message: ChatMessage.fromJson(messageJson),
       unreadCount: parseNullableInt(json['unreadCount']),
       unread: parseNullableInt(json['unread']),
     );

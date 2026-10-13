@@ -50,4 +50,21 @@ void main() {
     expect(fake.lastStartConversationUsers?.length, 2);
     expect(conv.id, 'conv-start');
   });
+
+  test('FakeChatRepository removeParticipant records call', () async {
+    final fake = FakeChatRepository();
+    const auth = ChatAuth(apiKey: 'k', chatUserId: '1', accessToken: 'jwt');
+
+    await fake.removeParticipant(
+      auth,
+      conversationId: 'c1',
+      userId: 'u2',
+      actorUserId: '1',
+    );
+
+    expect(fake.removeParticipantCalls, 1);
+    expect(fake.lastRemovedParticipantConversationId, 'c1');
+    expect(fake.lastRemovedParticipantUserId, 'u2');
+    expect(fake.lastRemovedParticipantActorUserId, '1');
+  });
 }

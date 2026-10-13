@@ -9,6 +9,81 @@ ChatMessage? _latestMessageFromJson(Map<String, dynamic> json) {
   return ChatMessage.fromJson(Map<String, dynamic>.from(raw));
 }
 
+LatestReaction? _latestReactionFromJson(Map<String, dynamic> json) {
+  final raw = json['latestReaction'] ?? json['latest_reaction'];
+  if (raw is! Map) {
+    return null;
+  }
+  final map = Map<String, dynamic>.from(raw);
+  final userMap =
+      map['user'] is Map ? Map<String, dynamic>.from(map['user'] as Map) : null;
+  final id = _trimToNull(map['id']);
+  final messageId = _trimToNull(map['messageId'] ?? map['message_id']);
+  final chatUserId = _trimToNull(map['chatUserId'] ??
+      map['chat_user_id'] ??
+      map['userId'] ??
+      map['user_id'] ??
+      userMap?['id']);
+  final createdAt = DateTime.tryParse(
+    _trimToNull(map['createdAt'] ?? map['created_at']) ?? '',
+  );
+  if (id == null ||
+      messageId == null ||
+      chatUserId == null ||
+      createdAt == null) {
+    return null;
+  }
+  return LatestReaction.fromJson(map);
+}
+
+/// Most recent reaction snapshot for conversation-list previews.
+class LatestReaction {
+  const LatestReaction({
+    required this.id,
+    required this.messageId,
+    required this.chatUserId,
+    required this.reactionType,
+    required this.userName,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String messageId;
+  final String chatUserId;
+  final String reactionType;
+  final String userName;
+  final DateTime createdAt;
+
+  factory LatestReaction.fromJson(Map<String, dynamic> json) {
+    final rawUser = json['user'];
+    final userMap = rawUser is Map ? Map<String, dynamic>.from(rawUser) : null;
+    final chatUserId = _trimToNull(json['chatUserId'] ??
+            json['chat_user_id'] ??
+            json['userId'] ??
+            json['user_id'] ??
+            userMap?['id']) ??
+        '';
+    final userName = _trimToNull(json['userName'] ??
+            json['user_name'] ??
+            userMap?['name'] ??
+            userMap?['username'] ??
+            userMap?['email']) ??
+        '';
+    return LatestReaction(
+      id: _trimToNull(json['id']) ?? '',
+      messageId: _trimToNull(json['messageId'] ?? json['message_id']) ?? '',
+      chatUserId: chatUserId,
+      reactionType:
+          _trimToNull(json['reactionType'] ?? json['reaction_type']) ?? '👍',
+      userName: userName,
+      createdAt: DateTime.tryParse(
+            _trimToNull(json['createdAt'] ?? json['created_at']) ?? '',
+          ) ??
+          DateTime.now(),
+    );
+  }
+}
+
 /// Per-user read/delivery pointers for a conversation.
 class ConversationMessageStatus {
   const ConversationMessageStatus({
@@ -58,6 +133,8 @@ class Conversation {
     this.unreadCount,
     this.latestMessage,
     this.latestMessageId,
+    this.latestReaction,
+    this.messageState,
     this.messageStatusByUserId = const <String, ConversationMessageStatus>{},
   });
 
@@ -80,6 +157,12 @@ class Conversation {
   /// when the server only ships the embedded message.
   final String? latestMessageId;
 
+  /// Most recent reaction on the conversation from REST list payloads.
+  final LatestReaction? latestReaction;
+
+  /// Current user's read/delivery pointers from REST list `messageState`.
+  final ConversationMessageStatus? messageState;
+
   /// Per-user read/delivery pointers, keyed by user id.
   ///
   /// Sourced from any of these JSON shapes (first non-empty wins):
@@ -89,24 +172,64 @@ class Conversation {
 
   bool get isGlobal => type.toUpperCase() == 'SUPPORT';
 
-  /// True when [userId] has at least one unread message, derived from
-  /// [latestMessageId] vs the user's `lastReadMessageId`.
+  String? _effectiveLatestMessageId() {
+    final fromField = latestMessageId?.trim();
+    if (fromField != null && fromField.isNotEmpty) {
+      return fromField;
+    }
+    final fromMessage = latestMessage?.id.trim();
+    if (fromMessage != null && fromMessage.isNotEmpty) {
+      return fromMessage;
+    }
+    return null;
+  }
+
+  /// True when [userId] has at least one unread inbound message.
   ///
-  /// Returns `false` when [latestMessageId] is missing (caller cannot decide).
+  /// Uses REST `messageState` / `messageStatus` cursors vs `latestMessage` id.
+  /// Returns `false` when the latest row is your own send, or when read and
+  /// delivery cursors are tied to the same id at/ past latest (outbound / caught up).
   bool isUnreadFor(String userId) {
-    final latest = latestMessageId?.trim();
-    if (latest == null || latest.isEmpty) {
+    final me = userId.trim();
+    if (me.isEmpty) {
       return false;
     }
-    final status = messageStatusByUserId[userId];
-    final lastRead = status?.lastReadMessageId?.trim();
-    if (lastRead == null || lastRead.isEmpty) {
+
+    final latest = latestMessage;
+    if (latest != null && latest.senderId.trim() == me) {
+      return false;
+    }
+
+    final latestIdStr = _effectiveLatestMessageId();
+    final latestId = int.tryParse(latestIdStr ?? '');
+    if (latestId == null) {
+      return false;
+    }
+
+    final status = messageStatusByUserId[me] ?? messageState;
+    final lastReadRaw = status?.lastReadMessageId?.trim();
+    final lastDeliveredRaw = status?.lastDeliveredMessageId?.trim();
+
+    if (lastReadRaw != null &&
+        lastReadRaw.isNotEmpty &&
+        lastDeliveredRaw != null &&
+        lastDeliveredRaw.isNotEmpty &&
+        lastReadRaw == lastDeliveredRaw) {
+      final tiedId = int.tryParse(lastReadRaw);
+      if (tiedId != null && tiedId >= latestId) {
+        return false;
+      }
+    }
+
+    if (lastReadRaw == null || lastReadRaw.isEmpty) {
       return true;
     }
-    if (lastRead == latest) {
-      return false;
+
+    final lastReadId = int.tryParse(lastReadRaw);
+    if (lastReadId == null) {
+      return true;
     }
-    return _compareMessageIds(lastRead, latest) < 0;
+    return latestId > lastReadId;
   }
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
@@ -144,7 +267,7 @@ class Conversation {
     return Conversation(
       id: json['id']?.toString() ?? '',
       tenantId: json['tenantId']?.toString() ?? '',
-      type: json['type']?.toString() ?? 'DIRECT',
+      type: _conversationTypeFromJson(json),
       title: (json['title'] ?? json['name'])?.toString(),
       createdBy: json['createdBy']?.toString(),
       createdAt: DateTime.parse(
@@ -159,9 +282,21 @@ class Conversation {
       participants: participants,
       latestMessage: latest,
       latestMessageId: (latestId == null || latestId.isEmpty) ? null : latestId,
+      latestReaction: _latestReactionFromJson(json),
+      messageState: _messageStateFromJson(json),
       messageStatusByUserId: _messageStatusFromJson(json, rawParticipants),
     );
   }
+}
+
+ConversationMessageStatus? _messageStateFromJson(Map<String, dynamic> json) {
+  final raw = json['messageState'] ?? json['message_state'];
+  if (raw is! Map) {
+    return null;
+  }
+  return ConversationMessageStatus.fromJson(
+    Map<String, dynamic>.from(raw),
+  );
 }
 
 Map<String, ConversationMessageStatus> _messageStatusFromJson(
@@ -190,7 +325,10 @@ Map<String, ConversationMessageStatus> _messageStatusFromJson(
   for (final raw in rawParticipants) {
     if (raw is! Map) continue;
     final part = Map<String, dynamic>.from(raw);
-    final embedded = part['messageStatus'] ?? part['message_status'];
+    final embedded = part['messageStatus'] ??
+        part['message_status'] ??
+        part['messageState'] ??
+        part['message_state'];
     if (embedded is! Map) continue;
     final embeddedMap = Map<String, dynamic>.from(embedded);
     final pid = (part['chatUserId'] ??
@@ -209,16 +347,21 @@ Map<String, ConversationMessageStatus> _messageStatusFromJson(
   return out;
 }
 
-/// Compares two message ids. Numeric ids are compared as ints; otherwise a
-/// lexical comparison is used. Returns negative when [a] < [b], 0 when equal,
-/// positive when [a] > [b].
-int _compareMessageIds(String a, String b) {
-  final ai = int.tryParse(a);
-  final bi = int.tryParse(b);
-  if (ai != null && bi != null) {
-    return ai.compareTo(bi);
+String _conversationTypeFromJson(Map<String, dynamic> json) {
+  final raw = json['type'] ??
+      json['conversationType'] ??
+      json['conversation_type'];
+  if (raw != null) {
+    final value = raw.toString().trim();
+    if (value.isNotEmpty) {
+      return value;
+    }
   }
-  return a.compareTo(b);
+  final flagged = json['isGroup'] ?? json['is_group'];
+  if (flagged == true || flagged?.toString().toLowerCase() == 'true') {
+    return 'GROUP';
+  }
+  return 'DIRECT';
 }
 
 String? _trimToNull(Object? raw) {
@@ -255,6 +398,31 @@ class ConversationParticipant {
       userMap['id'] = participantChatUserId;
     }
 
+    // Promote participant-level profile fields when nested chatUser omits them.
+    for (final key in const [
+      'profilePreviewLink',
+      'profile_preview_link',
+      'avatarUrl',
+      'avatar_url',
+      'profile',
+      'profilePicture',
+      'profile_picture',
+      'externalUserId',
+      'external_user_id',
+      'email',
+    ]) {
+      final nested = userMap[key];
+      final nestedEmpty = nested == null || nested.toString().trim().isEmpty;
+      if (!nestedEmpty) {
+        continue;
+      }
+      final fromParticipant = json[key];
+      if (fromParticipant != null &&
+          fromParticipant.toString().trim().isNotEmpty) {
+        userMap[key] = fromParticipant;
+      }
+    }
+
     return ConversationParticipant(
       id: json['id']?.toString() ?? '',
       userId:
@@ -270,6 +438,8 @@ class ConversationParticipantUser {
     required this.id,
     required this.username,
     required this.role,
+    this.externalUserRole,
+    this.externalUserId,
     this.email,
     this.avatarUrl,
     this.status,
@@ -279,13 +449,35 @@ class ConversationParticipantUser {
   final String id;
   final String username;
   final AppRole role;
+
+  /// Raw host role from the API (`externalUserRole`), preserved for display.
+  /// Prefer this over [role].label when showing badges — [parseRole] collapses
+  /// many Vitafy roles into three enum values.
+  final String? externalUserRole;
+
+  /// Host platform id (`externalUserId` / `providerUserId`).
+  ///
+  /// Conversation create responses often omit the associated-user preview link.
+  /// This id joins the chat participant back to that directory photo.
+  final String? externalUserId;
   final String? email;
   final String? avatarUrl;
   final String? status;
   final bool isOnline;
 
   factory ConversationParticipantUser.fromJson(Map<String, dynamic> json) {
-    final rawRole = json['role']?.toString();
+    // Prefer externalUserRole. Do not treat conversation membership `role`
+    // (MEMBER/OWNER) as the user's tenant role.
+    final rawExternalRole = _firstNonEmpty(
+      json,
+      const ['externalUserRole', 'external_user_role'],
+    );
+    final fallbackRole = _firstNonEmpty(json, const ['role']);
+    final effectiveRawRole = rawExternalRole ??
+        (fallbackRole != null &&
+                !parseRoleIgnoresMembershipLabel(fallbackRole)
+            ? fallbackRole
+            : null);
     final idStr =
         _firstNonEmpty(json, const ['id', 'chatUserId', 'chat_user_id'])
                 ?.trim() ??
@@ -294,11 +486,31 @@ class ConversationParticipantUser {
     return ConversationParticipantUser(
       id: idStr,
       username: label,
-      role: rawRole == null ? AppRole.client : parseRole(rawRole),
+      role: effectiveRawRole == null
+          ? AppRole.client
+          : parseRole(effectiveRawRole),
+      externalUserRole: effectiveRawRole,
+      externalUserId: _firstNonEmpty(
+        json,
+        const [
+          'externalUserId',
+          'external_user_id',
+          'providerUserId',
+          'provider_user_id',
+        ],
+      ),
       email: _firstNonEmpty(json, const ['email']),
       avatarUrl: _firstNonEmpty(
         json,
-        const ['avatarUrl', 'avatar_url'],
+        const [
+          'profilePreviewLink',
+          'profile_preview_link',
+          'avatarUrl',
+          'avatar_url',
+          'profile',
+          'profilePicture',
+          'profile_picture',
+        ],
       ),
       status: _firstNonEmpty(json, const ['status']),
       isOnline:

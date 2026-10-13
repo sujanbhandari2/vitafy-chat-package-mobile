@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../models/messenger_conversation.dart';
-import 'messenger_avatar.dart';
 import '../theme/messenger_theme.dart';
+import 'messenger_avatar.dart';
+import 'messenger_group_avatar.dart';
 
 class MessengerConversationTile extends StatelessWidget {
   const MessengerConversationTile({
@@ -11,17 +12,19 @@ class MessengerConversationTile extends StatelessWidget {
     required this.conversation,
     required this.isSelected,
     required this.onTap,
+    this.currentUserId,
   });
 
   final MessengerConversation conversation;
   final bool isSelected;
   final VoidCallback onTap;
+  final String? currentUserId;
 
   @override
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
     final now = DateTime.now();
-    final date = conversation.effectiveActivityAt;
+    final date = conversation.effectiveActivityAt.toLocal();
     final isToday =
         now.year == date.year && now.month == date.month && now.day == date.day;
     final timestamp = isToday
@@ -29,7 +32,8 @@ class MessengerConversationTile extends StatelessWidget {
         : DateFormat('M/d/yy').format(date);
 
     final hasUnread = conversation.unreadCount > 0;
-    final showPresenceDot = hasUnread || conversation.isOnline != null;
+    final showOnlinePresence =
+        !conversation.isGroup && conversation.isOnline != null;
 
     return InkWell(
       onTap: onTap,
@@ -45,15 +49,20 @@ class MessengerConversationTile extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            MessengerAvatar(
-              label: conversation.avatarLabel,
-              imageUrl: conversation.avatarUrl,
-              compact: true,
-              size: 44,
-              showOnlineIndicator: showPresenceDot,
-              isOnline: conversation.isOnline ?? false,
-              presenceDotColor: hasUnread ? theme.onlineIndicator : null,
-            ),
+            conversation.isGroup
+                ? MessengerGroupAvatar(
+                    users: conversation.peerUsers,
+                    fallbackLabel: conversation.avatarLabel,
+                    size: 44,
+                  )
+                : MessengerAvatar(
+                    label: conversation.avatarLabel,
+                    imageUrl: conversation.avatarUrl,
+                    compact: true,
+                    size: 44,
+                    showOnlineIndicator: showOnlinePresence,
+                    isOnline: conversation.isOnline ?? false,
+                  ),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
@@ -85,7 +94,7 @@ class MessengerConversationTile extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    conversation.subtitle,
+                    conversation.previewSubtitle(currentUserId: currentUserId),
                     style: TextStyle(
                       color: hasUnread
                           ? const Color(0xFF374151)

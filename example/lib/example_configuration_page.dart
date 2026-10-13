@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 
 import 'example_chat_page.dart';
+import 'example_chat_session_holder.dart';
 import 'example_models.dart';
 
 class ExampleConfigurationPage extends StatefulWidget {
@@ -84,9 +86,16 @@ class _ExampleConfigurationPageState extends State<ExampleConfigurationPage> {
       return;
     }
 
+    await ExampleChatSessionHolderScope.of(context).startSession(data);
+    final session = ExampleChatSessionHolderScope.of(context).session;
+    if (session == null) {
+      _showSnack('Could not create chat session.');
+      return;
+    }
+
     final didLogout = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
-        builder: (_) => ExampleChatPage(initialData: data),
+        builder: (_) => ExampleChatPage(session: session, initialData: data),
       ),
     );
 
@@ -103,9 +112,29 @@ class _ExampleConfigurationPageState extends State<ExampleConfigurationPage> {
 
   @override
   Widget build(BuildContext context) {
+    final scope = ExampleChatSessionHolderScope.of(context);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Chat Configuration'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: ValueListenableBuilder<PresenceSnapshot?>(
+              valueListenable: scope.ownPresence,
+              builder: (context, snapshot, _) {
+                final status = snapshot?.status;
+                if (status == null) {
+                  return const Center(child: Text('Not signed in'));
+                }
+                final label = switch (status) {
+                  LocalPresenceStatus.online => 'You: Online',
+                  LocalPresenceStatus.offline => 'You: Offline',
+                };
+                return Center(child: Text(label));
+              },
+            ),
+          )
+        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(

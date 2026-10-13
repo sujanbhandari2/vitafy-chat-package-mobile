@@ -75,10 +75,14 @@ class ChatApi {
         throw ArgumentError(
             'startConversation requires a non-empty users list.');
       }
+      final serializedUsers = users.map((u) => u.toRegistrationJson()).toList();
       for (var i = 0; i < users.length; i++) {
-        final u = users[i];
-        if (u.externalTenantId.trim().isEmpty ||
-            u.externalUserId.trim().isEmpty) {
+        final u = serializedUsers[i];
+        final missingTenant =
+            u['externalTenantId']?.toString().trim().isEmpty ?? true;
+        final missingUser =
+            u['externalUserId']?.toString().trim().isEmpty ?? true;
+        if (missingTenant || missingUser) {
           throw ArgumentError(
             'startConversation: users[$i] is missing externalTenantId or externalUserId.',
           );
@@ -88,7 +92,7 @@ class ChatApi {
         _chatUri('users/start-conversation'),
         options: _authOptionsChatUser(auth),
         data: <String, dynamic>{
-          'users': users.map((u) => u.toRegistrationJson()).toList(),
+          'users': serializedUsers,
           if (groupName != null && groupName.trim().isNotEmpty)
             'groupName': groupName.trim(),
         },
@@ -220,6 +224,25 @@ class ChatApi {
     });
   }
 
+  Future<void> removeParticipant(
+    ChatAuth auth, {
+    required String conversationId,
+    required String userId,
+    String? actorUserId,
+  }) {
+    return _guard(() async {
+      await _dio.delete(
+        _chatUri('conversations/$conversationId/participants'),
+        options: _authOptionsChatUser(auth),
+        data: {
+          'userId': userId,
+          if (actorUserId != null && actorUserId.trim().isNotEmpty)
+            'actorUserId': actorUserId,
+        },
+      );
+    });
+  }
+
   Future<List<ChatAttachment>> uploadFiles(
     ChatAuth auth,
     List<File> files, {
@@ -252,11 +275,17 @@ class ChatApi {
       );
 
       final data = _asMap(_unwrapData(response.data));
-      final attachments = data['attachments'] as List<dynamic>? ?? <dynamic>[];
+      final attachmentsRaw = data['attachments'];
+      final attachments = attachmentsRaw is List
+          ? attachmentsRaw
+          : attachmentsRaw is Map
+              ? <dynamic>[attachmentsRaw]
+              : const <dynamic>[];
       return attachments
+          .whereType<Map>()
           .map(
             (item) =>
-                ChatAttachment.fromJson(Map<String, dynamic>.from(item as Map)),
+                ChatAttachment.fromJson(Map<String, dynamic>.from(item)),
           )
           .toList();
     });

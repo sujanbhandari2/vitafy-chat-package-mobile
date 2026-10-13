@@ -9,24 +9,23 @@ import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 
 import 'dummy/associated_user_response.dart';
 import 'dummy/dummy_associated_users.dart';
+import 'example_empty_inbox_pane.dart';
 import 'example_models.dart';
+import 'example_chat_session_holder.dart';
+import 'example_conversation_v2_overrides.dart';
+import 'example_conversation_v2_theme.dart';
+import 'example_start_new_chat_presenter.dart';
 
-bool _hasExampleBootstrapConfig(ExampleBootstrapFormData data) {
-  return data.apiBaseUrl.trim().isNotEmpty &&
-      data.socketUrl.trim().isNotEmpty &&
-      data.apiKey.trim().isNotEmpty &&
-      data.externalTenantId.trim().isNotEmpty &&
-      data.externalUserId.trim().isNotEmpty &&
-      data.externalUserRole.trim().isNotEmpty &&
-      data.email.trim().isNotEmpty;
-}
+enum ExampleMessengerUiVersion { v1, v2 }
 
 class ExampleChatPage extends StatefulWidget {
   const ExampleChatPage({
     super.key,
+    required this.session,
     this.initialData = const ExampleBootstrapFormData.initial(),
   });
 
+  final ChatSession session;
   final ExampleBootstrapFormData initialData;
 
   @override
@@ -41,7 +40,22 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
   /// When true, [MessengerChatShell.users] / suggested people use [kDummyAssociatedUsers].
   /// Set false to use live `getUsers` rows ([TenantUser]) instead.
-  static const bool _useDummyAssociatedUsers = true;
+  static const bool _useDummyAssociatedUsers = false;
+
+  /// When true, an empty inbox uses [MessengerChatShell.emptyInboxBuilder]
+  /// instead of [MessengerChatShell.suggestedPeopleBuilder]. Toggle from the
+  /// app bar to compare both host integrations.
+  bool _useCustomEmptyInbox = true;
+
+  /// v1 = package defaults (FAB + bottom sheet). v2 = host-driven entry points.
+  ExampleMessengerUiVersion _uiVersion = ExampleMessengerUiVersion.v2;
+
+  /// v1 = legacy package conversation UI. v2 = custom host-styled thread.
+  ExampleConversationUiVersion _conversationUiVersion =
+      ExampleConversationUiVersion.v1Legacy;
+
+  final MessengerStartNewChatController _startNewChatController =
+      MessengerStartNewChatController();
 
   final TextEditingController _composerController = TextEditingController();
   final ScrollController _messagesScrollController = ScrollController();
@@ -57,6 +71,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   ChatAuth? _sessionAuth;
   ChatTenantScope? _tenantScope;
   TenantUser? _currentUser;
+
+  RemotePresenceStore? _remotePresenceStore;
+  Map<String, bool> _remotePresenceByUserId = const <String, bool>{};
+  VoidCallback? _remotePresenceListener;
 
   List<TenantUser> _users = const [];
   List<Conversation> _conversations = const [];
@@ -86,6 +104,19 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   String _suggestedPeopleOpeningUserId = '';
   String _suggestedPeopleSearchQuery = '';
   bool _isCreatingSuggestedGroup = false;
+  bool _showAvailablePeopleOnMobileInbox = true;
+
+  static const int _splitDirectoryPageSize = 8;
+  List<MessengerUser> _suggestedDirectoryVisible = const [];
+  List<MessengerUser> _startNewChatDirectoryVisible = const [];
+  int _suggestedDirLoaded = 0;
+  int _sheetDirLoaded = 0;
+  bool _suggestedDirHasMore = false;
+  bool _sheetDirHasMore = false;
+  bool _suggestedDirLoadingMore = false;
+  bool _sheetDirLoadingMore = false;
+  String _suggestedDirQuery = '';
+  String _sheetDirQuery = '';
 
   /// Until [ChatSession.bootstrap] completes, badge listenable has no inbox.
   final ValueNotifier<Map<String, int>> _preBootstrapUnread =
@@ -117,10 +148,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   @override
   void initState() {
     super.initState();
-    if (_hasExampleBootstrapConfig(widget.initialData)) {
-      _isBootstrapping = true;
-    }
-    unawaited(_bootstrapPackageFlow());
+    _isBootstrapping = true;
+    unawaited(_attachToSession(widget.session));
   }
 
   @override
@@ -200,6 +229,170 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
             .compareTo(right.username.toLowerCase());
       });
     return sorted;
+  }
+
+  List<MessengerUser> get _splitDirectoryPool =>
+      List<MessengerUser>.of(_uiUsers);
+
+  List<MessengerUser> _filterSplitDirectory(
+    List<MessengerUser> pool,
+    String query,
+  ) {
+    final t = query.trim().toLowerCase();
+    if (t.isEmpty) {
+      return pool;
+    }
+    return pool
+        .where(
+          (u) =>
+              u.username.toLowerCase().contains(t) ||
+              u.roleLabel.toLowerCase().contains(t) ||
+              u.id.toLowerCase().contains(t),
+        )
+        .toList(growable: false);
+  }
+
+  void _initSplitDirectoryPagesIfDummy() {
+    if (!_useDummyAssociatedUsers || !mounted) {
+      return;
+    }
+    final pool = _splitDirectoryPool;
+    final sFiltered = _filterSplitDirectory(pool, '');
+    final sFirst =
+        sFiltered.take(_splitDirectoryPageSize).toList(growable: false);
+    final shFiltered = _filterSplitDirectory(pool, '');
+    final shFirst =
+        shFiltered.take(_splitDirectoryPageSize).toList(growable: false);
+    setState(() {
+      _suggestedDirQuery = '';
+      _sheetDirQuery = '';
+      _suggestedDirectoryVisible = sFirst;
+      _suggestedDirLoaded = sFirst.length;
+      _suggestedDirHasMore = _suggestedDirLoaded < sFiltered.length;
+      _suggestedDirLoadingMore = false;
+      _startNewChatDirectoryVisible = shFirst;
+      _sheetDirLoaded = shFirst.length;
+      _sheetDirHasMore = _sheetDirLoaded < shFiltered.length;
+      _sheetDirLoadingMore = false;
+    });
+  }
+
+  MessengerSuggestedPeopleDirectory? get _exampleSuggestedDirectory {
+    if (!_useDummyAssociatedUsers) {
+      return null;
+    }
+    return MessengerSuggestedPeopleDirectory(
+      searchDebounce: const Duration(milliseconds: 300),
+      onSearchQueryDebounced: _onSuggestedDirectorySearch,
+      onNearEndOfList: _onSuggestedDirectoryNearEnd,
+      hasMore: _suggestedDirHasMore,
+      isLoadingMore: _suggestedDirLoadingMore,
+    );
+  }
+
+  MessengerStartNewChatDirectory? get _exampleStartNewChatDirectory {
+    if (!_useDummyAssociatedUsers) {
+      return null;
+    }
+    return MessengerStartNewChatDirectory(
+      searchDebounce: const Duration(milliseconds: 300),
+      onSearchQueryDebounced: _onSheetDirectorySearch,
+      onNearEndOfList: _onSheetDirectoryNearEnd,
+      hasMore: _sheetDirHasMore,
+      isLoadingMore: _sheetDirLoadingMore,
+    );
+  }
+
+  void _onSuggestedDirectorySearch(String query) {
+    if (!_useDummyAssociatedUsers || !mounted) {
+      return;
+    }
+    final filtered = _filterSplitDirectory(_splitDirectoryPool, query);
+    final first =
+        filtered.take(_splitDirectoryPageSize).toList(growable: false);
+    setState(() {
+      _suggestedDirQuery = query;
+      _suggestedDirectoryVisible = first;
+      _suggestedDirLoaded = first.length;
+      _suggestedDirHasMore = _suggestedDirLoaded < filtered.length;
+      _suggestedDirLoadingMore = false;
+    });
+  }
+
+  void _onSheetDirectorySearch(String query) {
+    if (!_useDummyAssociatedUsers || !mounted) {
+      return;
+    }
+    final filtered = _filterSplitDirectory(_splitDirectoryPool, query);
+    final first =
+        filtered.take(_splitDirectoryPageSize).toList(growable: false);
+    setState(() {
+      _sheetDirQuery = query;
+      _startNewChatDirectoryVisible = first;
+      _sheetDirLoaded = first.length;
+      _sheetDirHasMore = _sheetDirLoaded < filtered.length;
+      _sheetDirLoadingMore = false;
+    });
+  }
+
+  void _onSuggestedDirectoryNearEnd() {
+    if (!_useDummyAssociatedUsers ||
+        !mounted ||
+        _suggestedDirLoadingMore ||
+        !_suggestedDirHasMore) {
+      return;
+    }
+    setState(() => _suggestedDirLoadingMore = true);
+    Future<void>.delayed(const Duration(milliseconds: 140), () {
+      if (!mounted) {
+        return;
+      }
+      final filtered =
+          _filterSplitDirectory(_splitDirectoryPool, _suggestedDirQuery);
+      setState(() {
+        final next = filtered
+            .skip(_suggestedDirLoaded)
+            .take(_splitDirectoryPageSize)
+            .toList(growable: false);
+        _suggestedDirectoryVisible = [
+          ..._suggestedDirectoryVisible,
+          ...next,
+        ];
+        _suggestedDirLoaded += next.length;
+        _suggestedDirHasMore = _suggestedDirLoaded < filtered.length;
+        _suggestedDirLoadingMore = false;
+      });
+    });
+  }
+
+  void _onSheetDirectoryNearEnd() {
+    if (!_useDummyAssociatedUsers ||
+        !mounted ||
+        _sheetDirLoadingMore ||
+        !_sheetDirHasMore) {
+      return;
+    }
+    setState(() => _sheetDirLoadingMore = true);
+    Future<void>.delayed(const Duration(milliseconds: 140), () {
+      if (!mounted) {
+        return;
+      }
+      final filtered =
+          _filterSplitDirectory(_splitDirectoryPool, _sheetDirQuery);
+      setState(() {
+        final next = filtered
+            .skip(_sheetDirLoaded)
+            .take(_splitDirectoryPageSize)
+            .toList(growable: false);
+        _startNewChatDirectoryVisible = [
+          ..._startNewChatDirectoryVisible,
+          ...next,
+        ];
+        _sheetDirLoaded += next.length;
+        _sheetDirHasMore = _sheetDirLoaded < filtered.length;
+        _sheetDirLoadingMore = false;
+      });
+    });
   }
 
   Future<bool> _ensureSocketConnected() async {
@@ -418,6 +611,91 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     if (updateUi && mounted) {
       setState(() {});
     }
+  }
+
+  Future<void> _attachToSession(ChatSession session) async {
+    if (!mounted) {
+      return;
+    }
+    final tenantScope = session.tenantScope;
+    final registeredUser = session.currentUser;
+    final sessionAuth = session.sessionAuth;
+    if (tenantScope == null || registeredUser == null || sessionAuth == null) {
+      setState(() {
+        _isBootstrapping = false;
+        _statusText = 'ChatSession is not bootstrapped yet.';
+      });
+      return;
+    }
+
+    setState(() {
+      _session = session;
+      _sessionAuth = sessionAuth;
+      _tenantScope = tenantScope;
+      _currentUser = registeredUser;
+      _isSocketConnected = false;
+      _messagesByConversation.clear();
+      _typingUserIdsByConversation.clear();
+      _selectedConversationId = null;
+      _suggestedPeopleOpeningUserId = '';
+      _suggestedPeopleSearchQuery = '';
+      _isCreatingSuggestedGroup = false;
+      _isBootstrapping = true;
+      _statusText = 'Attached to chat session · loading inbox…';
+    });
+
+    // Subscribe to remote presence updates (other users' online/offline
+    // state). Own presence is handled by `ChatSession.ownPresence`.
+    _remotePresenceStore = session.remotePresence;
+    _remotePresenceByUserId = _remotePresenceStore!.onlineByUserId.value;
+    _remotePresenceListener = () {
+      final store = _remotePresenceStore;
+      if (store == null) {
+        return;
+      }
+      final next = store.onlineByUserId.value;
+      final prev = _remotePresenceByUserId;
+
+      // Diff maps to avoid calling `_applyPresenceUpdate` for unchanged users.
+      for (final entry in next.entries) {
+        final uid = entry.key;
+        final nextOnline = entry.value;
+        final prevOnline = prev[uid];
+        if (prevOnline == nextOnline) {
+          continue;
+        }
+        _applyPresenceUpdate(uid, nextOnline);
+      }
+      // Treat removals as offline (best-effort; current store doesn't
+      // remove keys, it only flips boolean values).
+      for (final uid in prev.keys) {
+        if (!next.containsKey(uid)) {
+          _applyPresenceUpdate(uid, false);
+        }
+      }
+
+      _remotePresenceByUserId = next;
+    };
+    _remotePresenceStore!.onlineByUserId.addListener(_remotePresenceListener!);
+
+    _listenToSocketEvents(session.client);
+    await _refreshAll(selectFirstConversation: true);
+    if (!mounted) {
+      return;
+    }
+
+    for (final entry in _remotePresenceStore!.onlineByUserId.value.entries) {
+      _applyPresenceUpdate(entry.key, entry.value);
+    }
+
+    await _setupPushAfterBootstrap(session);
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _isBootstrapping = false;
+    });
   }
 
   Future<void> _bootstrapPackageFlow() async {
@@ -648,6 +926,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                 : 'Data refreshed (REST-only, socket disconnected).';
           });
         }
+        _initSplitDirectoryPagesIfDummy();
         unawaited(_fetchTenantUsersInBackground(client, auth));
         return;
       }
@@ -672,7 +951,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       } catch (error, stackTrace) {
         _appendLog(
           'Refresh users failed',
-          data: {'error': error.toString(), 'stackTrace': stackTrace.toString()},
+          data: {
+            'error': error.toString(),
+            'stackTrace': stackTrace.toString()
+          },
         );
         if (!mounted) {
           return;
@@ -764,6 +1046,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }) async {
     conversationId = conversationId.trim();
     if (conversationId.isEmpty) {
+      return;
+    }
+
+    // Ignore repeated taps on the same conversation while it is still loading.
+    if (_loadingConversationId == conversationId) {
       return;
     }
 
@@ -1014,9 +1301,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       uniqueUsers.add(user);
     }
 
-    if (uniqueUsers.length < 2) {
-      _showSnack('Select at least 2 people to create a group.');
-      throw StateError('At least 2 users are required for group creation.');
+    if (uniqueUsers.isEmpty) {
+      _showSnack('Select at least one person to create a group.');
+      throw StateError('At least one user is required for group creation.');
     }
 
     if (mounted) {
@@ -1046,7 +1333,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
           },
         );
 
-        created = await client.startConversation(
+        created = await client.startGroupConversation(
           auth,
           users: [selfBody, ...peerBodies],
           groupName: groupName.isEmpty ? null : groupName,
@@ -1064,7 +1351,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         created = await client.createConversation(
           auth,
           type: 'GROUP',
-          title: groupName.isEmpty ? null : groupName,
+          title: request.startConversationGroupName(
+            fallback: groupName.isEmpty ? 'Group' : groupName,
+          ),
           creatorUserId: currentUser.id.trim(),
           participantIds: participantIds,
         );
@@ -1573,15 +1862,65 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         }),
       );
     }
-    if (_isDraftConversationId(id)) {
-      if (!mounted) {
-        return;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      if (_selectedConversationId == id) {
+        _selectedConversationId = null;
+        _composerReplyDraft = null;
       }
-      setState(() {
-        if (_selectedConversationId == id) {
-          _selectedConversationId = null;
-        }
-      });
+    });
+  }
+
+  void _onThreadVisibilityChanged(bool visible) {
+    unawaited(_session?.setThreadVisible(visible) ?? Future<void>.value());
+  }
+
+  Future<void> _markMessageSeen(String messageId) async {
+    final client = _client;
+    final conversationId = _selectedConversationId?.trim();
+    final currentUserId = _currentUser?.id;
+    if (client == null ||
+        conversationId == null ||
+        conversationId.isEmpty ||
+        currentUserId == null) {
+      return;
+    }
+
+    final messages = _messagesByConversation[conversationId] ?? const [];
+    final index = messages.indexWhere((m) => m.id == messageId);
+    if (index == -1) {
+      return;
+    }
+    final message = messages[index];
+    if (message.senderId == currentUserId || message.isDeleted) {
+      return;
+    }
+
+    try {
+      final receipt = await client.markAsRead(
+        conversationId: conversationId,
+        messageId: messageId,
+      );
+      final existing = messages[index];
+      final nextReceipts = List<ReadReceipt>.from(existing.readReceipts)
+        ..removeWhere((r) => r.userId == receipt.userId)
+        ..add(receipt);
+      _upsertMessage(
+        conversationId,
+        existing.copyWith(readReceipts: nextReceipts),
+      );
+    } catch (error, stackTrace) {
+      _appendLog(
+        'Mark message seen failed',
+        data: {
+          'messageId': messageId,
+          'conversationId': conversationId,
+          'error': error.toString(),
+          'stackTrace': stackTrace.toString(),
+        },
+      );
     }
   }
 
@@ -1766,6 +2105,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     }
     try {
       await _disposeActiveClient();
+      await ExampleChatSessionHolderScope.of(context).logout();
     } finally {
       if (mounted) {
         setState(() => _isLoggingOut = false);
@@ -1799,12 +2139,15 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     await _teardownPushIntegration(updateUi: false);
     await _socketSubscription?.cancel();
     _socketSubscription = null;
-    final session = _session;
     _session = null;
     _isSocketConnected = false;
-    if (session != null) {
-      await session.dispose();
+    if (_remotePresenceStore != null && _remotePresenceListener != null) {
+      _remotePresenceStore!.onlineByUserId
+          .removeListener(_remotePresenceListener!);
     }
+    _remotePresenceStore = null;
+    _remotePresenceListener = null;
+    _remotePresenceByUserId = const <String, bool>{};
   }
 
   void _listenToSocketEvents(ChatClient client) {
@@ -1949,21 +2292,20 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
         }
         break;
       case ChatSocketEventType.userOnline:
-        final presence = event.presence;
-        if (presence != null) {
-          _applyPresenceUpdate(presence.userId, true);
-        }
+        // Own presence is handled via session-level presence state machine.
+        // Remote presence is synchronized via `session.remotePresence`.
         break;
       case ChatSocketEventType.userOffline:
-        final presence = event.presence;
-        if (presence != null) {
-          _applyPresenceUpdate(presence.userId, false);
-        }
+        // See `ChatSocketEventType.userOnline`.
         break;
     }
   }
 
   void _upsertMessage(String conversationId, ChatMessage message) {
+    // Ignore malformed socket echoes (empty id → blank "Message" / UU bubble).
+    if (message.id.trim().isEmpty || conversationId.trim().isEmpty) {
+      return;
+    }
     final existing = _messagesByConversation[conversationId] ?? const [];
     final next = List<ChatMessage>.from(existing);
     final index = next.indexWhere((item) => item.id == message.id);
@@ -1972,7 +2314,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       next.add(message);
       upsertedMessage = message;
     } else {
-      upsertedMessage = _coalesceDeletedMessageOnUpsert(next[index], message);
+      upsertedMessage = mergeMessageDeliveryReadSnapshot(
+        next[index],
+        _coalesceDeletedMessageOnUpsert(next[index], message),
+      );
       next[index] = upsertedMessage;
     }
     next.sort((left, right) => left.createdAt.compareTo(right.createdAt));
@@ -1999,7 +2344,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     if (index == -1) {
       next.insert(0, conversation);
     } else {
-      next[index] = conversation;
+      next[index] = _mergeConversationSnapshot(next[index], conversation);
     }
 
     if (!mounted) {
@@ -2009,6 +2354,89 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     setState(() {
       _conversations = next;
     });
+  }
+
+  Conversation _mergeConversationSnapshot(
+    Conversation existing,
+    Conversation incoming,
+  ) {
+    final participants = incoming.participants.isEmpty
+        ? existing.participants
+        : incoming.participants
+            .map((participant) => _mergeConversationParticipant(
+                  existing,
+                  participant,
+                ))
+            .toList(growable: false);
+
+    return Conversation(
+      id: incoming.id,
+      tenantId:
+          incoming.tenantId.isNotEmpty ? incoming.tenantId : existing.tenantId,
+      type: incoming.type.isNotEmpty ? incoming.type : existing.type,
+      title: (incoming.title?.trim().isNotEmpty ?? false)
+          ? incoming.title
+          : existing.title,
+      createdBy: (incoming.createdBy?.trim().isNotEmpty ?? false)
+          ? incoming.createdBy
+          : existing.createdBy,
+      createdAt: incoming.createdAt,
+      updatedAt: incoming.updatedAt.isAfter(existing.updatedAt)
+          ? incoming.updatedAt
+          : existing.updatedAt,
+      participants: participants,
+      unreadCount: incoming.unreadCount ?? existing.unreadCount,
+      latestMessage: incoming.latestMessage ?? existing.latestMessage,
+      latestMessageId: incoming.latestMessageId ?? existing.latestMessageId,
+      latestReaction: incoming.latestReaction ?? existing.latestReaction,
+      messageState: incoming.messageState ?? existing.messageState,
+      messageStatusByUserId: incoming.messageStatusByUserId.isNotEmpty
+          ? incoming.messageStatusByUserId
+          : existing.messageStatusByUserId,
+    );
+  }
+
+  ConversationParticipant _mergeConversationParticipant(
+    Conversation existing,
+    ConversationParticipant incoming,
+  ) {
+    final existingParticipant = existing.participants
+        .where((participant) =>
+            participant.user.id == incoming.user.id ||
+            participant.userId == incoming.userId)
+        .firstOrNull;
+    if (existingParticipant == null) {
+      return incoming;
+    }
+
+    final existingUser = existingParticipant.user;
+    final incomingUser = incoming.user;
+    return ConversationParticipant(
+      id: incoming.id.isNotEmpty ? incoming.id : existingParticipant.id,
+      userId: incoming.userId.isNotEmpty
+          ? incoming.userId
+          : existingParticipant.userId,
+      conversationId: incoming.conversationId.isNotEmpty
+          ? incoming.conversationId
+          : existingParticipant.conversationId,
+      user: ConversationParticipantUser(
+        id: incomingUser.id.isNotEmpty ? incomingUser.id : existingUser.id,
+        username: incomingUser.username.trim().isNotEmpty
+            ? incomingUser.username
+            : existingUser.username,
+        role: incomingUser.role,
+        email: (incomingUser.email?.trim().isNotEmpty ?? false)
+            ? incomingUser.email
+            : existingUser.email,
+        avatarUrl: (incomingUser.avatarUrl?.trim().isNotEmpty ?? false)
+            ? incomingUser.avatarUrl
+            : existingUser.avatarUrl,
+        status: (incomingUser.status?.trim().isNotEmpty ?? false)
+            ? incomingUser.status
+            : existingUser.status,
+        isOnline: incomingUser.isOnline || existingUser.isOnline,
+      ),
+    );
   }
 
   void _applyDeletedMessage(DeletedMessageEvent deletedMessage) {
@@ -2104,26 +2532,39 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
 
   void _applyReaction(String conversationId, MessageReaction reaction) {
     final messages = _messagesByConversation[conversationId];
-    if (messages == null) {
-      return;
+    List<ChatMessage>? nextMessages;
+    if (messages != null) {
+      final index =
+          messages.indexWhere((item) => item.id == reaction.messageId);
+      if (index != -1) {
+        final target = messages[index];
+        final nextReactions = List<MessageReaction>.from(target.reactions)
+          ..removeWhere((item) => item.userId == reaction.userId)
+          ..add(reaction);
+
+        nextMessages = List<ChatMessage>.from(messages);
+        nextMessages[index] = target.copyWith(reactions: nextReactions);
+      }
     }
-
-    final index = messages.indexWhere((item) => item.id == reaction.messageId);
-    if (index == -1) {
-      return;
-    }
-
-    final target = messages[index];
-    final nextReactions = List<MessageReaction>.from(target.reactions)
-      ..removeWhere((item) => item.userId == reaction.userId)
-      ..add(reaction);
-
-    final nextMessages = List<ChatMessage>.from(messages);
-    nextMessages[index] = target.copyWith(reactions: nextReactions);
 
     setState(() {
-      _messagesByConversation[conversationId] = nextMessages;
+      if (nextMessages != null) {
+        _messagesByConversation[conversationId] = nextMessages;
+      }
+      _conversations = _conversations
+          .map(
+            (conversation) => _mergeConversationWithReaction(
+              conversation,
+              conversationId: conversationId,
+              reaction: reaction,
+            ),
+          )
+          .toList(growable: false);
     });
+    _session?.inbox.bumpConversation(
+      conversationId,
+      at: reaction.createdAt ?? DateTime.now(),
+    );
   }
 
   void _applyReactionRemoval(
@@ -2163,11 +2604,8 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       return;
     }
 
-    final target = messages[index];
-    final nextReceipts = List<DeliveredReceipt>.from(target.deliveredReceipts)
-      ..removeWhere((item) => item.userId == receipt.userId)
-      ..add(receipt);
-    final updatedMessage = target.copyWith(deliveredReceipts: nextReceipts);
+    final updatedMessage =
+        applyDeliveredReceiptToMessage(messages[index], receipt);
 
     final nextMessages = List<ChatMessage>.from(messages);
     nextMessages[index] = updatedMessage;
@@ -2197,11 +2635,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       return;
     }
 
-    final target = messages[index];
-    final nextReceipts = List<ReadReceipt>.from(target.readReceipts)
-      ..removeWhere((item) => item.userId == receipt.userId)
-      ..add(receipt);
-    final updatedMessage = target.copyWith(readReceipts: nextReceipts);
+    final updatedMessage = applyReadReceiptToMessage(messages[index], receipt);
 
     final nextMessages = List<ChatMessage>.from(messages);
     nextMessages[index] = updatedMessage;
@@ -2257,6 +2691,49 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     );
   }
 
+  Conversation _mergeConversationWithReaction(
+    Conversation conversation, {
+    required String conversationId,
+    required MessageReaction reaction,
+  }) {
+    if (conversation.id != conversationId) {
+      return conversation;
+    }
+    final candidate = _latestReactionFromMessageReaction(reaction);
+    final previous = conversation.latestReaction;
+    if (previous != null &&
+        candidate.createdAt.isBefore(previous.createdAt)) {
+      return conversation;
+    }
+    final nextUpdatedAt = candidate.createdAt.isAfter(conversation.updatedAt)
+        ? candidate.createdAt
+        : conversation.updatedAt;
+    return _copyConversation(
+      conversation,
+      updatedAt: nextUpdatedAt,
+      latestReaction: candidate,
+    );
+  }
+
+  LatestReaction _latestReactionFromMessageReaction(MessageReaction reaction) {
+    return LatestReaction(
+      id: reaction.id,
+      messageId: reaction.messageId,
+      chatUserId: reaction.userId,
+      reactionType: reaction.reactionType,
+      userName: _reactionUserName(reaction),
+      createdAt: reaction.createdAt ?? DateTime.now(),
+    );
+  }
+
+  String _reactionUserName(MessageReaction reaction) {
+    final fromPayload = reaction.user?.name?.trim() ?? '';
+    if (fromPayload.isNotEmpty) {
+      return fromPayload;
+    }
+    return _nameForUser(reaction.userId);
+  }
+
   bool _shouldReplaceConversationLatest(
     ChatMessage? currentLatest,
     ChatMessage candidate,
@@ -2283,7 +2760,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     int? unreadCount,
     ChatMessage? latestMessage,
     String? latestMessageId,
+    LatestReaction? latestReaction,
     Map<String, ConversationMessageStatus>? messageStatusByUserId,
+    ConversationMessageStatus? messageState,
   }) {
     return Conversation(
       id: conversation.id,
@@ -2297,12 +2776,17 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       unreadCount: unreadCount ?? conversation.unreadCount,
       latestMessage: latestMessage ?? conversation.latestMessage,
       latestMessageId: latestMessageId ?? conversation.latestMessageId,
+      latestReaction: latestReaction ?? conversation.latestReaction,
+      messageState: messageState ?? conversation.messageState,
       messageStatusByUserId:
           messageStatusByUserId ?? conversation.messageStatusByUserId,
     );
   }
 
   void _applyPresenceUpdate(String userId, bool isOnline) {
+    if (!mounted) {
+      return;
+    }
     setState(() {
       _users = _users
           .map(
@@ -2357,6 +2841,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                   )
                   .toList(),
               latestMessage: conversation.latestMessage,
+              latestMessageId: conversation.latestMessageId,
+              latestReaction: conversation.latestReaction,
+              messageState: conversation.messageState,
+              messageStatusByUserId: conversation.messageStatusByUserId,
             ),
           )
           .toList();
@@ -2466,6 +2954,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       id: user.id,
       username: user.displayName,
       roleLabel: user.role.label,
+      email: user.email,
       isOnline: user.isOnline,
       avatarUrl: user.avatarUrl,
     );
@@ -2482,6 +2971,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       id: a.userId.trim(),
       username: a.name.trim().isNotEmpty ? a.name.trim() : a.email.trim(),
       roleLabel: (a.chatUserRole ?? a.type).trim(),
+      email: a.email.trim(),
       isOnline: false,
       avatarUrl: pic.isEmpty ? null : pic,
     );
@@ -2492,9 +2982,31 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       id: user.id,
       username: user.username,
       roleLabel: user.role.label,
+      email: user.email?.trim() ?? '',
       isOnline: user.isOnline,
       avatarUrl: user.avatarUrl,
     );
+  }
+
+  MessengerUser _mapConversationPeerUser(ConversationParticipant participant) {
+    final mapped = _mapParticipantUser(participant.user);
+    return MessengerUser(
+      id: mapped.id,
+      username: mapped.username,
+      roleLabel: mapped.roleLabel,
+      email: mapped.email,
+      isOnline: mapped.isOnline,
+      avatarUrl: _avatarForParticipant(participant),
+    );
+  }
+
+  String? _avatarForParticipant(ConversationParticipant participant) {
+    final participantAvatar = participant.user.avatarUrl?.trim();
+    if (participantAvatar != null && participantAvatar.isNotEmpty) {
+      return participantAvatar;
+    }
+    return _avatarForUser(participant.user.id) ??
+        _avatarForUser(participant.userId);
   }
 
   MessengerConversation _mapConversation(
@@ -2507,18 +3019,28 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     final localLatest = messages.isEmpty ? null : messages.last;
     final restLatest = conversation.latestMessage;
     final previewSource = _newestChatMessage(localLatest, restLatest);
+    final latestReaction = conversation.latestReaction;
+    final reactionIsLatest = latestReaction != null &&
+        messengerReactionIsLatestInboxActivity(
+          reactionCreatedAt: latestReaction.createdAt,
+          latestMessageCreatedAt: previewSource?.createdAt,
+        );
     final subtitle = previewSource == null
         ? '${conversation.type} conversation'
         : _messagePreview(previewSource);
     final activityCandidate =
         _newestDateTime(localLatest?.createdAt, restLatest?.createdAt);
-    final lastActivityAt = activityCandidate != null &&
-            activityCandidate.isAfter(conversation.updatedAt)
-        ? activityCandidate
+    final latestActivityCandidate =
+        _newestDateTime(activityCandidate, latestReaction?.createdAt);
+    final lastActivityAt = latestActivityCandidate != null &&
+            latestActivityCandidate.isAfter(conversation.updatedAt)
+        ? latestActivityCandidate
         : conversation.updatedAt;
     final others = conversation.participants
         .where((participant) => participant.user.id != _currentUser?.id)
         .toList();
+    final directAvatarUrl =
+        others.length == 1 ? _avatarForParticipant(others.first) : null;
 
     return MessengerConversation(
       id: conversation.id,
@@ -2530,20 +3052,33 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       isGlobal: conversation.isGlobal,
       isGroup: conversation.type.toUpperCase() == 'GROUP',
       unreadCount: unreadMap[conversation.id] ?? 0,
-      avatarUrl: others.length == 1 ? others.first.user.avatarUrl : null,
+      avatarUrl: directAvatarUrl,
       isOnline: others.any((participant) => participant.user.isOnline),
-      peerUsers: others
-          .map((p) => _mapParticipantUser(p.user))
-          .toList(growable: false),
+      peerUsers: others.map(_mapConversationPeerUser).toList(growable: false),
       apiRank: orderSnapshot.apiRank[conversation.id],
       promotedAt: orderSnapshot.promotedAt[conversation.id],
+      latestReaction: reactionIsLatest
+          ? MessengerConversationLatestReaction(
+              chatUserId: latestReaction.chatUserId,
+              reactionType: latestReaction.reactionType,
+              userName: _displayNameForReaction(conversation, latestReaction),
+              createdAt: latestReaction.createdAt,
+            )
+          : null,
     );
   }
 
   MessengerChatMessage _mapMessage(ChatMessage message) {
     final body = message.content.trim();
+    final uiType = _mapUiMessageType(message.type);
+    final mediaOrigin = widget.session.config.apiBaseUrl.trim();
+    final uiAttachments = messengerAttachmentsFromChatMessage(
+      message,
+      fallbackType: uiType,
+      mediaBaseOrigin: mediaOrigin.isEmpty ? null : mediaOrigin,
+    );
     final attachmentUrl =
-        message.attachments.isEmpty ? '' : message.attachments.first.url.trim();
+        uiAttachments.isEmpty ? '' : uiAttachments.first.url.trim();
 
     late final String content;
     late final String? caption;
@@ -2573,9 +3108,10 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       id: message.id,
       senderId: message.senderId,
       senderLabel: _senderName(message),
-      type: _mapUiMessageType(message.type),
+      type: uiType,
       content: content,
       caption: caption,
+      attachments: uiAttachments,
       createdAt: message.createdAt,
       isDeleted: message.isDeleted,
       deliveryStatus: _deliveryStatusFor(message),
@@ -2753,75 +3289,11 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
   }
 
   String _messagePreview(ChatMessage message) {
-    if (message.isDeleted) {
-      return '[deleted]';
-    }
-    final content = message.content.trim();
-    if (content.isNotEmpty) {
-      return content;
-    }
-    if (message.attachments.isNotEmpty) {
-      return _attachmentPreviewLabel(message);
-    }
-    return '[Empty message]';
-  }
-
-  String _attachmentPreviewLabel(ChatMessage message) {
-    final attachment = message.attachments.first;
-    final normalizedKind = attachment.kind?.trim().toLowerCase() ?? '';
-    final normalizedMime = attachment.mimeType?.trim().toLowerCase() ?? '';
-    final normalizedName = attachment.fileName?.trim().toLowerCase() ?? '';
-
-    bool looksLikeDocument() {
-      return normalizedMime.startsWith('application/') ||
-          normalizedName.endsWith('.pdf') ||
-          normalizedName.endsWith('.doc') ||
-          normalizedName.endsWith('.docx') ||
-          normalizedName.endsWith('.xls') ||
-          normalizedName.endsWith('.xlsx') ||
-          normalizedName.endsWith('.ppt') ||
-          normalizedName.endsWith('.pptx') ||
-          normalizedName.endsWith('.txt');
-    }
-
-    switch (message.type) {
-      case MessageType.image:
-        return 'Image';
-      case MessageType.voice:
-        return 'Voice';
-      case MessageType.video:
-        return 'Video';
-      case MessageType.file:
-        return 'Document';
-      case MessageType.link:
-        return 'Link';
-      case MessageType.text:
-      case MessageType.other:
-        break;
-    }
-
-    if (normalizedKind.contains('image') ||
-        normalizedMime.startsWith('image/')) {
-      return 'Image';
-    }
-    if (normalizedKind.contains('voice') ||
-        normalizedKind.contains('audio') ||
-        normalizedMime.startsWith('audio/')) {
-      return 'Voice';
-    }
-    if (normalizedKind.contains('video') ||
-        normalizedMime.startsWith('video/')) {
-      return 'Video';
-    }
-    if (normalizedKind.contains('link')) {
-      return 'Link';
-    }
-    if (normalizedKind.contains('file') ||
-        normalizedKind.contains('document') ||
-        looksLikeDocument()) {
-      return 'Document';
-    }
-    return 'Attachment';
+    final mediaOrigin = widget.session.config.apiBaseUrl.trim();
+    return messengerConversationPreview(
+      message,
+      mediaBaseOrigin: mediaOrigin.isEmpty ? null : mediaOrigin,
+    );
   }
 
   /// Prefer the chronologically newer row when both REST and loaded-thread
@@ -2845,6 +3317,31 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       return a;
     }
     return a.isBefore(b) ? b : a;
+  }
+
+  String _displayNameForReaction(
+    Conversation conversation,
+    LatestReaction reaction,
+  ) {
+    final fromReaction = reaction.userName.trim();
+    if (fromReaction.isNotEmpty) {
+      return fromReaction;
+    }
+
+    final user =
+        _users.where((item) => item.id == reaction.chatUserId).firstOrNull;
+    if (user != null) {
+      return user.displayName;
+    }
+
+    final participant = conversation.participants
+        .where((item) => item.user.id == reaction.chatUserId)
+        .firstOrNull;
+    if (participant != null) {
+      return participant.user.username;
+    }
+
+    return _nameForUser(reaction.chatUserId);
   }
 
   String _senderName(ChatMessage message) {
@@ -3021,6 +3518,191 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
     );
   }
 
+  bool get _useMobileInboxAvailablePeople =>
+      _uiVersion == ExampleMessengerUiVersion.v2 &&
+      _showAvailablePeopleOnMobileInbox;
+
+  /// Full tenant directory for the optional mobile inbox people section.
+  /// Uses the same pool as start-new-chat (_uiUsers / dummy associated users).
+  List<MessengerUser> get _availablePeopleUsersForMobileInbox =>
+      _splitDirectoryPool;
+
+  Widget _exampleInboxSectionHeader({
+    required String title,
+    required int count,
+    required Color accent,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
+      child: Row(
+        children: [
+          Container(
+            width: 4,
+            height: 18,
+            decoration: BoxDecoration(
+              color: accent,
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            title,
+            style: TextStyle(
+              color: accent,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.2,
+            ),
+          ),
+          const Spacer(),
+          Text(
+            '$count',
+            style: TextStyle(
+              color: accent.withValues(alpha: 0.75),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _exampleConversationInboxRow(
+    BuildContext context,
+    MessengerUserListItemData data,
+  ) {
+    return Card(
+      elevation: 0,
+      color: data.isSelected
+          ? const Color(0xFFE0F2F1)
+          : const Color(0xFFF8FAFC),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(
+          color: data.hasUnread
+              ? const Color(0xFF0D9488)
+              : const Color(0xFFE2E8F0),
+        ),
+      ),
+      child: ListTile(
+        onTap: data.onTap,
+        title: Text(
+          data.displayTitle,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        subtitle: Text(data.subtitle),
+        trailing: data.isOpening
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : null,
+      ),
+    );
+  }
+
+  Widget _exampleAvailablePersonInboxRow(
+    BuildContext context,
+    MessengerAvailablePersonData data,
+  ) {
+    return Card(
+      elevation: 0,
+      color: const Color(0xFFFFF7ED),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: Color(0xFFFED7AA)),
+      ),
+      child: ListTile(
+        onTap: data.onTap,
+        leading: CircleAvatar(
+          backgroundColor: const Color(0xFFFB923C),
+          child: Text(
+            conversationListItemInitials(data.user.username),
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+          ),
+        ),
+        title: Text(
+          conversationListItemDisplayName(data.user.username),
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        subtitle: Text(
+          data.user.roleLabel.trim().isEmpty
+              ? 'Start a new conversation'
+              : '${data.user.roleLabel} • Start a new conversation',
+        ),
+        trailing: data.isOpening
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.chat_bubble_outline_rounded, size: 18),
+      ),
+    );
+  }
+
+  Widget _exampleThreadAssociatedPersonChip(
+    BuildContext context,
+    MessengerAvailablePersonData data,
+  ) {
+    return Material(
+      color: const Color(0xFFFFF7ED),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: data.isOpening ? null : data.onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          width: 84,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFFED7AA)),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: const Color(0xFFFB923C),
+                backgroundImage: data.user.avatarUrl == null
+                    ? null
+                    : NetworkImage(data.user.avatarUrl!),
+                child: data.user.avatarUrl == null
+                    ? Text(
+                        conversationListItemInitials(data.user.username),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 11,
+                        ),
+                      )
+                    : null,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                conversationListItemDisplayName(data.user.username),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF9A3412),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentUserName = _currentUser?.displayName ?? 'Example user';
@@ -3030,6 +3712,62 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
       appBar: AppBar(
         title: const Text('Messenger Chat'),
         actions: [
+          if (_uiVersion == ExampleMessengerUiVersion.v2) ...[
+            IconButton(
+              onPressed: () =>
+                  _startNewChatController.openDirectChatPicker(context),
+              tooltip: 'New chat (host entry point)',
+              icon: const Icon(Icons.chat_bubble_outline_rounded),
+            ),
+            IconButton(
+              onPressed: () =>
+                  _startNewChatController.openGroupChatPicker(context),
+              tooltip: 'New group (host entry point)',
+              icon: const Icon(Icons.group_add_outlined),
+            ),
+            IconButton(
+              onPressed: () => setState(
+                () => _showAvailablePeopleOnMobileInbox =
+                    !_showAvailablePeopleOnMobileInbox,
+              ),
+              tooltip: _showAvailablePeopleOnMobileInbox
+                  ? 'Mobile inbox: hide available people section'
+                  : 'Mobile inbox: show available people section (v2)',
+              icon: Icon(
+                _showAvailablePeopleOnMobileInbox
+                    ? Icons.person_search_rounded
+                    : Icons.person_search_outlined,
+              ),
+            ),
+          ],
+          IconButton(
+            onPressed: () => setState(
+              () => _uiVersion = _uiVersion == ExampleMessengerUiVersion.v2
+                  ? ExampleMessengerUiVersion.v1
+                  : ExampleMessengerUiVersion.v2,
+            ),
+            tooltip: _uiVersion == ExampleMessengerUiVersion.v2
+                ? 'UI: v2 host-driven (tap for v1 package default)'
+                : 'UI: v1 package default (tap for v2 host-driven)',
+            icon: Icon(
+              _uiVersion == ExampleMessengerUiVersion.v2
+                  ? Icons.tune_rounded
+                  : Icons.auto_awesome_rounded,
+            ),
+          ),
+          IconButton(
+            onPressed: () => setState(
+              () => _useCustomEmptyInbox = !_useCustomEmptyInbox,
+            ),
+            tooltip: _useCustomEmptyInbox
+                ? 'Empty inbox: custom widget (tap for suggested people)'
+                : 'Empty inbox: suggested people (tap for custom widget)',
+            icon: Icon(
+              _useCustomEmptyInbox
+                  ? Icons.inbox_outlined
+                  : Icons.people_outline_rounded,
+            ),
+          ),
           IconButton(
             onPressed: _isRefreshing || _isBootstrapping
                 ? null
@@ -3066,14 +3804,80 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                  child: Text(
-                    'Tenant: ${_tenantScope?.tenantId ?? 'pending'}  |  '
-                    'Push: ${_pushIntegrationReady ? 'on' : 'off'}  |  '
-                    '$_statusText',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: const Color(0xFF475569),
-                          fontWeight: FontWeight.w600,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Tenant: ${_tenantScope?.tenantId ?? 'pending'}  |  '
+                        'Push: ${_pushIntegrationReady ? 'on' : 'off'}  |  '
+                        'Empty inbox: ${_useCustomEmptyInbox ? 'custom' : 'suggested'}  |  '
+                        'Start chat: ${_uiVersion == ExampleMessengerUiVersion.v2 ? 'v2 host' : 'v1 package'}  |  '
+                        'People (inbox+thread): ${_useMobileInboxAvailablePeople ? 'on' : 'off'}  |  '
+                        '$_statusText',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: const Color(0xFF475569),
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Text(
+                            'Conversation UI',
+                            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  color: const Color(0xFF334155),
+                                ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: SegmentedButton<ExampleConversationUiVersion>(
+                              segments: const [
+                                ButtonSegment(
+                                  value: ExampleConversationUiVersion.v1Legacy,
+                                  label: Text('v1 Legacy'),
+                                ),
+                                ButtonSegment(
+                                  value: ExampleConversationUiVersion.v2Custom,
+                                  label: Text('v2 Custom'),
+                                ),
+                              ],
+                              selected: {_conversationUiVersion},
+                              onSelectionChanged: (selection) {
+                                setState(() {
+                                  _conversationUiVersion = selection.first;
+                                });
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_uiVersion == ExampleMessengerUiVersion.v2) ...[
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Show Chats + People on mobile inbox (v2 opt-in)',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelLarge
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFF334155),
+                                    ),
+                              ),
+                            ),
+                            Switch.adaptive(
+                              value: _showAvailablePeopleOnMobileInbox,
+                              onChanged: (value) => setState(
+                                () => _showAvailablePeopleOnMobileInbox = value,
+                              ),
+                            ),
+                          ],
                         ),
+                      ],
+                    ],
                   ),
                 ),
                 // Container(
@@ -3162,7 +3966,51 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                             (_session?.inbox.conversationOrder ??
                                     _preBootstrapOrder)
                                 .value;
-                        return MessengerChatShell(
+                        // Optional conversation thread UI overrides (header, bubbles,
+                        // composer, floating overlay). Enabled for v2 custom demo.
+                        final useConversationV2 = _conversationUiVersion ==
+                            ExampleConversationUiVersion.v2Custom;
+                        final useMobileInboxPeople = _useMobileInboxAvailablePeople;
+                        final shell = MessengerChatShell(
+                          showStartChatFab:
+                              _uiVersion == ExampleMessengerUiVersion.v1,
+                          showHeaderComposeButton:
+                              _uiVersion == ExampleMessengerUiVersion.v1,
+                          startNewChatController:
+                              _uiVersion == ExampleMessengerUiVersion.v2
+                                  ? _startNewChatController
+                                  : null,
+                          startNewChatPresenter:
+                              _uiVersion == ExampleMessengerUiVersion.v2
+                                  ? examplePresentStartNewChat
+                                  : null,
+                          groupSelectionListMode:
+                              _uiVersion == ExampleMessengerUiVersion.v2
+                                  ? MessengerGroupSelectionListMode
+                                      .inlineCheckmark
+                                  : MessengerGroupSelectionListMode
+                                      .separateSelectedSection,
+                          startNewChatUserItemBuilder:
+                              _uiVersion == ExampleMessengerUiVersion.v2
+                                  ? (context, data) =>
+                                      MessengerStartNewChatUserRow(
+                                        user: data.user,
+                                        isOpening: data.isOpening,
+                                        isSelectable: data.isSelectable,
+                                        isSelected: data.isSelected,
+                                        onTap: data.onTap,
+                                      )
+                                  : null,
+                        //   userListItemBuilder:(context, data){
+                        //     return Card(
+                        //       child: Column(
+                        //         children: [
+                        //           Text(data.displayTitle),
+                        //           Text(data.roleLabel),
+                        //         ],
+                        //       ),
+                        //     );
+                        // },
                           composerReplyDraft: _composerReplyDraft,
                           onComposerReplyDraftChanged: (draft) => setState(
                             () => _composerReplyDraft = draft,
@@ -3170,7 +4018,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           composerFocusNode: _composerFocusNode,
                           currentUserId: _currentUser?.id ?? '',
                           currentUserName: currentUserName,
-                          isConversationListLoading:
+                          isListPaneRefreshing:
                               _isConversationListLoading || _isBootstrapping,
                           startNewChatUsersLoading: _isSuggestedUsersLoading,
                           conversations: _mapConversations(
@@ -3178,6 +4026,14 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                             orderSnapshot,
                           ),
                           users: _uiUsers,
+                          suggestedUsers: _useDummyAssociatedUsers
+                              ? _suggestedDirectoryVisible
+                              : null,
+                          suggestedDirectory: _exampleSuggestedDirectory,
+                          startNewChatUsers: _useDummyAssociatedUsers
+                              ? _startNewChatDirectoryVisible
+                              : null,
+                          startNewChatDirectory: _exampleStartNewChatDirectory,
                           selectedConversationId: _selectedConversationId,
                           messages: _activeMessages,
                           composerController: _composerController,
@@ -3198,8 +4054,16 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           isCreatingGroup: _isCreatingSuggestedGroup,
                           groupNameInputBehavior:
                               MessengerGroupNameInputBehavior.required,
-                          suggestedPeopleBuilder:
-                              (context, users, openDirectChat) =>
+                          emptyInboxBuilder: _useCustomEmptyInbox
+                              ? (context) => ExampleEmptyInboxPane(
+                                    isRefreshing: _isConversationListLoading ||
+                                        _isBootstrapping,
+                                    onRefresh: () => _refreshAll(),
+                                  )
+                              : null,
+                          suggestedPeopleBuilder: _useCustomEmptyInbox
+                              ? null
+                              : (context, users, openDirectChat) =>
                                   MessengerSuggestedPeoplePanel(
                             users: users,
                             openingUserId: _suggestedPeopleOpeningUserId,
@@ -3208,6 +4072,12 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                             isCreatingGroup: _isCreatingSuggestedGroup,
                             groupNameInputBehavior:
                                 MessengerGroupNameInputBehavior.required,
+                            groupSelectionListMode:
+                                _uiVersion == ExampleMessengerUiVersion.v2
+                                    ? MessengerGroupSelectionListMode
+                                        .inlineCheckmark
+                                    : MessengerGroupSelectionListMode
+                                        .separateSelectedSection,
                             onPullToRefresh: () => _refreshAll(),
                             showSearchField: true,
                             searchQuery: _suggestedPeopleSearchQuery,
@@ -3225,6 +4095,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           prepareOutgoingConversation:
                               _prepareOutgoingConversationForShell,
                           onMobileThreadClosed: _onMobileThreadClosed,
+                          onThreadVisibilityChanged: _onThreadVisibilityChanged,
                           onSend: () => unawaited(_sendMessage()),
                           onPickImage: () {},
                           onPickAudio: () {},
@@ -3255,7 +4126,6 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                             setState(() {
                               _statusText = 'Media send failed: $error';
                             });
-                            _showSnack('Media send failed: $error');
                           },
                           onMediaMessageSent: (_) {
                             setState(() {
@@ -3264,10 +4134,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           },
                           onMediaMessageSentForConversation:
                               (conversationId, message) {
-                            _upsertMessage(
-                              conversationId,
-                              _mapUiMessageToBackend(conversationId, message),
-                            );
+                            _upsertMessage(conversationId, message);
                             _session?.inbox.bumpConversation(conversationId);
                             setState(() {
                               _statusText =
@@ -3277,7 +4144,7 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           onReact: _reactToMessage,
                           onRemoveReaction: _removeReactionFromMessage,
                           onDelete: _handleDelete,
-                          onMarkSeen: null,
+                          onMarkSeen: _markMessageSeen,
                           canDeleteMessage: _canDeleteMessage,
                           searchVisibility: MessengerSearchVisibility.always,
                           searchInputTextStyle: const TextStyle(
@@ -3303,6 +4170,9 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                           onTypingStart: _onTypingStart,
                           onTypingStop: _onTypingStop,
                           enableReactions: true,
+                          composerHintText: useConversationV2
+                              ? 'Type a message...'
+                              : 'Type your message...',
                           composerInputTextStyle: const TextStyle(
                             color: Color(0xFF0F172A),
                             fontSize: 14,
@@ -3328,7 +4198,59 @@ class _ExampleChatPageState extends State<ExampleChatPage> {
                                 horizontal: 12, vertical: 10),
                             borderRadius: 14,
                           ),
+                          userListItemBuilder: useMobileInboxPeople
+                              ? _exampleConversationInboxRow
+                              : null,
+                          showAvailablePeopleOnMobileInbox:
+                              useMobileInboxPeople,
+                          availablePeopleUsers: useMobileInboxPeople
+                              ? _availablePeopleUsersForMobileInbox
+                              : null,
+                          conversationSectionHeaderBuilder:
+                              useMobileInboxPeople
+                                  ? (context, count) =>
+                                      _exampleInboxSectionHeader(
+                                        title: 'Chats',
+                                        count: count,
+                                        accent: const Color(0xFF0D9488),
+                                      )
+                                  : null,
+                          availablePeopleSectionHeaderBuilder:
+                              useMobileInboxPeople
+                                  ? (context, count) =>
+                                      _exampleInboxSectionHeader(
+                                        title: 'People',
+                                        count: count,
+                                        accent: const Color(0xFFEA580C),
+                                      )
+                                  : null,
+                          availablePeopleItemBuilder: useMobileInboxPeople
+                              ? _exampleAvailablePersonInboxRow
+                              : null,
+                          showAssociatedPeopleOnThread: useMobileInboxPeople,
+                          associatedPeopleUsers: useMobileInboxPeople
+                              ? _availablePeopleUsersForMobileInbox
+                              : null,
+                          associatedPeopleSectionHeaderBuilder:
+                              useMobileInboxPeople
+                                  ? (context, count) =>
+                                      _exampleInboxSectionHeader(
+                                        title: 'Associated people',
+                                        count: count,
+                                        accent: const Color(0xFFEA580C),
+                                      )
+                                  : null,
+                          associatedPeopleItemBuilder: useMobileInboxPeople
+                              ? _exampleThreadAssociatedPersonChip
+                              : null,
+                          threadViewOverrides: useConversationV2
+                              ? exampleConversationV2Overrides()
+                              : null,
+                          theme: useConversationV2
+                              ? ExampleConversationV2Theme.messengerTheme
+                              : null,
                         );
+                        return shell;
                       },
                     ),
                   ),

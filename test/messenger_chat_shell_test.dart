@@ -1,4 +1,9 @@
+import 'dart:io';
+
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:health_messenger_ui/lib/src/client/models/chat_message.dart';
+import 'package:health_messenger_ui/lib/src/widgets/messenger_media_send_orchestrator.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 
@@ -218,8 +223,7 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.edit_square));
     await tester.pumpAndSettle();
-    // Tap the row action: title text is not wired to onTap (only the Chat button is).
-    await tester.tap(find.text('Chat').at(1));
+    await tester.tap(find.text('Bob').last);
     await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsOneWidget);
@@ -275,13 +279,13 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.edit_square));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New group'));
+    await tester.tap(find.text('+ New group'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Add').first);
+    await tester.tap(find.text('Bob').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Add').first);
+    await tester.tap(find.text('Cara').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Create group'));
+    await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsOneWidget);
@@ -336,12 +340,114 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.edit_square));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Chat').at(1));
+    await tester.tap(find.text('Bob').last);
     await tester.pumpAndSettle();
 
     expect(find.text('Bob'), findsWidgets);
     expect(_DeferredOpenDirectHarnessState.latestOpenedConversationId, 'c2');
   });
+
+  testWidgets(
+    'mobile open-direct does not open thread when selection stays stale',
+    (tester) async {
+      final composer = TextEditingController();
+      final scroll = ScrollController();
+      addTearDown(() {
+        composer.dispose();
+        scroll.dispose();
+      });
+
+      const existingUser = MessengerUser(id: 'u1', username: 'alice_jones');
+      const newPeer = MessengerUser(id: 'u2', username: 'bob');
+      final c1 = MessengerConversation(
+        id: 'c1',
+        title: 'Alice Jones',
+        subtitle: 'Hello',
+        avatarLabel: 'A',
+        createdAt: DateTime.utc(2026),
+        peerUsers: const [existingUser],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MessengerTheme(
+            data: const MessengerThemeData(),
+            child: _FailedOpenDirectHarness(
+              composer: composer,
+              scroll: scroll,
+              initialConversations: [c1],
+              users: const [existingUser, newPeer],
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.edit_square));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Bob').last);
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsNothing);
+      expect(_FailedOpenDirectHarnessState.openDirectCallCount, 1);
+      expect(_FailedOpenDirectHarnessState.latestSelectedConversationId, 'c1');
+    },
+  );
+
+  testWidgets(
+    'mobile create-group does not open thread when selection stays stale',
+    (tester) async {
+      final composer = TextEditingController();
+      final scroll = ScrollController();
+      addTearDown(() {
+        composer.dispose();
+        scroll.dispose();
+      });
+
+      const existingUser = MessengerUser(id: 'u1', username: 'alice_jones');
+      const bob = MessengerUser(id: 'u2', username: 'bob');
+      const cara = MessengerUser(id: 'u3', username: 'cara');
+      final c1 = MessengerConversation(
+        id: 'c1',
+        title: 'Alice Jones',
+        subtitle: 'Hello',
+        avatarLabel: 'A',
+        createdAt: DateTime.utc(2026),
+        peerUsers: const [existingUser],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MessengerTheme(
+            data: const MessengerThemeData(),
+            child: _FailedGroupCreateHarness(
+              composer: composer,
+              scroll: scroll,
+              initialConversations: [c1],
+              users: const [existingUser, bob, cara],
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.edit_square));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('+ New group'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Bob').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cara').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsNothing);
+      expect(_FailedGroupCreateHarnessState.latestSelectedConversationId, 'c1');
+    },
+  );
 
   testWidgets('desktop thread shows loading state instead of empty text',
       (tester) async {
@@ -683,7 +789,249 @@ void main() {
   });
 
   testWidgets(
-      'isConversationListLoading shows inline spinner replacing conversation list',
+      'microphone denied does not surface media send error callback',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    const user = MessengerUser(id: 'u1', username: 'alice_jones');
+    final conversation = MessengerConversation(
+      id: 'c1',
+      title: 'Alice Jones',
+      subtitle: 'Hello',
+      avatarLabel: 'A',
+      createdAt: DateTime.utc(2026),
+      peerUsers: const [user],
+    );
+
+    var mediaSendErrorCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerChatShell(
+              currentUserId: 'me',
+              currentUserName: 'Me',
+              conversations: [conversation],
+              users: const [user],
+              selectedConversationId: 'c1',
+              messages: const [],
+              composerController: composer,
+              messagesScrollController: scroll,
+              isSending: false,
+              isRecording: false,
+              onRefresh: () async {},
+              onLogout: () {},
+              onSelectConversation: (_) async {},
+              onOpenDirectChat: (_) async {},
+              onSend: () {},
+              onPickImage: () {},
+              onPickAudio: () {},
+              onToggleRecording: () {},
+              desktopBreakpoint: 200,
+              enablePackageMediaSending: true,
+              mediaChatClient: _NoopMediaClient(),
+              mediaChatAuth: const ChatAuth(apiKey: 'k'),
+              mediaSenderId: 'me',
+              mediaRecorder: _PermissionDeniedRecorder(),
+              onMediaSendError: (_, __) {
+                mediaSendErrorCalls++;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final composerBar =
+        tester.widget<MessengerComposerBar>(find.byType(MessengerComposerBar));
+    composerBar.onStartRecording?.call();
+    await tester.pump();
+
+    expect(mediaSendErrorCalls, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('multi-pick queues attachments with per-item removal',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    const user = MessengerUser(id: 'u1', username: 'alice_jones');
+    final conversation = MessengerConversation(
+      id: 'c1',
+      title: 'Alice Jones',
+      subtitle: 'Hello',
+      avatarLabel: 'A',
+      createdAt: DateTime.utc(2026),
+      peerUsers: const [user],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerChatShell(
+              currentUserId: 'me',
+              currentUserName: 'Me',
+              conversations: [conversation],
+              users: const [user],
+              selectedConversationId: 'c1',
+              messages: const [],
+              composerController: composer,
+              messagesScrollController: scroll,
+              isSending: false,
+              isRecording: false,
+              onRefresh: () async {},
+              onLogout: () {},
+              onSelectConversation: (_) async {},
+              onOpenDirectChat: (_) async {},
+              onSend: () {},
+              onPickImage: () {},
+              onPickAudio: () {},
+              onToggleRecording: () {},
+              desktopBreakpoint: 200,
+              enablePackageMediaSending: true,
+              mediaChatClient: _NoopMediaClient(),
+              mediaChatAuth: const ChatAuth(apiKey: 'k'),
+              mediaSenderId: 'me',
+              mediaPicker: _QueueingMediaPicker([
+                MessengerPickedMedia(
+                  file: File('a.pdf'),
+                  messageType: MessageType.file,
+                  displayName: 'a.pdf',
+                ),
+                MessengerPickedMedia(
+                  file: File('b.pdf'),
+                  messageType: MessageType.file,
+                  displayName: 'b.pdf',
+                ),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final composerBar =
+        tester.widget<MessengerComposerBar>(find.byType(MessengerComposerBar));
+    composerBar.onPickImage();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('a.pdf'), findsOneWidget);
+    expect(find.text('b.pdf'), findsOneWidget);
+    expect(find.text('Remove all'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Remove attachment').first);
+    await tester.pump();
+
+    expect(find.text('a.pdf'), findsNothing);
+    expect(find.text('b.pdf'), findsOneWidget);
+  });
+
+  testWidgets(
+      'failed media send keeps bubble visible with retry action',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    const user = MessengerUser(id: 'u1', username: 'alice_jones');
+    final conversation = MessengerConversation(
+      id: 'c1',
+      title: 'Alice Jones',
+      subtitle: 'Hello',
+      avatarLabel: 'A',
+      createdAt: DateTime.utc(2026),
+      peerUsers: const [user],
+    );
+    final client = _AlwaysFailMediaClient();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerChatShell(
+              currentUserId: 'me',
+              currentUserName: 'Me',
+              conversations: [conversation],
+              users: const [user],
+              selectedConversationId: 'c1',
+              messages: const [],
+              composerController: composer,
+              messagesScrollController: scroll,
+              isSending: false,
+              isRecording: false,
+              onRefresh: () async {},
+              onLogout: () {},
+              onSelectConversation: (_) async {},
+              onOpenDirectChat: (_) async {},
+              onSend: () {},
+              onPickImage: () {},
+              onPickAudio: () {},
+              onToggleRecording: () {},
+              desktopBreakpoint: 200,
+              enablePackageMediaSending: true,
+              mediaChatClient: client,
+              mediaChatAuth: const ChatAuth(apiKey: 'k'),
+              mediaSenderId: 'me',
+              mediaPicker: _QueueingMediaPicker([
+                MessengerPickedMedia(
+                  file: File('failed.pdf'),
+                  messageType: MessageType.file,
+                  displayName: 'failed.pdf',
+                ),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    var composerBar =
+        tester.widget<MessengerComposerBar>(find.byType(MessengerComposerBar));
+    composerBar.onPickImage();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    composerBar =
+        tester.widget<MessengerComposerBar>(find.byType(MessengerComposerBar));
+    composerBar.onSend();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(client.sendAttempts, 1);
+    expect(find.text('failed.pdf'), findsWidgets);
+    expect(find.text('Retry'), findsOneWidget);
+
+    await tester.tap(find.text('Retry'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(client.sendAttempts, 2);
+    expect(find.text('Retry'), findsOneWidget);
+  });
+
+  testWidgets(
+      'isListPaneRefreshing shows inline spinner replacing conversation list',
       (tester) async {
     final composer = TextEditingController();
     final scroll = ScrollController();
@@ -703,7 +1051,7 @@ void main() {
               child: MessengerChatShell(
                 currentUserId: 'me',
                 currentUserName: 'Me',
-                isConversationListLoading: true,
+                isListPaneRefreshing: true,
                 conversations: const [],
                 users: const [
                   MessengerUser(id: 'u1', username: 'alice'),
@@ -740,7 +1088,7 @@ void main() {
   });
 
   testWidgets(
-      'isConversationListLoading with suggested slot shows full-pane spinner',
+      'isListPaneRefreshing with suggested slot shows full-pane spinner',
       (tester) async {
     final composer = TextEditingController();
     final scroll = ScrollController();
@@ -760,7 +1108,7 @@ void main() {
               child: MessengerChatShell(
                 currentUserId: 'me',
                 currentUserName: 'Me',
-                isConversationListLoading: true,
+                isListPaneRefreshing: true,
                 conversations: const [],
                 users: const [
                   MessengerUser(id: 'u1', username: 'alice'),
@@ -798,8 +1146,7 @@ void main() {
   });
 
   testWidgets(
-      'deprecated isListPaneRefreshing alone still loads conversation list '
-      'but does not replace suggested slot',
+      'isListPaneRefreshing false shows suggested people when inbox is empty',
       (tester) async {
     final composer = TextEditingController();
     final scroll = ScrollController();
@@ -819,9 +1166,7 @@ void main() {
               child: MessengerChatShell(
                 currentUserId: 'me',
                 currentUserName: 'Me',
-                // ignore: deprecated_member_use
-                isListPaneRefreshing: true,
-                isConversationListLoading: false,
+                isListPaneRefreshing: false,
                 conversations: const [],
                 users: const [
                   MessengerUser(id: 'u1', username: 'alice'),
@@ -859,6 +1204,117 @@ void main() {
     expect(find.byKey(const ValueKey('conversationListLoading')), findsNothing);
   });
 
+  testWidgets('emptyInboxBuilder replaces suggested people when inbox is empty',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerChatShell(
+              currentUserId: 'me',
+              currentUserName: 'Me',
+              conversations: const [],
+              users: const [
+                MessengerUser(id: 'u1', username: 'alice'),
+              ],
+              selectedConversationId: null,
+              messages: const [],
+              composerController: composer,
+              messagesScrollController: scroll,
+              isSending: false,
+              isRecording: false,
+              onRefresh: () async {},
+              onLogout: () {},
+              onSelectConversation: (_) async {},
+              onOpenDirectChat: (_) async {},
+              onSend: () {},
+              onPickImage: () {},
+              onPickAudio: () {},
+              onToggleRecording: () {},
+              emptyInboxBuilder: (context) => const Center(
+                child: Text('No users available'),
+              ),
+              suggestedPeopleBuilder: (context, users, _) =>
+                  MessengerSuggestedPeoplePanel(
+                users: users,
+                onUserSelected: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('No users available'), findsOneWidget);
+    expect(find.text('Suggested people'), findsNothing);
+    expect(find.text('alice'), findsNothing);
+  });
+
+  testWidgets(
+      'isListPaneRefreshing with emptyInboxBuilder shows spinner not custom pane',
+      (tester) async {
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 600,
+              width: 960,
+              child: MessengerChatShell(
+                currentUserId: 'me',
+                currentUserName: 'Me',
+                isListPaneRefreshing: true,
+                conversations: const [],
+                users: const [],
+                selectedConversationId: null,
+                messages: const [],
+                composerController: composer,
+                messagesScrollController: scroll,
+                isSending: false,
+                isRecording: false,
+                onRefresh: () async {},
+                onLogout: () {},
+                onSelectConversation: (_) async {},
+                onOpenDirectChat: (_) async {},
+                onSend: () {},
+                onPickImage: () {},
+                onPickAudio: () {},
+                onToggleRecording: () {},
+                desktopBreakpoint: 400,
+                emptyInboxBuilder: (context) => const Center(
+                  child: Text('No users available'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+
+    expect(find.text('No users available'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+  });
+
   testWidgets(
       'suggestedPeopleBuilder with isLoading uses panel spinner not list-pane key',
       (tester) async {
@@ -880,7 +1336,7 @@ void main() {
               child: MessengerChatShell(
                 currentUserId: 'me',
                 currentUserName: 'Me',
-                isConversationListLoading: false,
+                isListPaneRefreshing: false,
                 conversations: const [],
                 users: const [],
                 selectedConversationId: null,
@@ -917,8 +1373,7 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsWidgets);
   });
 
-  testWidgets(
-      'isConversationListLoading with non-empty inbox replaces list only',
+  testWidgets('isListPaneRefreshing with non-empty inbox replaces list only',
       (tester) async {
     final composer = TextEditingController();
     final scroll = ScrollController();
@@ -946,7 +1401,7 @@ void main() {
               child: MessengerChatShell(
                 currentUserId: 'me',
                 currentUserName: 'Me',
-                isConversationListLoading: true,
+                isListPaneRefreshing: true,
                 conversations: [conversation],
                 users: const [
                   MessengerUser(id: 'u1', username: 'alice'),
@@ -1274,6 +1729,92 @@ void main() {
 
     expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsNothing);
   });
+
+  testWidgets('startNewChatController opens picker while shell is mounted',
+      (tester) async {
+    final controller = MessengerStartNewChatController();
+    final composer = TextEditingController();
+    final scroll = ScrollController();
+    addTearDown(() {
+      composer.dispose();
+      scroll.dispose();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: Builder(
+              builder: (context) {
+                return Column(
+                  children: [
+                    TextButton(
+                      onPressed: () =>
+                          controller.openGroupChatPicker(context),
+                      child: const Text('Open group picker'),
+                    ),
+                    Expanded(
+                      child: MessengerChatShell(
+                        startNewChatController: controller,
+                        currentUserId: 'me',
+                        currentUserName: 'Me',
+                        conversations: [
+                          MessengerConversation(
+                            id: 'c1',
+                            title: 'Alice',
+                            subtitle: 'Hi',
+                            avatarLabel: 'A',
+                            createdAt: DateTime.utc(2026, 1, 1),
+                            peerUsers: const [
+                              MessengerUser(id: 'a', username: 'alice'),
+                            ],
+                          ),
+                        ],
+                        users: const [
+                          MessengerUser(id: 'a', username: 'alice'),
+                          MessengerUser(id: 'b', username: 'bob'),
+                        ],
+                        startNewChatUsers: const [
+                          MessengerUser(id: 'a', username: 'alice'),
+                          MessengerUser(id: 'b', username: 'bob'),
+                        ],
+                        selectedConversationId: 'c1',
+                        messages: const [],
+                        composerController: composer,
+                        messagesScrollController: scroll,
+                        isSending: false,
+                        isRecording: false,
+                        onRefresh: () async {},
+                        onLogout: () {},
+                        onSelectConversation: (_) async {},
+                        onOpenDirectChat: (_) async {},
+                        onCreateGroupSelected: (_) async {},
+                        onSend: () {},
+                        onPickImage: () {},
+                        onPickAudio: () {},
+                        onToggleRecording: () {},
+                        searchVisibility: MessengerSearchVisibility.never,
+                        showStartChatFab: false,
+                        desktopBreakpoint: 400,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(controller.isAttached, isTrue);
+    await tester.tap(find.text('Open group picker'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Start New Chat'), findsOneWidget);
+    expect(find.text('Create'), findsOneWidget);
+  });
 }
 
 /// Delete succeeds but host does not mutate [conversations] / selection; the
@@ -1362,7 +1903,8 @@ class _MobileDeleteThreadHarness extends StatefulWidget {
       _MobileDeleteThreadHarnessState();
 }
 
-class _MobileDeleteThreadHarnessState extends State<_MobileDeleteThreadHarness> {
+class _MobileDeleteThreadHarnessState
+    extends State<_MobileDeleteThreadHarness> {
   static const MessengerUser _peer =
       MessengerUser(id: 'u1', username: 'alice_jones');
 
@@ -1420,11 +1962,35 @@ class _MobileDeleteThreadHarnessState extends State<_MobileDeleteThreadHarness> 
   }
 }
 
+class _QueueingMediaPicker implements MessengerMediaPicker {
+  const _QueueingMediaPicker(this.items);
+
+  final List<MessengerPickedMedia> items;
+
+  @override
+  Future<MessengerPickedMedia?> pick(MessengerMediaKind kind) async {
+    if (items.isEmpty) {
+      return null;
+    }
+    return items.first;
+  }
+
+  @override
+  Future<List<MessengerPickedMedia>> pickMany(MessengerMediaKind kind) async {
+    return items;
+  }
+}
+
 class _ThrowingMediaPicker implements MessengerMediaPicker {
   const _ThrowingMediaPicker();
 
   @override
   Future<MessengerPickedMedia?> pick(MessengerMediaKind kind) async {
+    throw const MessengerMediaPickerUnavailableException('missing plugin');
+  }
+
+  @override
+  Future<List<MessengerPickedMedia>> pickMany(MessengerMediaKind kind) async {
     throw const MessengerMediaPickerUnavailableException('missing plugin');
   }
 }
@@ -1437,6 +2003,66 @@ class _NoopMediaClient extends ChatClient {
             socketUrl: 'https://example.com',
           ),
         );
+}
+
+class _AlwaysFailMediaClient extends ChatClient {
+  _AlwaysFailMediaClient()
+      : super(
+          config: const ChatServiceConfig(
+            apiBaseUrl: 'https://example.com',
+            socketUrl: 'https://example.com',
+          ),
+        );
+
+  int sendAttempts = 0;
+
+  @override
+  Future<ChatAttachment> uploadFile(
+    ChatAuth auth,
+    File file, {
+    void Function(int sent, int total)? onSendProgress,
+    CancelToken? cancelToken,
+  }) async {
+    onSendProgress?.call(1, 1);
+    return ChatAttachment(
+      url: file.path,
+      fileName: file.uri.pathSegments.isEmpty
+          ? 'attachment'
+          : file.uri.pathSegments.last,
+    );
+  }
+
+  @override
+  Future<ChatMessage> sendRestMessage(
+    ChatAuth auth, {
+    required String conversationId,
+    required String senderId,
+    required MessageType type,
+    String content = '',
+    List<ChatAttachment> attachments = const [],
+    String? replyToMessageId,
+  }) async {
+    sendAttempts++;
+    throw Exception('send failed');
+  }
+}
+
+class _PermissionDeniedRecorder implements MessengerAudioRecorder {
+  @override
+  bool get isRecording => false;
+
+  @override
+  Future<void> cancel() async {}
+
+  @override
+  Future<void> start() async {
+    throw const MessengerAudioRecordingException(
+      'Microphone access is required to record an audio.',
+    );
+  }
+
+  @override
+  Future<MessengerRecordedAudio?> stop() async => null;
 }
 
 /// Host defers updating [selectedConversationId] until after an async gap,
@@ -1662,6 +2288,137 @@ class _GroupCreateHarnessState extends State<_GroupCreateHarness> {
           });
           latestSelectedConversationId = widget.createdConversation.id;
         },
+        onSend: () {},
+        onPickImage: () {},
+        onPickAudio: () {},
+        onToggleRecording: () {},
+      ),
+    );
+  }
+}
+
+/// Host simulates failed direct open: callback returns without updating selection.
+class _FailedOpenDirectHarness extends StatefulWidget {
+  const _FailedOpenDirectHarness({
+    required this.composer,
+    required this.scroll,
+    required this.initialConversations,
+    required this.users,
+  });
+
+  final TextEditingController composer;
+  final ScrollController scroll;
+  final List<MessengerConversation> initialConversations;
+  final List<MessengerUser> users;
+
+  @override
+  State<_FailedOpenDirectHarness> createState() =>
+      _FailedOpenDirectHarnessState();
+}
+
+class _FailedOpenDirectHarnessState extends State<_FailedOpenDirectHarness> {
+  static int openDirectCallCount = 0;
+  static String? latestSelectedConversationId;
+
+  late List<MessengerConversation> conversations;
+  String? selectedConversationId;
+
+  @override
+  void initState() {
+    super.initState();
+    conversations = [...widget.initialConversations];
+    selectedConversationId = conversations.first.id;
+    openDirectCallCount = 0;
+    latestSelectedConversationId = selectedConversationId;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: MessengerChatShell(
+        currentUserId: 'me',
+        currentUserName: 'Me',
+        conversations: conversations,
+        users: widget.users,
+        selectedConversationId: selectedConversationId,
+        messages: const [],
+        composerController: widget.composer,
+        messagesScrollController: widget.scroll,
+        isSending: false,
+        isRecording: false,
+        onRefresh: () async {},
+        onLogout: () {},
+        onSelectConversation: (id) async {
+          setState(() => selectedConversationId = id);
+          latestSelectedConversationId = id;
+        },
+        onOpenDirectChat: (_) async {
+          openDirectCallCount++;
+        },
+        onSend: () {},
+        onPickImage: () {},
+        onPickAudio: () {},
+        onToggleRecording: () {},
+      ),
+    );
+  }
+}
+
+/// Host simulates failed group create: callback returns without updating selection.
+class _FailedGroupCreateHarness extends StatefulWidget {
+  const _FailedGroupCreateHarness({
+    required this.composer,
+    required this.scroll,
+    required this.initialConversations,
+    required this.users,
+  });
+
+  final TextEditingController composer;
+  final ScrollController scroll;
+  final List<MessengerConversation> initialConversations;
+  final List<MessengerUser> users;
+
+  @override
+  State<_FailedGroupCreateHarness> createState() =>
+      _FailedGroupCreateHarnessState();
+}
+
+class _FailedGroupCreateHarnessState extends State<_FailedGroupCreateHarness> {
+  static String? latestSelectedConversationId;
+
+  late List<MessengerConversation> conversations;
+  String? selectedConversationId;
+
+  @override
+  void initState() {
+    super.initState();
+    conversations = [...widget.initialConversations];
+    selectedConversationId = conversations.first.id;
+    latestSelectedConversationId = selectedConversationId;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: MessengerChatShell(
+        currentUserId: 'me',
+        currentUserName: 'Me',
+        conversations: conversations,
+        users: widget.users,
+        selectedConversationId: selectedConversationId,
+        messages: const [],
+        composerController: widget.composer,
+        messagesScrollController: widget.scroll,
+        isSending: false,
+        isRecording: false,
+        onRefresh: () async {},
+        onLogout: () {},
+        onSelectConversation: (id) async {
+          setState(() => selectedConversationId = id);
+          latestSelectedConversationId = id;
+        },
+        onOpenDirectChat: (_) async {},
+        onCreateGroupSelected: (_) async {},
         onSend: () {},
         onPickImage: () {},
         onPickAudio: () {},

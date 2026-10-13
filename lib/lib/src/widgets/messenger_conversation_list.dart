@@ -4,13 +4,26 @@ import 'package:flutter/material.dart';
 
 import '../models/messenger_conversation.dart';
 import '../models/messenger_group_create_request.dart';
+import '../models/messenger_inbox_people.dart';
 import '../models/messenger_search_visibility.dart';
+import '../models/messenger_start_new_chat.dart';
 import '../models/messenger_user.dart';
+import '../models/messenger_user_directory.dart';
 import '../theme/messenger_theme.dart';
-import 'messenger_avatar.dart';
 import 'messenger_default_inline_loading.dart';
-import 'messenger_group_name_text_field.dart';
+import 'messenger_conversation_list_item.dart';
 import 'messenger_list_search_field.dart';
+import 'messenger_start_new_chat_picker.dart';
+
+export 'messenger_conversation_list_item.dart'
+    show
+        MessengerConversationListItem,
+        MessengerConversationListRoleChip,
+        MessengerUserListItemData,
+        MessengerUserListItemStyle,
+        conversationListItemDisplayName,
+        conversationListItemInitials,
+        conversationListItemSubtitle;
 
 /// Avoid treating every row as "opening" when both ids are empty (`'' == ''`).
 bool _isDirectOpenBusyForUser(String openingDirectUserId, String userId) {
@@ -18,62 +31,27 @@ bool _isDirectOpenBusyForUser(String openingDirectUserId, String userId) {
   return open.isNotEmpty && open == userId.trim();
 }
 
-class MessengerUserListItemStyle {
-  const MessengerUserListItemStyle({
-    this.margin = EdgeInsets.zero,
-    this.padding = const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-    this.backgroundColor,
-    this.selectedBackgroundColor,
-    this.border,
-    this.selectedBorder,
-    this.borderRadius = 12,
-    this.boxShadow,
-    this.titleStyle,
-    this.subtitleStyle,
-    this.trailingIconColor,
-    this.unreadDotColor,
-  });
-
-  final EdgeInsetsGeometry margin;
-  final EdgeInsetsGeometry padding;
-  final Color? backgroundColor;
-  final Color? selectedBackgroundColor;
-  final BorderSide? border;
-  final BorderSide? selectedBorder;
-  final double borderRadius;
-  final List<BoxShadow>? boxShadow;
-  final TextStyle? titleStyle;
-  final TextStyle? subtitleStyle;
-  final Color? trailingIconColor;
-  final Color? unreadDotColor;
-}
-
-class MessengerUserListItemData {
-  const MessengerUserListItemData({
-    required this.user,
-    required this.isSelected,
-    required this.hasUnread,
-    required this.isOpening,
-    required this.messagePreview,
-    required this.onTap,
-  });
-
-  final MessengerUser user;
-  final bool isSelected;
-  final bool hasUnread;
-  final bool isOpening;
-  final String? messagePreview;
-  final VoidCallback onTap;
+/// Avoid treating every row as "opening" when both ids are empty (`'' == ''`).
+bool _isConversationOpenBusy(
+  String openingConversationId,
+  String? conversationId,
+) {
+  final open = openingConversationId.trim();
+  final id = conversationId?.trim() ?? '';
+  return open.isNotEmpty && id.isNotEmpty && open == id;
 }
 
 class MessengerConversationList extends StatefulWidget {
   const MessengerConversationList({
     super.key,
+    this.currentUserId,
+    this.currentPlatformUserId,
     required this.currentUserName,
     required this.conversations,
     required this.users,
     required this.selectedConversationId,
     required this.openingDirectUserId,
+    this.openingConversationId = '',
     required this.onRefresh,
     this.enablePullToRefresh = true,
     this.isConversationListLoading = false,
@@ -85,12 +63,15 @@ class MessengerConversationList extends StatefulWidget {
     this.isCreatingGroup = false,
     required this.onSelectConversation,
     this.searchVisibility = MessengerSearchVisibility.auto,
+    this.conversationSearchController,
     this.searchThreshold = 10,
     this.searchHintText = 'Search',
     this.emptyUsersMessage = 'No users available right now.',
     this.emptyConversationsMessage = 'No conversations available yet.',
+    this.conversationSearchNoResultsMessage = '"{query}" not found.',
     this.emptyUsersBuilder,
     this.emptyConversationsBuilder,
+    this.conversationSearchNoResultsBuilder,
     this.showStartChatFab = true,
     this.isMobile = false,
     this.showHeaderEditButton = true,
@@ -116,13 +97,40 @@ class MessengerConversationList extends StatefulWidget {
     this.groupNameFieldLabelText = 'Group name',
     this.groupNameFieldHintText = 'Enter a group name',
     this.groupNameRequiredErrorText = 'Enter a group name to continue.',
-  });
+    this.defaultGroupNameWhenEmpty = 'Group',
+    this.groupMinSelectionCount = 1,
+    this.startNewChatUsers,
+    this.startNewChatDirectory,
+    this.startNewChatPresenter,
+    this.groupSelectionListMode =
+        MessengerGroupSelectionListMode.separateSelectedSection,
+    this.startNewChatUserItemBuilder,
+    this.selectedUsersSectionBuilder,
+    this.showAvailablePeopleOnMobileInbox = false,
+    this.availablePeopleUsers,
+    this.conversationSectionHeaderBuilder,
+    this.availablePeopleSectionHeaderBuilder,
+    this.availablePeopleItemBuilder,
+    this.availablePeopleEmptyMessage =
+        'No more people available to start a chat with.',
+  }) : assert(
+          groupMinSelectionCount > 0,
+          'groupMinSelectionCount must be greater than zero.',
+        );
 
+  final String? currentUserId;
+  final String? currentPlatformUserId;
   final String currentUserName;
   final List<MessengerConversation> conversations;
   final List<MessengerUser> users;
   final String? selectedConversationId;
   final String openingDirectUserId;
+
+  /// Conversation id currently being opened (select / join in flight).
+  ///
+  /// When non-empty, list taps are ignored and the matching row reports
+  /// [MessengerUserListItemData.isOpening] so hosts can show a spinner.
+  final String openingConversationId;
 
   /// Reloads remote data (conversations, users, etc.). Awaited by pull-to-
   /// refresh and fire-and-forgotten from the header Edit action.
@@ -148,12 +156,27 @@ class MessengerConversationList extends StatefulWidget {
   final bool isCreatingGroup;
   final FutureOr<void> Function(String conversationId) onSelectConversation;
   final MessengerSearchVisibility searchVisibility;
+
+  /// When set, drives peer-list filtering and hides the built-in search field
+  /// so the host can render search in its own chrome (e.g. sticky tab header).
+  final TextEditingController? conversationSearchController;
+
   final int searchThreshold;
   final String searchHintText;
   final String emptyUsersMessage;
   final String emptyConversationsMessage;
+
+  /// Shown when the conversation list search has no matches. `{query}` is
+  /// replaced with the trimmed search text.
+  final String conversationSearchNoResultsMessage;
+
   final WidgetBuilder? emptyUsersBuilder;
   final WidgetBuilder? emptyConversationsBuilder;
+
+  /// Overrides [conversationSearchNoResultsMessage] when the search field is
+  /// non-empty and filters out every conversation.
+  final Widget Function(BuildContext context, String query)?
+      conversationSearchNoResultsBuilder;
   final bool showStartChatFab;
   final bool isMobile;
   final bool showHeaderEditButton;
@@ -184,10 +207,61 @@ class MessengerConversationList extends StatefulWidget {
   final String groupNameFieldLabelText;
   final String groupNameFieldHintText;
   final String groupNameRequiredErrorText;
+  final String defaultGroupNameWhenEmpty;
+  final int groupMinSelectionCount;
+
+  /// Optional directory rows for the **Start New Chat** sheet only.
+  ///
+  /// When null, the sheet uses [users] (existing behavior).
+  final List<MessengerUser>? startNewChatUsers;
+
+  /// Debounced server search and/or pagination for the Start New Chat sheet.
+  final MessengerStartNewChatDirectory? startNewChatDirectory;
+
+  /// When set, all start-new-chat entry points (FAB, header, controller) use
+  /// this presenter instead of the package default bottom sheet.
+  final MessengerStartNewChatPresenter? startNewChatPresenter;
+
+  /// How selected users appear in the group-creation user list.
+  final MessengerGroupSelectionListMode groupSelectionListMode;
+
+  /// Custom row builder for the Start New Chat picker.
+  final MessengerStartNewChatUserItemBuilder? startNewChatUserItemBuilder;
+
+  /// Custom selected-users section for group mode (chips card).
+  final MessengerStartNewChatSelectedUsersSectionBuilder?
+      selectedUsersSectionBuilder;
+
+  /// When true on mobile and conversations expose [MessengerConversation.peerUsers],
+  /// appends a deduplicated "available people" section below conversation rows.
+  ///
+  /// Defaults to false so v1 hosts are unchanged.
+  final bool showAvailablePeopleOnMobileInbox;
+
+  /// Directory for the available-people section. When null, uses
+  /// [startNewChatUsers] then [users].
+  final List<MessengerUser>? availablePeopleUsers;
+
+  /// Optional header above conversation rows when
+  /// [showAvailablePeopleOnMobileInbox] is active.
+  final Widget Function(BuildContext context, int conversationEntryCount)?
+      conversationSectionHeaderBuilder;
+
+  /// Optional header above the available-people section.
+  final Widget Function(BuildContext context, int availablePeopleCount)?
+      availablePeopleSectionHeaderBuilder;
+
+  /// Custom row for available people without an existing conversation.
+  final Widget Function(BuildContext context, MessengerAvailablePersonData data)?
+      availablePeopleItemBuilder;
+
+  /// Shown when the available-people section is enabled but empty after dedup
+  /// and search filtering.
+  final String availablePeopleEmptyMessage;
 
   @override
   State<MessengerConversationList> createState() =>
-      _MessengerConversationListState();
+      MessengerConversationListState();
 }
 
 class _PeerListEntry {
@@ -197,6 +271,8 @@ class _PeerListEntry {
     required this.hasUnread,
     required this.isInSelectedConversation,
     this.isConversationRow = false,
+    this.useGroupAvatar = false,
+    this.groupAvatarUsers = const [],
     this.conversationId,
   });
 
@@ -205,36 +281,23 @@ class _PeerListEntry {
   final bool hasUnread;
   final bool isInSelectedConversation;
   final bool isConversationRow;
+  final bool useGroupAvatar;
+  final List<MessengerUser> groupAvatarUsers;
 
   /// When known (peer came from a conversation row), open via [MessengerConversationList.onSelectConversation].
   final String? conversationId;
 }
 
-/// Live snapshot for the Start New Chat modal while it is open — updated from
-/// [MessengerConversationList.didUpdateWidget] so hosts can finish loading
-/// users after the sheet is shown.
-class _StartNewChatSheetLiveData {
-  const _StartNewChatSheetLiveData({
-    required this.sortedUsers,
-    required this.isUsersLoading,
-    required this.openingDirectUserId,
-    required this.isCreatingGroup,
-  });
-
-  final List<MessengerUser> sortedUsers;
-  final bool isUsersLoading;
-  final String openingDirectUserId;
-  final bool isCreatingGroup;
-}
-
-class _MessengerConversationListState extends State<MessengerConversationList> {
-  final TextEditingController _searchController = TextEditingController();
+class MessengerConversationListState extends State<MessengerConversationList> {
+  late final TextEditingController _searchController;
+  late final bool _ownsSearchController;
   String _query = '';
 
-  ValueNotifier<_StartNewChatSheetLiveData>? _startNewChatSheetLive;
+  ValueNotifier<MessengerStartNewChatSheetLiveData>? _startNewChatSheetLive;
 
   List<MessengerUser> _sortedUsersForStartNewChatSheet() {
-    final sorted = [...widget.users]..sort((a, b) {
+    final source = widget.startNewChatUsers ?? widget.users;
+    final sorted = [...source]..sort((a, b) {
         if (a.isOnline == b.isOnline) {
           return a.username.toLowerCase().compareTo(b.username.toLowerCase());
         }
@@ -243,24 +306,53 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     return sorted;
   }
 
-  _StartNewChatSheetLiveData _buildStartNewChatSheetLiveData() {
-    return _StartNewChatSheetLiveData(
+  MessengerStartNewChatSheetLiveData _buildStartNewChatSheetLiveData() {
+    final d = widget.startNewChatDirectory;
+    return MessengerStartNewChatSheetLiveData(
       sortedUsers: _sortedUsersForStartNewChatSheet(),
       isUsersLoading: widget.startNewChatUsersLoading,
       openingDirectUserId: widget.openingDirectUserId,
       isCreatingGroup: widget.isCreatingGroup,
+      directoryHasMore: d?.hasMore ?? false,
+      directoryLoadingMore: d?.isLoadingMore ?? false,
     );
   }
 
   @override
   void initState() {
     super.initState();
+    final external = widget.conversationSearchController;
+    if (external != null) {
+      _searchController = external;
+      _ownsSearchController = false;
+    } else {
+      _searchController = TextEditingController();
+      _ownsSearchController = true;
+    }
+    _query = _searchController.text.trim();
     _searchController.addListener(_handleSearchChange);
   }
 
   @override
   void didUpdateWidget(covariant MessengerConversationList oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.conversationSearchController !=
+        widget.conversationSearchController) {
+      _searchController.removeListener(_handleSearchChange);
+      if (_ownsSearchController) {
+        _searchController.dispose();
+      }
+      final external = widget.conversationSearchController;
+      if (external != null) {
+        _searchController = external;
+        _ownsSearchController = false;
+      } else {
+        _searchController = TextEditingController();
+        _ownsSearchController = true;
+      }
+      _query = _searchController.text.trim();
+      _searchController.addListener(_handleSearchChange);
+    }
     final live = _startNewChatSheetLive;
     if (live != null) {
       final next = _buildStartNewChatSheetLiveData();
@@ -275,10 +367,11 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
 
   @override
   void dispose() {
-    _startNewChatSheetLive?.dispose();
     _startNewChatSheetLive = null;
     _searchController.removeListener(_handleSearchChange);
-    _searchController.dispose();
+    if (_ownsSearchController) {
+      _searchController.dispose();
+    }
     super.dispose();
   }
 
@@ -301,8 +394,22 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     return null;
   }
 
+  bool _peerEntryShowsOnlinePresence(_PeerListEntry entry) {
+    if (!entry.isConversationRow) {
+      return true;
+    }
+    final conversation = _conversationForId(entry.conversationId);
+    return conversation != null && !conversation.isGroup;
+  }
+
   bool get _hasPeerUsers => widget.conversations
       .any((conversation) => conversation.peerUsers.isNotEmpty);
+
+  bool get _shouldShowAvailablePeopleSection =>
+      widget.showAvailablePeopleOnMobileInbox;
+
+  List<MessengerUser> get _availablePeopleSource =>
+      widget.availablePeopleUsers ?? widget.startNewChatUsers ?? widget.users;
 
   int _uniquePeerCount() {
     if (!_hasPeerUsers) {
@@ -366,6 +473,12 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
 
   List<_PeerListEntry> _orderedPeerEntries() {
     if (!_hasPeerUsers) {
+      if (_shouldShowAvailablePeopleSection) {
+        if (widget.conversations.isEmpty) {
+          return const [];
+        }
+        return _conversationOnlyPeerEntries();
+      }
       return _legacyUserEntries();
     }
 
@@ -374,6 +487,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     final entries = <_PeerListEntry>[];
     final seen = <String>{};
     void addPeers(MessengerConversation c, Iterable<MessengerUser> peers) {
+      final preview = _previewForConversation(c);
       for (final u in peers) {
         final uid = u.id.trim();
         if (uid.isEmpty || !seen.add(uid)) {
@@ -382,7 +496,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
         entries.add(
           _PeerListEntry(
             user: u,
-            messagePreview: c.subtitle,
+            messagePreview: preview,
             hasUnread: c.unreadCount > 0,
             isInSelectedConversation:
                 selected != null && selected.peerUsers.any((p) => p.id == u.id),
@@ -393,14 +507,17 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     }
 
     for (final c in orderedConversations) {
+      final preview = _previewForConversation(c);
       if (_shouldRenderAsConversationRow(c)) {
         entries.add(
           _PeerListEntry(
             user: _conversationRowUser(c),
-            messagePreview: c.subtitle,
+            messagePreview: preview,
             hasUnread: c.unreadCount > 0,
             isInSelectedConversation: selected?.id == c.id,
             isConversationRow: true,
+            useGroupAvatar: c.isGroup,
+            groupAvatarUsers: c.isGroup ? c.peerUsers : const [],
             conversationId: c.id.trim(),
           ),
         );
@@ -411,11 +528,36 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     return entries;
   }
 
+  /// Unified inbox: one row per conversation when list payloads omit peers.
+  List<_PeerListEntry> _conversationOnlyPeerEntries() {
+    final orderedConversations = _conversationsByActivity();
+    final selected = _conversationForId(widget.selectedConversationId);
+    return orderedConversations
+        .map(
+          (conversation) => _PeerListEntry(
+            user: _conversationRowUser(conversation),
+            messagePreview: _previewForConversation(conversation),
+            hasUnread: conversation.unreadCount > 0,
+            isInSelectedConversation: selected?.id == conversation.id,
+            isConversationRow: _shouldRenderAsConversationRow(conversation),
+            useGroupAvatar: conversation.isGroup,
+            groupAvatarUsers:
+                conversation.isGroup ? conversation.peerUsers : const [],
+            conversationId: conversation.id.trim(),
+          ),
+        )
+        .toList(growable: false);
+  }
+
   bool _shouldRenderAsConversationRow(MessengerConversation conversation) {
     if (conversation.isGlobal || conversation.isGroup) {
       return true;
     }
     return conversation.peerUsers.length > 1;
+  }
+
+  String _previewForConversation(MessengerConversation conversation) {
+    return conversation.previewSubtitle(currentUserId: widget.currentUserId);
   }
 
   MessengerUser _conversationRowUser(MessengerConversation conversation) {
@@ -483,10 +625,29 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     MessengerConversation conversation,
     MessengerUser user,
   ) {
+    if (user.email.trim().isNotEmpty) {
+      final email = user.email.trim().toLowerCase();
+      final title = conversation.title.toLowerCase();
+      final subtitle = _previewForConversation(conversation).toLowerCase();
+      if (title.contains(email) || subtitle.contains(email)) {
+        return true;
+      }
+    }
+
+    if (conversation.peerUsers.isNotEmpty) {
+      final userKeys = messengerUserIdentityKeys(user);
+      for (final peer in conversation.peerUsers) {
+        if (messengerUserIdentityKeys(peer).any(userKeys.contains)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
     final username = user.username.toLowerCase();
     final title = conversation.title.toLowerCase();
-    final subtitle = conversation.subtitle.toLowerCase();
-    final display = _displayName(user.username).toLowerCase();
+    final subtitle = _previewForConversation(conversation).toLowerCase();
+    final display = conversationListItemDisplayName(user.username).toLowerCase();
     return title.contains(username) ||
         title.contains(display) ||
         subtitle.contains(username) ||
@@ -508,7 +669,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
   String _legacyPreviewForUser(MessengerUser user) {
     for (final conversation in _conversationsByActivity()) {
       if (_legacyConversationMatchesUser(conversation, user)) {
-        return conversation.subtitle;
+        return _previewForConversation(conversation);
       }
     }
     return '';
@@ -542,7 +703,47 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
         .toList(growable: false);
   }
 
+  List<MessengerUser> _orderedAvailablePeople(
+    List<_PeerListEntry> conversationEntries,
+  ) {
+    final visibleUsers = conversationEntries
+        .where((entry) => !entry.isConversationRow)
+        .map((entry) => entry.user)
+        .toList(growable: false);
+    return messengerAvailablePeopleExcludingConversations(
+      allPeople: _availablePeopleSource,
+      conversations: widget.conversations,
+      currentUserId: widget.currentUserId,
+      currentPlatformUserId: widget.currentPlatformUserId,
+      visibleConversationUsers: visibleUsers,
+    );
+  }
+
+  List<MessengerUser> _filterAvailablePeople(List<MessengerUser> users) {
+    if (_query.isEmpty) {
+      return users;
+    }
+    final queryLower = _query.toLowerCase();
+    return users
+        .where(
+          (user) =>
+              user.username.toLowerCase().contains(queryLower) ||
+              user.roleLabel.toLowerCase().contains(queryLower) ||
+              user.email.toLowerCase().contains(queryLower) ||
+              user.id.toLowerCase().contains(queryLower),
+        )
+        .toList(growable: false);
+  }
+
+  bool get _isOpenInFlight =>
+      widget.openingConversationId.trim().isNotEmpty ||
+      widget.openingDirectUserId.trim().isNotEmpty;
+
   Future<void> _onPeerListEntryTap(_PeerListEntry entry) async {
+    // Ignore rapid re-taps while a conversation or direct open is in flight.
+    if (_isOpenInFlight) {
+      return;
+    }
     final convId = entry.conversationId;
     if (convId != null && convId.trim().isNotEmpty) {
       await widget.onSelectConversation(convId);
@@ -552,19 +753,38 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
   }
 
   Widget _buildMainUserListItem(BuildContext context, _PeerListEntry entry) {
+    final showOnlinePresence = _peerEntryShowsOnlinePresence(entry);
+    final messagePreview =
+        entry.messagePreview.isEmpty ? null : entry.messagePreview;
+    final isOpening = _isDirectOpenBusyForUser(
+          widget.openingDirectUserId,
+          entry.user.id,
+        ) ||
+        _isConversationOpenBusy(
+          widget.openingConversationId,
+          entry.conversationId,
+        );
     final data = MessengerUserListItemData(
       user: entry.user,
       isSelected: entry.isInSelectedConversation,
       hasUnread: entry.hasUnread,
-      isOpening: _isDirectOpenBusyForUser(
-        widget.openingDirectUserId,
-        entry.user.id,
-      ),
-      messagePreview:
-          entry.messagePreview.isEmpty ? null : entry.messagePreview,
+      isOpening: isOpening,
+      messagePreview: messagePreview,
       onTap: () {
         unawaited(_onPeerListEntryTap(entry));
       },
+      conversationId: entry.conversationId,
+      isConversationRow: entry.isConversationRow,
+      useGroupAvatar: entry.useGroupAvatar,
+      groupAvatarUsers: entry.groupAvatarUsers,
+      showOnlinePresence: showOnlinePresence,
+      displayTitle: conversationListItemDisplayName(entry.user.username),
+      subtitle: conversationListItemSubtitle(
+        user: entry.user,
+        messagePreview: messagePreview,
+        showOnlinePresence: showOnlinePresence,
+      ),
+      roleLabel: entry.user.roleLabel.trim(),
     );
 
     final builder = widget.userListItemBuilder;
@@ -572,15 +792,192 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
       return builder(context, data);
     }
 
-    return _DirectUserTile(
-      user: data.user,
-      isOpening: data.isOpening,
-      onTap: data.onTap,
-      showChatButton: false,
-      isSelected: data.isSelected,
-      messagePreview: data.messagePreview,
-      hasUnread: data.hasUnread,
+    return MessengerConversationListItem(
+      data: data,
       style: widget.userListItemStyle,
+    );
+  }
+
+  Future<void> _openAvailablePerson(MessengerUser user) async {
+    await widget.onOpenDirectChat(user);
+  }
+
+  Widget _buildAvailablePersonItem(BuildContext context, MessengerUser user) {
+    final isOpening =
+        _isDirectOpenBusyForUser(widget.openingDirectUserId, user.id);
+    final data = MessengerAvailablePersonData(
+      user: user,
+      isOpening: isOpening,
+      onTap: () {
+        if (_isOpenInFlight) {
+          return;
+        }
+        unawaited(_openAvailablePerson(user));
+      },
+    );
+    final builder = widget.availablePeopleItemBuilder;
+    if (builder != null) {
+      return builder(context, data);
+    }
+
+    final showOnlinePresence = true;
+    final listData = MessengerUserListItemData(
+      user: user,
+      isSelected: false,
+      hasUnread: false,
+      isOpening: isOpening,
+      messagePreview: null,
+      onTap: data.onTap,
+      showOnlinePresence: showOnlinePresence,
+      displayTitle: conversationListItemDisplayName(user.username),
+      subtitle: conversationListItemSubtitle(
+        user: user,
+        messagePreview: null,
+        showOnlinePresence: showOnlinePresence,
+      ),
+      roleLabel: user.roleLabel.trim(),
+    );
+    return MessengerConversationListItem(
+      data: listData,
+      style: widget.userListItemStyle,
+    );
+  }
+
+  Widget _buildAvailablePeopleEmpty(BuildContext context) {
+    final theme = MessengerTheme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      child: Text(
+        widget.availablePeopleEmptyMessage,
+        style: TextStyle(
+          color: theme.mutedText,
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+        ),
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
+  Widget _buildInlineEmptyConversations(BuildContext context) {
+    if (widget.emptyConversationsBuilder != null) {
+      return widget.emptyConversationsBuilder!(context);
+    }
+    final theme = MessengerTheme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+      child: Text(
+        widget.emptyConversationsMessage,
+        style: TextStyle(
+          color: theme.subtleText,
+          fontWeight: FontWeight.w600,
+        ),
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
+  Widget _buildTwoSectionPeerScrollBody(
+    BuildContext context,
+    List<_PeerListEntry> filteredEntries,
+  ) {
+    final filteredAvailable =
+        _filterAvailablePeople(_orderedAvailablePeople(filteredEntries));
+    final showSearchNoResults = _query.isNotEmpty &&
+        filteredEntries.isEmpty &&
+        filteredAvailable.isEmpty;
+
+    if (showSearchNoResults) {
+      return LayoutBuilder(
+        builder: (ctx, constraints) => SingleChildScrollView(
+          physics: widget.enablePullToRefresh
+              ? const AlwaysScrollableScrollPhysics()
+              : const ClampingScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: _buildSearchNoResultsPeerList(context),
+          ),
+        ),
+      );
+    }
+
+    final children = <Widget>[];
+
+    void addSpacer() {
+      if (children.isNotEmpty) {
+        children.add(SizedBox(height: widget.userListItemSpacing));
+      }
+    }
+
+    void addSectionGap() {
+      if (children.isNotEmpty) {
+        children.add(SizedBox(height: widget.userListItemSpacing * 2));
+      }
+    }
+
+    final conversationHeader = widget.conversationSectionHeaderBuilder;
+    final hasConversationHeader =
+        conversationHeader != null && filteredEntries.isNotEmpty;
+    if (hasConversationHeader) {
+      children.add(conversationHeader(context, filteredEntries.length));
+      addSpacer();
+    }
+
+    if (filteredEntries.isEmpty) {
+      if (_query.isEmpty) {
+        children.add(_buildInlineEmptyConversations(context));
+      }
+    } else {
+      for (var i = 0; i < filteredEntries.length; i++) {
+        if (i > 0) {
+          addSpacer();
+        }
+        children.add(_buildMainUserListItem(context, filteredEntries[i]));
+      }
+    }
+
+    final availableHeader = widget.availablePeopleSectionHeaderBuilder;
+    final hasAvailableHeader = availableHeader != null;
+    if (hasConversationHeader || hasAvailableHeader) {
+      addSectionGap();
+    } else if (filteredEntries.isNotEmpty && filteredAvailable.isNotEmpty) {
+      addSpacer();
+    }
+
+    if (hasAvailableHeader) {
+      children.add(availableHeader(context, filteredAvailable.length));
+      addSpacer();
+    }
+
+    if (filteredAvailable.isEmpty) {
+      if (widget.availablePeopleEmptyMessage.trim().isNotEmpty) {
+        children.add(_buildAvailablePeopleEmpty(context));
+      }
+    } else {
+      for (var i = 0; i < filteredAvailable.length; i++) {
+        if (i > 0) {
+          addSpacer();
+        }
+        children.add(_buildAvailablePersonItem(context, filteredAvailable[i]));
+      }
+    }
+
+    final listPadding = _effectiveUserListPadding(context);
+    final scrollable = ListView(
+      primary: false,
+      physics: widget.enablePullToRefresh
+          ? const AlwaysScrollableScrollPhysics()
+          : null,
+      padding: listPadding,
+      children: children,
+    );
+
+    if (!widget.enablePullToRefresh) {
+      return scrollable;
+    }
+    return RefreshIndicator(
+      onRefresh: _onPullRefresh,
+      child: scrollable,
     );
   }
 
@@ -646,7 +1043,7 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
   Widget build(BuildContext context) {
     final theme = MessengerTheme.of(context);
     final searchBg =
-        widget.searchFieldBackgroundColor ?? theme.searchBackground;
+        widget.searchFieldBackgroundColor ?? const Color(0xFFF3F4F6);
     final searchIconColor = widget.searchIconColor ?? theme.mutedText;
     final searchHintStyle =
         widget.searchHintTextStyle ?? TextStyle(color: theme.mutedText);
@@ -738,8 +1135,15 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     BuildContext context,
     List<_PeerListEntry> filteredEntries,
   ) {
+    if (_shouldShowAvailablePeopleSection) {
+      return _buildTwoSectionPeerScrollBody(context, filteredEntries);
+    }
+
     final Widget scrollable;
     if (filteredEntries.isEmpty) {
+      final emptyBody = _query.isNotEmpty
+          ? _buildSearchNoResultsPeerList(context)
+          : _buildEmptyPeerList(context);
       scrollable = LayoutBuilder(
         builder: (ctx, constraints) => SingleChildScrollView(
           physics: widget.enablePullToRefresh
@@ -747,17 +1151,18 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
               : const ClampingScrollPhysics(),
           child: ConstrainedBox(
             constraints: BoxConstraints(minHeight: constraints.maxHeight),
-            child: _buildEmptyPeerList(context),
+            child: emptyBody,
           ),
         ),
       );
     } else {
+      final listPadding = _effectiveUserListPadding(context);
       scrollable = ListView.separated(
         primary: false,
         physics: widget.enablePullToRefresh
             ? const AlwaysScrollableScrollPhysics()
             : null,
-        padding: widget.userListPadding,
+        padding: listPadding,
         itemCount: filteredEntries.length,
         separatorBuilder: (_, __) =>
             SizedBox(height: widget.userListItemSpacing),
@@ -777,53 +1182,116 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
     );
   }
 
-  Future<void> _openDirectPicker(BuildContext context) async {
+  EdgeInsetsGeometry _effectiveUserListPadding(BuildContext context) {
+    final basePadding = widget.userListPadding ?? EdgeInsets.zero;
+    if (!widget.showStartChatFab) {
+      return basePadding;
+    }
+    return basePadding.add(
+      EdgeInsets.only(bottom: _fabScrollClearance(context)),
+    );
+  }
+
+  double _fabScrollClearance(BuildContext context) {
+    final safeBottom = MediaQuery.paddingOf(context).bottom;
+    final fabBottomOffset = widget.isMobile ? 24.0 : 18.0;
+    const fabDiameter = 56.0;
+    const visualGap = 12.0;
+    return safeBottom + fabBottomOffset + fabDiameter + visualGap;
+  }
+
+  Future<void> _openDirectPicker(BuildContext context) {
+    return presentStartNewChat(
+      context,
+      mode: MessengerStartNewChatMode.direct,
+    );
+  }
+
+  /// Opens the start-new-chat picker programmatically (direct or group mode).
+  Future<void> presentStartNewChat(
+    BuildContext context, {
+    MessengerStartNewChatMode mode = MessengerStartNewChatMode.direct,
+  }) async {
     final theme = MessengerTheme.of(context);
     final searchBg =
-        widget.searchFieldBackgroundColor ?? theme.searchBackground;
+        widget.searchFieldBackgroundColor ?? const Color(0xFFF3F4F6);
     final searchIconColor = widget.searchIconColor ?? theme.mutedText;
     final searchHintStyle =
         widget.searchHintTextStyle ?? TextStyle(color: theme.mutedText);
     final searchContentPadding = widget.searchFieldContentPadding;
     final searchRadius = widget.searchFieldBorderRadius ?? 12;
+    final topSafeInset =
+        MediaQueryData.fromView(View.of(context)).padding.top;
+
+    widget.startNewChatDirectory?.onSearchQueryDebounced?.call('');
 
     _startNewChatSheetLive?.dispose();
-    _startNewChatSheetLive = ValueNotifier(_buildStartNewChatSheetLiveData());
+    final sheetLive = ValueNotifier(_buildStartNewChatSheetLiveData());
+    _startNewChatSheetLive = sheetLive;
+
+    Widget buildPicker() {
+      return MessengerStartNewChatPicker(
+        sheetLive: sheetLive,
+        topSafeInset: topSafeInset,
+        searchBackgroundColor: searchBg,
+        searchIconColor: searchIconColor,
+        searchHintStyle: searchHintStyle,
+        searchContentPadding: searchContentPadding,
+        searchBorderRadius: searchRadius,
+        searchInputTextStyle: widget.searchInputTextStyle,
+        searchHintText: widget.searchHintText,
+        emptyUsersBuilder: widget.emptyUsersBuilder,
+        emptyUsersMessage: widget.emptyUsersMessage,
+        onOpenDirectChat: widget.onOpenDirectChat,
+        onCreateGroupSelected: widget.onCreateGroupSelected,
+        onCreateGroupRequested: widget.onCreateGroupRequested,
+        groupNameInputBehavior: widget.groupNameInputBehavior,
+        groupNameFieldLabelText: widget.groupNameFieldLabelText,
+        groupNameFieldHintText: widget.groupNameFieldHintText,
+        groupNameRequiredErrorText: widget.groupNameRequiredErrorText,
+        defaultGroupNameWhenEmpty: widget.defaultGroupNameWhenEmpty,
+        groupMinSelectionCount: widget.groupMinSelectionCount,
+        startNewChatDirectory: widget.startNewChatDirectory,
+        initialMode: mode,
+        groupSelectionListMode: widget.groupSelectionListMode,
+        userItemBuilder: widget.startNewChatUserItemBuilder,
+        selectedUsersSectionBuilder: widget.selectedUsersSectionBuilder,
+      );
+    }
 
     try {
-      await showModalBottomSheet<void>(
+      await presentMessengerStartNewChat(
         context: context,
-        isScrollControlled: true,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        builder: (sheetContext) => _StartNewChatBottomSheet(
-          sheetLive: _startNewChatSheetLive!,
-          searchBackgroundColor: searchBg,
-          searchIconColor: searchIconColor,
-          searchHintStyle: searchHintStyle,
-          searchContentPadding: searchContentPadding,
-          searchBorderRadius: searchRadius,
-          searchInputTextStyle: widget.searchInputTextStyle,
-          searchHintText: widget.searchHintText,
-          emptyUsersBuilder: widget.emptyUsersBuilder,
-          emptyUsersMessage: widget.emptyUsersMessage,
-          onOpenDirectChat: widget.onOpenDirectChat,
-          onCreateGroupSelected: widget.onCreateGroupSelected,
-          onCreateGroupRequested: widget.onCreateGroupRequested,
-          groupNameInputBehavior: widget.groupNameInputBehavior,
-          groupNameFieldLabelText: widget.groupNameFieldLabelText,
-          groupNameFieldHintText: widget.groupNameFieldHintText,
-          groupNameRequiredErrorText: widget.groupNameRequiredErrorText,
-        ),
+        mode: mode,
+        buildPicker: buildPicker,
+        onOpenDirectChat: (user) async {
+          await widget.onOpenDirectChat(user);
+        },
+        onCreateGroupRequested: widget.onCreateGroupRequested == null
+            ? null
+            : (request) async {
+                await widget.onCreateGroupRequested!(request);
+              },
+        onCreateGroupSelected: widget.onCreateGroupSelected == null
+            ? null
+            : (users) async {
+                await widget.onCreateGroupSelected!(users);
+              },
+        presenter: widget.startNewChatPresenter,
+        topSafeInset: topSafeInset,
       );
     } finally {
-      _startNewChatSheetLive?.dispose();
-      _startNewChatSheetLive = null;
+      widget.startNewChatDirectory?.onSearchQueryDebounced?.call('');
+      if (identical(_startNewChatSheetLive, sheetLive)) {
+        _startNewChatSheetLive = null;
+      }
     }
   }
 
   bool _shouldShowSearch() {
+    if (widget.conversationSearchController != null) {
+      return false;
+    }
     switch (widget.searchVisibility) {
       case MessengerSearchVisibility.always:
         return true;
@@ -874,676 +1342,32 @@ class _MessengerConversationListState extends State<MessengerConversationList> {
       ),
     );
   }
-}
 
-class _StartNewChatBottomSheet extends StatefulWidget {
-  const _StartNewChatBottomSheet({
-    required this.sheetLive,
-    required this.searchBackgroundColor,
-    required this.searchIconColor,
-    required this.searchHintStyle,
-    required this.searchContentPadding,
-    required this.searchBorderRadius,
-    required this.searchInputTextStyle,
-    required this.searchHintText,
-    required this.emptyUsersBuilder,
-    required this.emptyUsersMessage,
-    required this.onOpenDirectChat,
-    this.onCreateGroupSelected,
-    this.onCreateGroupRequested,
-    this.groupNameInputBehavior = MessengerGroupNameInputBehavior.hidden,
-    this.groupNameFieldLabelText = 'Group name',
-    this.groupNameFieldHintText = 'Enter a group name',
-    this.groupNameRequiredErrorText = 'Enter a group name to continue.',
-  });
-
-  final ValueNotifier<_StartNewChatSheetLiveData> sheetLive;
-  final Color searchBackgroundColor;
-  final Color searchIconColor;
-  final TextStyle searchHintStyle;
-  final EdgeInsetsGeometry? searchContentPadding;
-  final double searchBorderRadius;
-  final TextStyle? searchInputTextStyle;
-  final String searchHintText;
-  final WidgetBuilder? emptyUsersBuilder;
-  final String emptyUsersMessage;
-  final FutureOr<void> Function(MessengerUser user) onOpenDirectChat;
-  final FutureOr<void> Function(List<MessengerUser> selectedUsers)?
-      onCreateGroupSelected;
-  final FutureOr<void> Function(MessengerGroupCreateRequest request)?
-      onCreateGroupRequested;
-  final MessengerGroupNameInputBehavior groupNameInputBehavior;
-  final String groupNameFieldLabelText;
-  final String groupNameFieldHintText;
-  final String groupNameRequiredErrorText;
-
-  @override
-  State<_StartNewChatBottomSheet> createState() =>
-      _StartNewChatBottomSheetState();
-}
-
-class _StartNewChatBottomSheetState extends State<_StartNewChatBottomSheet> {
-  late final TextEditingController _searchController;
-  late final TextEditingController _groupNameController;
-  String _query = '';
-  bool _isGroupSelectionMode = false;
-  List<String> _selectedUserIds = const <String>[];
-  String? _groupNameErrorText;
-
-  bool get _canCreateGroup =>
-      widget.onCreateGroupSelected != null ||
-      widget.onCreateGroupRequested != null;
-  bool get _showGroupNameField =>
-      widget.groupNameInputBehavior != MessengerGroupNameInputBehavior.hidden;
-  bool get _groupNameIsRequired =>
-      widget.groupNameInputBehavior == MessengerGroupNameInputBehavior.required;
-
-  @override
-  void initState() {
-    super.initState();
-    _searchController = TextEditingController();
-    _groupNameController = TextEditingController();
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    _groupNameController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<_StartNewChatSheetLiveData>(
-      valueListenable: widget.sheetLive,
-      builder: (context, data, _) => _buildSheet(context, data),
+  String _conversationSearchNoResultsText() {
+    return widget.conversationSearchNoResultsMessage.replaceAll(
+      '{query}',
+      _query,
     );
   }
 
-  Widget _buildSheet(BuildContext context, _StartNewChatSheetLiveData data) {
-    final q = _query.toLowerCase();
-    final filteredUsers = _query.isEmpty
-        ? data.sortedUsers
-        : data.sortedUsers
-            .where(
-              (user) =>
-                  user.username.toLowerCase().contains(q) ||
-                  user.roleLabel.toLowerCase().contains(q) ||
-                  user.id.toLowerCase().contains(q),
-            )
-            .toList(growable: false);
-    final selectedUsers = _selectedUsersFrom(data.sortedUsers);
-    final visibleUsers = _isGroupSelectionMode
-        ? filteredUsers
-            .where((user) => !_selectedUserIds.contains(user.id.trim()))
-            .toList(growable: false)
-        : filteredUsers;
-
-    final viewInsets = MediaQuery.viewInsetsOf(context);
-    final screenH = MediaQuery.sizeOf(context).height;
-    final maxSheetHeight = screenH * 0.88;
+  Widget _buildSearchNoResultsPeerList(BuildContext context) {
+    final builder = widget.conversationSearchNoResultsBuilder;
+    if (builder != null) {
+      return Center(child: builder(context, _query));
+    }
     final theme = MessengerTheme.of(context);
-    final groupBusy = data.isCreatingGroup;
-
-    return Padding(
-      padding: EdgeInsets.only(bottom: viewInsets.bottom),
-      child: SafeArea(
-        top: false,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: maxSheetHeight),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    const Expanded(
-                      child: Text(
-                        'Start New Chat',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    if (_canCreateGroup)
-                      TextButton(
-                        onPressed: groupBusy ? null : _toggleGroupMode,
-                        style: TextButton.styleFrom(
-                          foregroundColor: _isGroupSelectionMode
-                              ? Colors.white
-                              : theme.primary,
-                          backgroundColor: _isGroupSelectionMode
-                              ? theme.primary
-                              : theme.primary.withValues(alpha: 0.12),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                        ),
-                        child: Text(
-                          _isGroupSelectionMode ? 'Group mode' : 'New group',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-                if (_isGroupSelectionMode) ...[
-                  if (_showGroupNameField) ...[
-                    const SizedBox(height: 12),
-                    MessengerGroupNameTextField(
-                      controller: _groupNameController,
-                      enabled: !groupBusy,
-                      labelText: widget.groupNameFieldLabelText,
-                      hintText: widget.groupNameFieldHintText,
-                      backgroundColor: widget.searchBackgroundColor,
-                      borderRadius: widget.searchBorderRadius,
-                      contentPadding: widget.searchContentPadding,
-                      iconColor: widget.searchIconColor,
-                      hintStyle: widget.searchHintStyle,
-                      inputTextStyle: widget.searchInputTextStyle,
-                      errorText: _groupNameErrorText,
-                      onChanged: (_) {
-                        if (_groupNameErrorText == null || !mounted) {
-                          return;
-                        }
-                        setState(() => _groupNameErrorText = null);
-                      },
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  _buildSelectedUsersCard(theme, selectedUsers, groupBusy),
-                ],
-                const SizedBox(height: 10),
-                MessengerListSearchField(
-                  controller: _searchController,
-                  hintText: widget.searchHintText,
-                  hintStyle: widget.searchHintStyle,
-                  inputTextStyle: widget.searchInputTextStyle,
-                  backgroundColor: widget.searchBackgroundColor,
-                  iconColor: widget.searchIconColor,
-                  borderRadius: widget.searchBorderRadius,
-                  contentPadding: widget.searchContentPadding,
-                  onChanged: (value) => setState(() {
-                    _query = value.trim().toLowerCase();
-                  }),
-                  onClear: () {
-                    _searchController.clear();
-                    setState(() => _query = '');
-                  },
-                ),
-                if (_isGroupSelectionMode) ...[
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      TextButton(
-                        onPressed: groupBusy ? null : _resetGroupMode,
-                        style: TextButton.styleFrom(
-                          foregroundColor: theme.subtleText,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 0,
-                            vertical: 8,
-                          ),
-                        ),
-                        child: const Text(
-                          'Cancel',
-                          style: TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                      const Spacer(),
-                      FilledButton(
-                        onPressed: !groupBusy && selectedUsers.length >= 2
-                            ? () => _submitGroupSelection(selectedUsers)
-                            : null,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: theme.primary,
-                          foregroundColor: Colors.white,
-                          disabledBackgroundColor:
-                              groupBusy ? theme.primary : theme.border,
-                          disabledForegroundColor:
-                              groupBusy ? Colors.white : theme.subtleText,
-                        ),
-                        child: groupBusy
-                            ? Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.2,
-                                      color:
-                                          Colors.white.withValues(alpha: 0.95),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  const Text(
-                                    'Creating…',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ],
-                              )
-                            : const Text(
-                                'Create group',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                      ),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 10),
-                Expanded(
-                  child: data.isUsersLoading && visibleUsers.isEmpty
-                      ? const MessengerDefaultInlineLoading()
-                      : visibleUsers.isEmpty
-                          ? Align(
-                              alignment: Alignment.topCenter,
-                              child: Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 12),
-                                child: _isGroupSelectionMode
-                                    ? Text(
-                                        _query.isEmpty
-                                            ? 'No more people available to add right now.'
-                                            : 'No people match your search.',
-                                        style:
-                                            TextStyle(color: theme.subtleText),
-                                      )
-                                    : widget.emptyUsersBuilder?.call(context) ??
-                                        Text(
-                                          widget.emptyUsersMessage,
-                                          style: TextStyle(
-                                              color: theme.subtleText),
-                                        ),
-                              ),
-                            )
-                          : ListView.separated(
-                              padding: EdgeInsets.zero,
-                              itemCount: visibleUsers.length,
-                              separatorBuilder: (_, __) =>
-                                  const SizedBox(height: 8),
-                              itemBuilder: (context, index) {
-                                final user = visibleUsers[index];
-                                return _DirectUserTile(
-                                  user: user,
-                                  isOpening: !_isGroupSelectionMode &&
-                                      _isDirectOpenBusyForUser(
-                                        data.openingDirectUserId,
-                                        user.id,
-                                      ),
-                                  onTap: _isGroupSelectionMode
-                                      ? () => _addSelectedUser(user)
-                                      : () {
-                                          final open = widget.onOpenDirectChat;
-                                          final u = user;
-                                          Navigator.of(context).pop();
-                                          open(u);
-                                        },
-                                  showChatButton: true,
-                                  actionLabel:
-                                      _isGroupSelectionMode ? 'Add' : 'Chat',
-                                  isSelected: false,
-                                  messagePreview: null,
-                                  hasUnread: false,
-                                );
-                              },
-                            ),
-                ),
-              ],
-            ),
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Text(
+          _conversationSearchNoResultsText(),
+          style: TextStyle(
+            color: theme.subtleText,
+            fontWeight: FontWeight.w600,
           ),
+          textAlign: TextAlign.center,
         ),
       ),
     );
   }
-
-  void _toggleGroupMode() {
-    if (_isGroupSelectionMode) {
-      _resetGroupMode();
-      return;
-    }
-    setState(() {
-      _isGroupSelectionMode = true;
-      _selectedUserIds = const <String>[];
-      _groupNameErrorText = null;
-    });
-  }
-
-  void _resetGroupMode() {
-    setState(() {
-      _isGroupSelectionMode = false;
-      _selectedUserIds = const <String>[];
-      _groupNameErrorText = null;
-    });
-    _groupNameController.clear();
-  }
-
-  void _addSelectedUser(MessengerUser user) {
-    final id = user.id.trim();
-    if (id.isEmpty || _selectedUserIds.contains(id)) {
-      return;
-    }
-    setState(() {
-      _selectedUserIds = [..._selectedUserIds, id];
-    });
-  }
-
-  void _removeSelectedUser(String userId) {
-    setState(() {
-      _selectedUserIds = _selectedUserIds
-          .where((id) => id.trim() != userId.trim())
-          .toList(growable: false);
-    });
-  }
-
-  List<MessengerUser> _selectedUsersFrom(List<MessengerUser> sortedUsers) {
-    final byId = <String, MessengerUser>{
-      for (final user in sortedUsers) user.id.trim(): user,
-    };
-    return _selectedUserIds
-        .map((id) => byId[id.trim()])
-        .whereType<MessengerUser>()
-        .toList(growable: false);
-  }
-
-  Future<void> _submitGroupSelection(List<MessengerUser> selectedUsers) async {
-    final requestCallback = widget.onCreateGroupRequested;
-    final callback = widget.onCreateGroupSelected;
-    if ((requestCallback == null && callback == null) ||
-        selectedUsers.length < 2 ||
-        widget.sheetLive.value.isCreatingGroup) {
-      return;
-    }
-    final trimmedGroupName = _groupNameController.text.trim();
-    if (_groupNameIsRequired && trimmedGroupName.isEmpty) {
-      setState(() => _groupNameErrorText = widget.groupNameRequiredErrorText);
-      return;
-    }
-    try {
-      if (requestCallback != null) {
-        await requestCallback(
-          MessengerGroupCreateRequest(
-            selectedUsers: selectedUsers,
-            groupName: trimmedGroupName,
-          ),
-        );
-      } else if (callback != null) {
-        await callback(selectedUsers);
-      }
-      if (!mounted) {
-        return;
-      }
-      Navigator.of(context).pop();
-    } catch (_) {
-      // Host surfaces the failure; keep the sheet open so selection stays intact.
-    }
-  }
-
-  Widget _buildSelectedUsersCard(
-    MessengerThemeData theme,
-    List<MessengerUser> selectedUsers,
-    bool isCreatingGroup,
-  ) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: theme.searchBackground,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: theme.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Selected people (${selectedUsers.length})',
-            style: TextStyle(
-              color: theme.bubbleOtherText,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 10),
-          if (selectedUsers.isEmpty)
-            Text(
-              'No people selected yet.',
-              style: TextStyle(
-                color: theme.subtleText,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w500,
-              ),
-            )
-          else
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: selectedUsers
-                  .map(
-                    (user) => _SelectedBottomSheetUserChip(
-                      user: user,
-                      onRemove: isCreatingGroup
-                          ? null
-                          : () => _removeSelectedUser(user.id),
-                    ),
-                  )
-                  .toList(growable: false),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SelectedBottomSheetUserChip extends StatelessWidget {
-  const _SelectedBottomSheetUserChip({
-    required this.user,
-    required this.onRemove,
-  });
-
-  final MessengerUser user;
-  final VoidCallback? onRemove;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = MessengerTheme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: theme.surface,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: theme.border),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 180),
-            child: Text(
-              _displayName(user.username),
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: theme.bubbleOtherText,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          InkWell(
-            onTap: onRemove,
-            borderRadius: BorderRadius.circular(999),
-            child: Padding(
-              padding: const EdgeInsets.all(2),
-              child: Icon(
-                Icons.close_rounded,
-                size: 16,
-                color: onRemove == null ? theme.mutedText : theme.subtleText,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DirectUserTile extends StatelessWidget {
-  const _DirectUserTile({
-    required this.user,
-    required this.isOpening,
-    required this.onTap,
-    required this.showChatButton,
-    this.actionLabel = 'Chat',
-    required this.isSelected,
-    required this.hasUnread,
-    this.messagePreview,
-    this.style = const MessengerUserListItemStyle(),
-  });
-
-  final MessengerUser user;
-  final bool isOpening;
-  final VoidCallback onTap;
-  final bool showChatButton;
-  final String actionLabel;
-  final bool isSelected;
-  final bool hasUnread;
-  final String? messagePreview;
-  final MessengerUserListItemStyle style;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = MessengerTheme.of(context);
-    final preview = messagePreview;
-    final subtitle = preview != null && preview.isNotEmpty
-        ? preview
-        : '${user.roleLabel}${user.roleLabel.isNotEmpty ? ' • ' : ''}${user.isOnline ? 'Online' : 'Offline'}';
-    final titleStyle = const TextStyle(
-      fontWeight: FontWeight.w700,
-      fontSize: 13.5,
-    ).merge(style.titleStyle);
-    final subtitleStyle = TextStyle(
-      color: hasUnread ? const Color(0xFF374151) : theme.subtleText,
-      fontSize: 11.5,
-      fontWeight: hasUnread ? FontWeight.w700 : FontWeight.w500,
-    ).merge(style.subtitleStyle);
-    final defaultBorder = BorderSide(color: theme.border);
-    final tile = Container(
-      margin: style.margin,
-      decoration: BoxDecoration(
-        color: style.backgroundColor ?? const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(style.borderRadius),
-        border: Border.fromBorderSide(style.border ?? defaultBorder),
-        boxShadow: style.boxShadow,
-      ),
-      padding: style.padding,
-      child: Row(
-        children: [
-          MessengerAvatar(
-            label: _initials(user.username),
-            imageUrl: user.avatarUrl,
-            compact: true,
-            size: 34,
-            showOnlineIndicator: true,
-            isOnline: user.isOnline,
-            presenceDotColor: hasUnread
-                ? (style.unreadDotColor ?? theme.onlineIndicator)
-                : null,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _displayName(user.username),
-                  style: titleStyle,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  subtitle,
-                  style: subtitleStyle,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          if (showChatButton)
-            FilledButton(
-              onPressed: isOpening ? null : onTap,
-              style: FilledButton.styleFrom(
-                backgroundColor: theme.primary,
-                foregroundColor: Colors.white,
-                visualDensity:
-                    const VisualDensity(horizontal: -4, vertical: -4),
-                textStyle: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              child: Text(isOpening ? '...' : actionLabel),
-            )
-          else
-            Icon(
-              Icons.chevron_right_rounded,
-              color: style.trailingIconColor ?? theme.mutedText,
-              size: 22,
-            ),
-        ],
-      ),
-    );
-
-    if (showChatButton) {
-      return tile;
-    }
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: isOpening ? null : onTap,
-        borderRadius: BorderRadius.circular(style.borderRadius),
-        child: tile,
-      ),
-    );
-  }
-}
-
-String _displayName(String username) {
-  final trimmed = username.trim();
-  if (trimmed.isEmpty) {
-    return 'User';
-  }
-  return trimmed
-      .split(RegExp(r'[_-]'))
-      .where((part) => part.isNotEmpty)
-      .map((part) => part[0].toUpperCase() + part.substring(1))
-      .join(' ');
-}
-
-String _initials(String username) {
-  final chunks = _displayName(username)
-      .split(' ')
-      .where((part) => part.isNotEmpty)
-      .toList();
-  if (chunks.isEmpty) {
-    return 'U';
-  }
-
-  final first = chunks.first[0];
-  final second = chunks.length > 1
-      ? chunks[1][0]
-      : (chunks.first.length > 1 ? chunks.first[1] : '');
-  return '$first$second';
 }

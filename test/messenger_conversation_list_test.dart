@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
@@ -367,6 +369,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Care team'), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('groupConversationAvatar')), findsOneWidget);
+    expect(find.text('A'), findsOneWidget);
+    expect(find.text('+2'), findsOneWidget);
     expect(find.text('Alice Jones'), findsNothing);
     expect(find.text('Bob Smith'), findsNothing);
     expect(find.text('Cara Doe'), findsNothing);
@@ -405,6 +411,96 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Nothing here'), findsOneWidget);
     expect(find.textContaining('Tap +'), findsOneWidget);
+  });
+
+  testWidgets('conversation search with no matches shows not-found message',
+      (tester) async {
+    const alice =
+        MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 400,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: [
+                  MessengerConversation(
+                    id: 'c1',
+                    title: 'Alice Jones',
+                    subtitle: 'Hey there',
+                    avatarLabel: 'A',
+                    createdAt: DateTime.utc(2026),
+                    peerUsers: const [alice],
+                  ),
+                ],
+                users: const [alice],
+                selectedConversationId: 'c1',
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.always,
+                showStartChatFab: false,
+                emptyConversationsMessage: 'Nothing here',
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'zzzz');
+    await tester.pumpAndSettle();
+
+    expect(find.text('"zzzz" not found.'), findsOneWidget);
+    expect(find.text('Nothing here'), findsNothing);
+    expect(find.textContaining('Tap +'), findsNothing);
+  });
+
+  testWidgets('empty conversation list search shows not-found not empty hint',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 400,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.always,
+                emptyConversationsMessage: 'Nothing here',
+                showStartChatFab: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'missing');
+    await tester.pumpAndSettle();
+
+    expect(find.text('"missing" not found.'), findsOneWidget);
+    expect(find.text('Nothing here'), findsNothing);
+    expect(find.textContaining('Tap +'), findsNothing);
   });
 
   testWidgets('header title can be hidden', (tester) async {
@@ -576,6 +672,305 @@ void main() {
     expect(find.byType(FilledButton), findsNothing);
   });
 
+  testWidgets('userListItemBuilder receives enriched data for group rows',
+      (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice_jones');
+    const bob = MessengerUser(id: 'b', username: 'bob_smith');
+    const cara = MessengerUser(id: 'c', username: 'cara_doe');
+    MessengerUserListItemData? captured;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 420,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: [
+                  MessengerConversation(
+                    id: 'g1',
+                    title: 'Care team',
+                    subtitle: 'Group hello',
+                    avatarLabel: 'CT',
+                    createdAt: DateTime.utc(2026),
+                    isGroup: true,
+                    peerUsers: const [alice, bob, cara],
+                  ),
+                ],
+                users: const [alice, bob, cara],
+                selectedConversationId: 'g1',
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+                userListItemBuilder: (context, data) {
+                  captured = data;
+                  return Text('group-row-${data.conversationId}');
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    expect(find.text('group-row-g1'), findsOneWidget);
+    expect(captured, isNotNull);
+    expect(captured!.conversationId, 'g1');
+    expect(captured!.isConversationRow, isTrue);
+    expect(captured!.useGroupAvatar, isTrue);
+    expect(captured!.groupAvatarUsers, hasLength(3));
+    expect(captured!.showOnlinePresence, isFalse);
+    expect(captured!.displayTitle, 'Care team');
+    expect(captured!.subtitle, 'Group hello');
+    expect(captured!.isSelected, isTrue);
+  });
+
+  testWidgets('userListItemBuilder receives enriched data for direct rows',
+      (tester) async {
+    const alice = MessengerUser(
+      id: 'a',
+      username: 'alice_jones',
+      roleLabel: 'Nurse',
+      isOnline: true,
+    );
+    MessengerUserListItemData? captured;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 420,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: [
+                  MessengerConversation(
+                    id: 'c1',
+                    title: 'c1',
+                    subtitle: 'Hey there',
+                    avatarLabel: 'AJ',
+                    createdAt: DateTime.utc(2026),
+                    peerUsers: const [alice],
+                  ),
+                ],
+                users: const [alice],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+                userListItemBuilder: (context, data) {
+                  captured = data;
+                  return Text('direct-row');
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    expect(find.text('direct-row'), findsOneWidget);
+    expect(captured, isNotNull);
+    expect(captured!.conversationId, 'c1');
+    expect(captured!.isConversationRow, isFalse);
+    expect(captured!.useGroupAvatar, isFalse);
+    expect(captured!.showOnlinePresence, isTrue);
+    expect(captured!.displayTitle, 'Alice Jones');
+    expect(captured!.subtitle, 'Hey there');
+    expect(captured!.roleLabel, 'Nurse');
+    expect(captured!.messagePreview, 'Hey there');
+  });
+
+  testWidgets('MessengerConversationListItem renders title and subtitle',
+      (tester) async {
+    const alice =
+        MessengerUser(id: 'a', username: 'alice_jones', roleLabel: '');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: MessengerConversationListItem(
+              data: MessengerUserListItemData(
+                user: alice,
+                isSelected: false,
+                hasUnread: false,
+                isOpening: false,
+                messagePreview: 'Preview text',
+                onTap: () {},
+                displayTitle: 'Alice Jones',
+                subtitle: 'Preview text',
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    expect(find.text('Alice Jones'), findsOneWidget);
+    expect(find.text('Preview text'), findsOneWidget);
+    expect(find.byType(MessengerConversationListItem), findsOneWidget);
+  });
+
+  testWidgets('selected row uses selectedBackgroundColor from userListItemStyle',
+      (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice_jones');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 420,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: [
+                  MessengerConversation(
+                    id: 'c1',
+                    title: 'c1',
+                    subtitle: 'Hello',
+                    avatarLabel: 'AJ',
+                    createdAt: DateTime.utc(2026),
+                    peerUsers: const [alice],
+                  ),
+                ],
+                users: const [alice],
+                selectedConversationId: 'c1',
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+                userListItemStyle: const MessengerUserListItemStyle(
+                  backgroundColor: Color(0xFFABCDEF),
+                  selectedBackgroundColor: Color(0xFFFF0000),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    final styledTile = tester.widget<Container>(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Container &&
+            widget.decoration is BoxDecoration &&
+            (widget.decoration as BoxDecoration).color == const Color(0xFFFF0000),
+      ),
+    );
+    expect(styledTile, isNotNull);
+  });
+
+  testWidgets('shows role chip next to user name when role is present',
+      (tester) async {
+    const nurseUser = MessengerUser(
+      id: 'n1',
+      username: 'alex_green',
+      roleLabel: 'Nurse',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 420,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [nurseUser],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Alex Green'), findsOneWidget);
+    expect(find.text('Nurse'), findsWidgets);
+  });
+
+  testWidgets('start new chat rows show role chip and email', (tester) async {
+    const nurseUser = MessengerUser(
+      id: 'n1',
+      username: 'alex_green',
+      roleLabel: 'Nurse',
+      email: 'alex@example.com',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 420,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [nurseUser],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+                showHeaderComposeButton: true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.edit_square));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Start New Chat'), findsOneWidget);
+    expect(find.text('Nurse'), findsWidgets);
+    expect(find.text('alex@example.com'), findsOneWidget);
+  });
+
   testWidgets('pull to refresh invokes onRefresh', (tester) async {
     const alice = MessengerUser(id: 'a', username: 'alice');
     var refreshCount = 0;
@@ -661,6 +1056,63 @@ void main() {
     expect(find.text('alice'), findsNothing);
   });
 
+  testWidgets('list keeps bottom clearance when start-chat FAB is visible',
+      (tester) async {
+    Future<void> pumpList({required bool showFab}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MessengerTheme(
+            data: const MessengerThemeData(),
+            child: Scaffold(
+              body: SizedBox(
+                height: 520,
+                width: 360,
+                child: MessengerConversationList(
+                  currentUserName: 'me',
+                  conversations: [
+                    MessengerConversation(
+                      id: 'c1',
+                      title: 'Chat 1',
+                      subtitle: 'Hello',
+                      avatarLabel: 'C1',
+                      createdAt: DateTime.utc(2026, 1, 1),
+                      peerUsers: const [
+                        MessengerUser(id: 'a', username: 'alice_jones'),
+                      ],
+                    ),
+                  ],
+                  users: const [
+                    MessengerUser(id: 'a', username: 'alice_jones')
+                  ],
+                  selectedConversationId: null,
+                  openingDirectUserId: '',
+                  onRefresh: () async {},
+                  onLogout: () {},
+                  onOpenDirectChat: (_) async {},
+                  onSelectConversation: (_) async {},
+                  searchVisibility: MessengerSearchVisibility.never,
+                  showStartChatFab: showFab,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await pumpList(showFab: false);
+    final noFabListView = tester.widget<ListView>(find.byType(ListView).first);
+    final noFabPadding = noFabListView.padding!.resolve(TextDirection.ltr);
+
+    await pumpList(showFab: true);
+    final withFabListView =
+        tester.widget<ListView>(find.byType(ListView).first);
+    final withFabPadding = withFabListView.padding!.resolve(TextDirection.ltr);
+
+    expect(withFabPadding.bottom, greaterThan(noFabPadding.bottom));
+  });
+
   testWidgets('start-new-chat bottom sheet supports group creation',
       (tester) async {
     const alice = MessengerUser(id: 'a', username: 'alice_jones');
@@ -706,24 +1158,242 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Start New Chat'), findsOneWidget);
-    expect(find.text('New group'), findsOneWidget);
+    expect(find.text('+ New group'), findsOneWidget);
 
-    await tester.tap(find.text('New group'));
+    await tester.tap(find.text('+ New group'));
     await tester.pumpAndSettle();
 
     expect(find.text('Selected people (0)'), findsOneWidget);
-    await tester.tap(find.text('Add').first);
+    await tester.tap(find.text('Alice Jones').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Add').first);
+    await tester.tap(find.text('Bob Smith').last);
     await tester.pumpAndSettle();
 
     expect(find.text('Selected people (2)'), findsOneWidget);
 
-    await tester.tap(find.text('Create group'));
+    await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
 
-    expect(createdIds, ['a', 'b']);
+    expect(createdIds, ['b', 'a']);
     expect(find.text('Start New Chat'), findsNothing);
+  });
+
+  testWidgets('start-new-chat sheet remains visible with keyboard open',
+      (tester) async {
+    addTearDown(() {
+      tester.view.reset();
+    });
+    tester.view
+      ..physicalSize = const Size(390, 844)
+      ..devicePixelRatio = 1
+      ..padding = const FakeViewPadding(top: 47, bottom: 34)
+      ..viewInsets = const FakeViewPadding(bottom: 336);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 844,
+              width: 390,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [
+                  MessengerUser(id: 'a', username: 'alice_jones'),
+                ],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showHeaderComposeButton: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add_rounded));
+    await tester.pumpAndSettle();
+
+    final titleTop = tester.getTopLeft(find.text('Start New Chat')).dy;
+    expect(titleTop, greaterThan(0));
+  });
+
+  testWidgets('start-new-chat group creation allows one selected peer',
+      (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice_jones');
+    List<String> createdIds = const [];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 520,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [alice],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onCreateGroupSelected: (selectedUsers) async {
+                  createdIds = selectedUsers
+                      .map((user) => user.id)
+                      .toList(growable: false);
+                },
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showHeaderComposeButton: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add_rounded));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('+ New group'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Alice Jones').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Selected people (1)'), findsOneWidget);
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+
+    expect(createdIds, ['a']);
+  });
+
+  testWidgets('group mode scrolls selected-users section with list',
+      (tester) async {
+    final users = List<MessengerUser>.generate(
+      24,
+      (index) => MessengerUser(
+        id: 'u$index',
+        username: 'user_${index + 1}',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 560,
+              width: 390,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: users,
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onCreateGroupSelected: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showHeaderComposeButton: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add_rounded));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('+ New group'));
+    await tester.pumpAndSettle();
+
+    for (var i = 0; i < 8; i++) {
+      final userFinder = find.text('User ${i + 1}').last;
+      await tester.ensureVisible(userFinder);
+      await tester.tap(userFinder);
+      await tester.pumpAndSettle();
+    }
+
+    expect(find.text('Selected people (8)'), findsOneWidget);
+    final before = tester.getTopLeft(find.text('Selected people (8)')).dy;
+
+    await tester.drag(
+        find.byType(SingleChildScrollView), const Offset(0, -220));
+    await tester.pumpAndSettle();
+
+    final after = tester.getTopLeft(find.text('Selected people (8)')).dy;
+    expect(after, lessThanOrEqualTo(before));
+  });
+
+  testWidgets('group mode empty search keeps bottom sheet content tall',
+      (tester) async {
+    addTearDown(() {
+      tester.view.reset();
+    });
+    tester.view
+      ..physicalSize = const Size(390, 844)
+      ..devicePixelRatio = 1
+      ..padding = const FakeViewPadding(top: 47, bottom: 34)
+      ..viewInsets = const FakeViewPadding(bottom: 336);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 844,
+              width: 390,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [
+                  MessengerUser(id: 'a', username: 'alice_jones'),
+                ],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onCreateGroupSelected: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showHeaderComposeButton: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add_rounded));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('+ New group'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).last, 'zzzz-not-found');
+    await tester.pumpAndSettle();
+
+    expect(find.text('No people match your search.'), findsOneWidget);
+    final messageBottom =
+        tester.getBottomLeft(find.text('No people match your search.')).dy;
+    expect(messageBottom, lessThan(844 - 336));
   });
 
   testWidgets('group rows are interleaved by latest activity', (tester) async {
@@ -824,28 +1494,28 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.add_rounded));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('New group'));
+    await tester.tap(find.text('+ New group'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Add').first);
+    await tester.tap(find.text('Alice Jones').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Add').first);
+    await tester.tap(find.text('Bob Smith').last);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Create group'));
+    await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
 
     expect(find.text('Enter a group name to continue.'), findsOneWidget);
     expect(request, isNull);
 
     await tester.enterText(find.byType(TextField).first, 'Clinical Team');
-    await tester.tap(find.text('Create group'));
+    await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
 
     expect(request, isNotNull);
     expect(request!.groupName, 'Clinical Team');
     expect(
       request!.selectedUsers.map((user) => user.id).toList(growable: false),
-      ['a', 'b'],
+      ['b', 'a'],
     );
   });
 
@@ -878,7 +1548,419 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Start New Chat'), findsNothing);
   });
+
+  testWidgets('start-new-chat sheet debounced search invokes host callback',
+      (tester) async {
+    final debounced = <String>[];
+    const users = [
+      MessengerUser(id: 'a', username: 'alice', roleLabel: ''),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 520,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: users,
+                startNewChatUsers: users,
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                startNewChatDirectory: MessengerStartNewChatDirectory(
+                  searchDebounce: const Duration(milliseconds: 180),
+                  onSearchQueryDebounced: debounced.add,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add_rounded));
+    await tester.pumpAndSettle();
+    debounced.clear();
+
+    final field = find.byType(TextField).last;
+    await tester.enterText(field, 'ali');
+    await tester.pump();
+    expect(debounced, isEmpty);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(debounced, ['ali']);
+  });
+
+  testWidgets(
+      'start-new-chat group selection survives directory user list replacement',
+      (tester) async {
+    final harnessKey = GlobalKey<_StartNewChatGroupSelectionHarnessState>();
+    final created = <MessengerUser>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _StartNewChatGroupSelectionHarness(
+          key: harnessKey,
+          created: created,
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.add_rounded));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('+ New group'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Alice Jones').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Bob Smith').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Selected people (2)'), findsOneWidget);
+
+    harnessKey.currentState!.replaceUsers(const [
+      MessengerUser(id: 'c', username: 'cara_doe'),
+    ]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Selected people (2)'), findsOneWidget);
+
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+
+    expect(created.map((user) => user.id).toList(), ['b', 'a']);
+    expect(find.text('Start New Chat'), findsNothing);
+  });
+
+  testWidgets('custom startNewChatPresenter is used instead of bottom sheet',
+      (tester) async {
+    var presenterCalled = false;
+    const alice = MessengerUser(id: 'a', username: 'alice_jones');
+    const bob = MessengerUser(id: 'b', username: 'bob_smith');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 520,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [],
+                startNewChatUsers: const [alice, bob],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+                showHeaderComposeButton: true,
+                startNewChatPresenter: (context, request) async {
+                  presenterCalled = true;
+                  expect(request.mode, MessengerStartNewChatMode.direct);
+                  await Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => Scaffold(
+                        body: SizedBox(
+                          height: 520,
+                          child: request.buildPicker(),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byIcon(Icons.edit_square));
+    await tester.pumpAndSettle();
+
+    expect(presenterCalled, isTrue);
+    expect(find.text('Start New Chat'), findsOneWidget);
+  });
+
+  testWidgets('inlineCheckmark keeps selected users visible in group mode',
+      (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice_jones');
+    const bob = MessengerUser(id: 'b', username: 'bob_smith');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 520,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: const [],
+                users: const [],
+                startNewChatUsers: const [alice, bob],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onCreateGroupSelected: (_) async {},
+                onSelectConversation: (_) async {},
+                searchVisibility: MessengerSearchVisibility.never,
+                showHeaderComposeButton: false,
+                groupSelectionListMode:
+                    MessengerGroupSelectionListMode.inlineCheckmark,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(FloatingActionButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('+ New group'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Alice Jones'), findsOneWidget);
+    expect(find.text('Bob Smith'), findsOneWidget);
+
+    await tester.tap(find.text('Alice Jones'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Alice Jones'), findsOneWidget);
+    expect(find.text('Bob Smith'), findsOneWidget);
+    expect(find.byIcon(Icons.check_circle_rounded), findsOneWidget);
+  });
+
+  testWidgets('presentStartNewChat opens picker without FAB', (tester) async {
+    final listKey = GlobalKey<MessengerConversationListState>();
+    const alice = MessengerUser(id: 'a', username: 'alice_jones');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) {
+            return MessengerTheme(
+              data: const MessengerThemeData(),
+              child: Scaffold(
+                body: Column(
+                  children: [
+                    TextButton(
+                      onPressed: () => listKey.currentState?.presentStartNewChat(
+                        context,
+                        mode: MessengerStartNewChatMode.direct,
+                      ),
+                      child: const Text('Open picker'),
+                    ),
+                    Expanded(
+                      child: MessengerConversationList(
+                        key: listKey,
+                        currentUserName: 'me',
+                        conversations: const [],
+                        users: const [],
+                        startNewChatUsers: const [alice],
+                        selectedConversationId: null,
+                        openingDirectUserId: '',
+                        onRefresh: () async {},
+                        onLogout: () {},
+                        onOpenDirectChat: (_) async {},
+                        onSelectConversation: (_) async {},
+                        searchVisibility: MessengerSearchVisibility.never,
+                        showStartChatFab: false,
+                        showHeaderComposeButton: false,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open picker'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Start New Chat'), findsOneWidget);
+    expect(find.text('Alice Jones'), findsOneWidget);
+  });
+
+  testWidgets('ignores conversation taps while openingConversationId is set',
+      (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice_jones');
+    var selectCount = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 420,
+              width: 360,
+              child: MessengerConversationList(
+                currentUserName: 'me',
+                conversations: [
+                  MessengerConversation(
+                    id: 'c1',
+                    title: 'Alice Jones',
+                    subtitle: 'Hi',
+                    avatarLabel: 'A',
+                    createdAt: DateTime.utc(2026),
+                    peerUsers: const [alice],
+                  ),
+                ],
+                users: const [alice],
+                selectedConversationId: null,
+                openingDirectUserId: '',
+                openingConversationId: 'c1',
+                onRefresh: () async {},
+                onLogout: () {},
+                onOpenDirectChat: (_) async {},
+                onSelectConversation: (_) async {
+                  selectCount++;
+                },
+                searchVisibility: MessengerSearchVisibility.never,
+                showStartChatFab: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.tap(find.text('Alice Jones'));
+    await tester.pump();
+
+    expect(selectCount, 0);
+  });
+
+  testWidgets('ignores rapid second conversation tap while first is in flight',
+      (tester) async {
+    const alice = MessengerUser(id: 'a', username: 'alice_jones');
+    final selectStarted = Completer<void>();
+    final selectAllowedToFinish = Completer<void>();
+    var selectCount = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessengerTheme(
+          data: const MessengerThemeData(),
+          child: Scaffold(
+            body: SizedBox(
+              height: 420,
+              width: 360,
+              child: _OpeningConversationGuardHarness(
+                user: alice,
+                onSelect: () async {
+                  selectCount++;
+                  if (!selectStarted.isCompleted) {
+                    selectStarted.complete();
+                  }
+                  await selectAllowedToFinish.future;
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Alice Jones'));
+    await selectStarted.future;
+    await tester.pump();
+    await tester.tap(find.text('Alice Jones'));
+    await tester.pump();
+    selectAllowedToFinish.complete();
+    await tester.pumpAndSettle();
+
+    expect(selectCount, 1);
+  });
 }
+
+class _StartNewChatGroupSelectionHarness extends StatefulWidget {
+  const _StartNewChatGroupSelectionHarness({
+    super.key,
+    required this.created,
+  });
+
+  final List<MessengerUser> created;
+
+  @override
+  State<_StartNewChatGroupSelectionHarness> createState() =>
+      _StartNewChatGroupSelectionHarnessState();
+}
+
+class _StartNewChatGroupSelectionHarnessState
+    extends State<_StartNewChatGroupSelectionHarness> {
+  static const _alice = MessengerUser(id: 'a', username: 'alice_jones');
+  static const _bob = MessengerUser(id: 'b', username: 'bob_smith');
+  static const _cara = MessengerUser(id: 'c', username: 'cara_doe');
+
+  List<MessengerUser> _users = const [_alice, _bob, _cara];
+
+  void replaceUsers(List<MessengerUser> users) {
+    setState(() => _users = users);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MessengerTheme(
+      data: const MessengerThemeData(),
+      child: Scaffold(
+        body: SizedBox(
+          height: 520,
+          width: 360,
+          child: MessengerConversationList(
+            currentUserName: 'me',
+            conversations: const [],
+            users: _users,
+            startNewChatUsers: _users,
+            selectedConversationId: null,
+            openingDirectUserId: '',
+            onRefresh: () async {},
+            onLogout: () {},
+            onOpenDirectChat: (_) async {},
+            onCreateGroupSelected: (selected) async {
+              widget.created
+                ..clear()
+                ..addAll(selected);
+            },
+            onSelectConversation: (_) async {},
+            searchVisibility: MessengerSearchVisibility.never,
+            showHeaderComposeButton: false,
+            startNewChatDirectory: const MessengerStartNewChatDirectory(
+              searchDebounce: Duration.zero,
+              onSearchQueryDebounced: _noopSearch,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+void _noopSearch(String _) {}
 
 class _StartNewChatSheetLiveHarness extends StatefulWidget {
   const _StartNewChatSheetLiveHarness({super.key});
@@ -926,6 +2008,61 @@ class _StartNewChatSheetLiveHarnessState
           ),
         ),
       ),
+    );
+  }
+}
+
+class _OpeningConversationGuardHarness extends StatefulWidget {
+  const _OpeningConversationGuardHarness({
+    required this.user,
+    required this.onSelect,
+  });
+
+  final MessengerUser user;
+  final Future<void> Function() onSelect;
+
+  @override
+  State<_OpeningConversationGuardHarness> createState() =>
+      _OpeningConversationGuardHarnessState();
+}
+
+class _OpeningConversationGuardHarnessState
+    extends State<_OpeningConversationGuardHarness> {
+  String openingConversationId = '';
+
+  @override
+  Widget build(BuildContext context) {
+    return MessengerConversationList(
+      currentUserName: 'me',
+      conversations: [
+        MessengerConversation(
+          id: 'c1',
+          title: widget.user.username,
+          subtitle: 'Hi',
+          avatarLabel: 'A',
+          createdAt: DateTime.utc(2026),
+          peerUsers: [widget.user],
+        ),
+      ],
+      users: [widget.user],
+      selectedConversationId: null,
+      openingDirectUserId: '',
+      openingConversationId: openingConversationId,
+      onRefresh: () async {},
+      onLogout: () {},
+      onOpenDirectChat: (_) async {},
+      onSelectConversation: (id) async {
+        setState(() => openingConversationId = id);
+        try {
+          await widget.onSelect();
+        } finally {
+          if (mounted) {
+            setState(() => openingConversationId = '');
+          }
+        }
+      },
+      searchVisibility: MessengerSearchVisibility.never,
+      showStartChatFab: false,
     );
   }
 }

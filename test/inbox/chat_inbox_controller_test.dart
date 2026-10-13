@@ -31,13 +31,18 @@ void main() {
       await controller.setActiveConversation('room-a');
 
       expect(fake.joinConversationLog, ['room-a']);
+      expect(fake.markConversationReadLog, isEmpty);
+
+      await controller.setThreadVisible(true);
+
       expect(fake.markConversationReadLog, ['room-a']);
 
       await controller.dispose();
       await connection.close();
     });
 
-    test('peer message increments unread when not active', () async {
+    test('peer message_received increments unread but does not deliver when not joined',
+        () async {
       final fake = FakeChatRepository();
       final client = ChatClient(
         config: const ChatServiceConfig(
@@ -70,8 +75,207 @@ void main() {
 
       await Future<void>.delayed(Duration.zero);
       expect(controller.unreadByConversation.value['c2'], 1);
-      expect(fake.markAsDeliveredLog, contains('c2:m-ext'));
+      expect(fake.markAsDeliveredLog, isEmpty);
       expect(fake.markAsReadLog, isEmpty);
+
+      await controller.dispose();
+      await connection.close();
+    });
+
+    test('conversation_message delivers without join and does not mark read',
+        () async {
+      final fake = FakeChatRepository();
+      final client = ChatClient(
+        config: const ChatServiceConfig(
+          apiBaseUrl: 'http://localhost',
+          socketUrl: 'http://localhost',
+        ),
+        repository: fake,
+      );
+      final connection = StreamController<ChatConnectionState>.broadcast();
+      final controller = ChatInboxController(
+        client: client,
+        currentUserId: 'user-1',
+        connectionState: connection.stream,
+      );
+
+      fake.emitSocket(
+        ChatSocketEvent(
+          type: ChatSocketEventType.conversationMessage,
+          conversationMessage: ConversationMessageEvent.fromJson({
+            'conversationId': 'c-list',
+            'message': {
+              'id': 'm-list',
+              'conversationId': 'c-list',
+              'tenantId': 't',
+              'senderId': 'user-2',
+              'type': 'TEXT',
+              'content': 'hello',
+              'createdAt': DateTime.utc(2026).toIso8601String(),
+            },
+            'unreadCount': 1,
+          }),
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.unreadByConversation.value['c-list'], 1);
+      expect(fake.markAsDeliveredLog, contains('c-list:m-list'));
+      expect(fake.markAsReadLog, isEmpty);
+
+      await controller.dispose();
+      await connection.close();
+    });
+
+    test('message_received delivers when joined but does not read until visible',
+        () async {
+      final fake = FakeChatRepository();
+      final client = ChatClient(
+        config: const ChatServiceConfig(
+          apiBaseUrl: 'http://localhost',
+          socketUrl: 'http://localhost',
+        ),
+        repository: fake,
+      );
+      final connection = StreamController<ChatConnectionState>.broadcast();
+      final controller = ChatInboxController(
+        client: client,
+        currentUserId: 'user-1',
+        connectionState: connection.stream,
+      );
+
+      await controller.setActiveConversation('c-joined');
+      fake.markAsDeliveredLog.clear();
+
+      fake.emitSocket(
+        ChatSocketEvent(
+          type: ChatSocketEventType.messageReceived,
+          message: ChatMessage.fromJson({
+            'id': 'm-bg',
+            'conversationId': 'c-joined',
+            'tenantId': 't',
+            'senderId': 'user-2',
+            'type': 'TEXT',
+            'content': 'hello',
+            'createdAt': DateTime.utc(2026).toIso8601String(),
+          }),
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+      expect(fake.markAsDeliveredLog, contains('c-joined:m-bg'));
+      expect(fake.markAsReadLog, isEmpty);
+
+      await controller.dispose();
+      await connection.close();
+    });
+
+    test('peer message does not mark read when thread is not visible', () async {
+      final fake = FakeChatRepository();
+      final client = ChatClient(
+        config: const ChatServiceConfig(
+          apiBaseUrl: 'http://localhost',
+          socketUrl: 'http://localhost',
+        ),
+        repository: fake,
+      );
+      final connection = StreamController<ChatConnectionState>.broadcast();
+      final controller = ChatInboxController(
+        client: client,
+        currentUserId: 'user-1',
+        connectionState: connection.stream,
+      );
+
+      await controller.setActiveConversation('c-open');
+      expect(fake.markConversationReadLog, isEmpty);
+
+      fake.emitSocket(
+        ChatSocketEvent(
+          type: ChatSocketEventType.messageReceived,
+          message: ChatMessage.fromJson({
+            'id': 'm1',
+            'conversationId': 'c-open',
+            'tenantId': 't',
+            'senderId': 'user-2',
+            'type': 'TEXT',
+            'content': 'hello',
+            'createdAt': DateTime.utc(2026).toIso8601String(),
+          }),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(fake.markAsReadLog, isEmpty);
+      // Joined but not viewing: unread must still increase.
+      expect(controller.unreadByConversation.value['c-open'], 1);
+
+      await controller.setThreadVisible(true);
+      expect(fake.markConversationReadLog, ['c-open']);
+      expect(controller.unreadByConversation.value['c-open'], isNull);
+
+      fake.emitSocket(
+        ChatSocketEvent(
+          type: ChatSocketEventType.messageReceived,
+          message: ChatMessage.fromJson({
+            'id': 'm2',
+            'conversationId': 'c-open',
+            'tenantId': 't',
+            'senderId': 'user-2',
+            'type': 'TEXT',
+            'content': 'again',
+            'createdAt': DateTime.utc(2026, 1, 2).toIso8601String(),
+          }),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(fake.markAsReadLog, contains('c-open:m2'));
+
+      await controller.dispose();
+      await connection.close();
+    });
+
+    test('setActiveConversation does not clear unread until thread visible',
+        () async {
+      final fake = FakeChatRepository();
+      final client = ChatClient(
+        config: const ChatServiceConfig(
+          apiBaseUrl: 'http://localhost',
+          socketUrl: 'http://localhost',
+        ),
+        repository: fake,
+      );
+      final connection = StreamController<ChatConnectionState>.broadcast();
+      final controller = ChatInboxController(
+        client: client,
+        currentUserId: 'user-1',
+        connectionState: connection.stream,
+      );
+
+      fake.emitSocket(
+        ChatSocketEvent(
+          type: ChatSocketEventType.messageReceived,
+          message: ChatMessage.fromJson({
+            'id': 'm-pre',
+            'conversationId': 'c-badge',
+            'tenantId': 't',
+            'senderId': 'user-2',
+            'type': 'TEXT',
+            'content': 'hello',
+            'createdAt': DateTime.utc(2026).toIso8601String(),
+          }),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.unreadByConversation.value['c-badge'], 1);
+
+      await controller.setActiveConversation('c-badge');
+      expect(controller.unreadByConversation.value['c-badge'], 1);
+      expect(fake.markConversationReadLog, isEmpty);
+
+      await controller.setThreadVisible(true);
+      expect(controller.unreadByConversation.value['c-badge'], isNull);
+      expect(fake.markConversationReadLog, ['c-badge']);
 
       await controller.dispose();
       await connection.close();
@@ -157,6 +361,7 @@ void main() {
       fake.markConversationReadLog.clear();
 
       await controller.setActiveConversation('room-z');
+      await controller.setThreadVisible(true);
       expect(fake.joinConversationLog.length, 1);
 
       fake.joinConversationLog.clear();
@@ -256,6 +461,7 @@ void main() {
       );
 
       await controller.setActiveConversation('open');
+      await controller.setThreadVisible(true);
       fake.markConversationReadLog.clear();
 
       controller.seedFromConversations([
@@ -326,6 +532,102 @@ void main() {
       );
       await Future<void>.delayed(Duration.zero);
       expect(controller.conversationOrder.value.promotedAt['c-del'], isNull);
+
+      await controller.dispose();
+      await connection.close();
+    });
+
+    test('messageReacted bumps conversation order', () async {
+      final fake = FakeChatRepository();
+      final client = ChatClient(
+        config: const ChatServiceConfig(
+          apiBaseUrl: 'http://localhost',
+          socketUrl: 'http://localhost',
+        ),
+        repository: fake,
+      );
+      final connection = StreamController<ChatConnectionState>.broadcast();
+      final controller = ChatInboxController(
+        client: client,
+        currentUserId: 'user-1',
+        connectionState: connection.stream,
+      );
+
+      final reactedAt = DateTime.utc(2026, 3, 1, 12);
+      fake.emitSocket(
+        ChatSocketEvent(
+          type: ChatSocketEventType.messageReacted,
+          reaction: MessageReaction.fromJson({
+            'id': 'r1',
+            'messageId': 'm1',
+            'userId': 'user-2',
+            'conversationId': 'c-react',
+            'reactionType': '😂',
+            'createdAt': reactedAt.toIso8601String(),
+          }),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        controller.conversationOrder.value.promotedAt['c-react'],
+        reactedAt,
+      );
+      expect(controller.unreadByConversation.value['c-react'], 1);
+
+      await controller.dispose();
+      await connection.close();
+    });
+
+    test('messageReacted does not unread own reaction in open thread',
+        () async {
+      final fake = FakeChatRepository();
+      final client = ChatClient(
+        config: const ChatServiceConfig(
+          apiBaseUrl: 'http://localhost',
+          socketUrl: 'http://localhost',
+        ),
+        repository: fake,
+      );
+      final connection = StreamController<ChatConnectionState>.broadcast();
+      final controller = ChatInboxController(
+        client: client,
+        currentUserId: 'user-1',
+        connectionState: connection.stream,
+      );
+
+      await controller.setActiveConversation('c-open');
+      await controller.setThreadVisible(true);
+
+      fake.emitSocket(
+        ChatSocketEvent(
+          type: ChatSocketEventType.messageReacted,
+          reaction: MessageReaction.fromJson({
+            'id': 'r-self',
+            'messageId': 'm1',
+            'userId': 'user-1',
+            'conversationId': 'c-open',
+            'reactionType': '👍',
+          }),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.unreadByConversation.value['c-open'], isNull);
+
+      fake.emitSocket(
+        ChatSocketEvent(
+          type: ChatSocketEventType.messageReacted,
+          reaction: MessageReaction.fromJson({
+            'id': 'r-peer',
+            'messageId': 'm1',
+            'userId': 'user-2',
+            'conversationId': 'c-open',
+            'reactionType': '😂',
+          }),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.unreadByConversation.value['c-open'], isNull);
 
       await controller.dispose();
       await connection.close();

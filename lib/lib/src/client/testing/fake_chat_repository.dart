@@ -44,6 +44,11 @@ class FakeChatRepository implements ChatRepository {
   String? lastUpdatedConversationId;
   String? lastUpdatedConversationTitle;
   String? lastDeletedConversationId;
+  int removeParticipantCalls = 0;
+  String? lastRemovedParticipantConversationId;
+  String? lastRemovedParticipantUserId;
+  String? lastRemovedParticipantActorUserId;
+  List<Conversation> conversationsToReturn = const <Conversation>[];
   final List<String> joinConversationLog = <String>[];
   final List<String> leaveConversationLog = <String>[];
   final List<String> markConversationReadLog = <String>[];
@@ -71,6 +76,22 @@ class FakeChatRepository implements ChatRepository {
   @override
   void disconnectSocket() {
     disconnectSocketCalls++;
+  }
+
+  int emitGoingOfflineCalls = 0;
+  final List<Map<String, String>> goingOfflineLog =
+      <Map<String, String>>[];
+
+  @override
+  void emitGoingOffline({
+    required String userId,
+    required String reason,
+  }) {
+    emitGoingOfflineCalls++;
+    goingOfflineLog.add(<String, String>{
+      'userId': userId,
+      'reason': reason,
+    });
   }
 
   @override
@@ -119,7 +140,7 @@ class FakeChatRepository implements ChatRepository {
     ChatAuth auth, {
     String? forUserId,
   }) async {
-    return const [];
+    return List<Conversation>.from(conversationsToReturn);
   }
 
   @override
@@ -204,6 +225,19 @@ class FakeChatRepository implements ChatRepository {
         'email': 'user@example.com',
       },
     });
+  }
+
+  @override
+  Future<void> removeParticipant(
+    ChatAuth auth, {
+    required String conversationId,
+    required String userId,
+    String? actorUserId,
+  }) async {
+    removeParticipantCalls++;
+    lastRemovedParticipantConversationId = conversationId;
+    lastRemovedParticipantUserId = userId;
+    lastRemovedParticipantActorUserId = actorUserId;
   }
 
   @override

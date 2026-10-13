@@ -5,6 +5,8 @@ import 'package:health_messenger_ui/lib/src/models/messenger_message.dart';
 
 ChatMessage _outgoing({
   String? deliveryStatus,
+  int? deliveredToCount,
+  int? readByCount,
   List<Map<String, dynamic>> readReceipts = const [],
   List<Map<String, dynamic>> deliveredReceipts = const [],
 }) {
@@ -17,6 +19,8 @@ ChatMessage _outgoing({
     'content': 'x',
     'createdAt': DateTime.utc(2026).toIso8601String(),
     if (deliveryStatus != null) 'deliveryStatus': deliveryStatus,
+    if (deliveredToCount != null) 'deliveredToCount': deliveredToCount,
+    if (readByCount != null) 'readByCount': readByCount,
     'readReceipts': readReceipts,
     'deliveredReceipts': deliveredReceipts,
   });
@@ -72,6 +76,60 @@ void main() {
       expect(s, MessengerDeliveryStatus.sent);
     });
 
+    test('peer read receipt wins over stale deliveryStatus SENT', () {
+      final s = messengerDeliveryStatusFor(
+        _outgoing(
+          deliveryStatus: 'SENT',
+          readReceipts: [
+            {
+              'id': 'r1',
+              'messageId': 'm1',
+              'userId': 'peer',
+              'readAt': DateTime.utc(2026).toIso8601String(),
+            },
+          ],
+        ),
+        currentUserId: 'me',
+      );
+      expect(s, MessengerDeliveryStatus.seen);
+    });
+
+    test('deliveredToCount wins over stale deliveryStatus SENT', () {
+      final m = ChatMessage.fromJson({
+        'id': 'm1',
+        'conversationId': 'c1',
+        'tenantId': 't',
+        'senderId': 'me',
+        'type': 'TEXT',
+        'content': 'x',
+        'deliveryStatus': 'SENT',
+        'deliveredToCount': 1,
+        'createdAt': DateTime.utc(2026).toIso8601String(),
+      });
+      expect(
+        messengerDeliveryStatusFor(m, currentUserId: 'me'),
+        MessengerDeliveryStatus.delivered,
+      );
+    });
+
+    test('peer delivered receipt wins over stale deliveryStatus SENT', () {
+      final s = messengerDeliveryStatusFor(
+        _outgoing(
+          deliveryStatus: 'SENT',
+          deliveredReceipts: [
+            {
+              'id': 'd1',
+              'messageId': 'm1',
+              'userId': 'peer',
+              'deliveredAt': DateTime.utc(2026).toIso8601String(),
+            },
+          ],
+        ),
+        currentUserId: 'me',
+      );
+      expect(s, MessengerDeliveryStatus.delivered);
+    });
+
     test('peer read receipt implies seen', () {
       final s = messengerDeliveryStatusFor(
         _outgoing(
@@ -87,6 +145,39 @@ void main() {
         currentUserId: 'me',
       );
       expect(s, MessengerDeliveryStatus.seen);
+    });
+
+    test('read count from any group peer implies seen', () {
+      final s = messengerDeliveryStatusFor(
+        _outgoing(deliveryStatus: 'DELIVERED', readByCount: 1),
+        currentUserId: 'me',
+      );
+      expect(s, MessengerDeliveryStatus.seen);
+    });
+
+    test('delivered count from any group peer implies delivered', () {
+      final s = messengerDeliveryStatusFor(
+        _outgoing(deliveryStatus: 'SENT', deliveredToCount: 1),
+        currentUserId: 'me',
+      );
+      expect(s, MessengerDeliveryStatus.delivered);
+    });
+
+    test('own read receipt does not imply seen', () {
+      final s = messengerDeliveryStatusFor(
+        _outgoing(
+          readReceipts: [
+            {
+              'id': 'r1',
+              'messageId': 'm1',
+              'userId': 'me',
+              'readAt': DateTime.utc(2026).toIso8601String(),
+            },
+          ],
+        ),
+        currentUserId: 'me',
+      );
+      expect(s, MessengerDeliveryStatus.sent);
     });
 
     test('incoming message is none', () {

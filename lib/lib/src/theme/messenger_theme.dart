@@ -24,7 +24,41 @@ class MessengerThemeData {
     this.reactionBorder = const Color(0xFFE5E7EB),
     this.dateSeparatorBackground = const Color(0xFFE2E8F0),
     this.dateSeparatorText = const Color(0xFF475569),
+    this.mediaPlaceholderBackground,
+    this.mediaLoaderColor,
   });
+
+  /// Derives messenger tokens from the host Material [ThemeData] so package UI
+  /// can follow app-level branding when no explicit [MessengerTheme] is used.
+  factory MessengerThemeData.fromMaterialTheme(ThemeData theme) {
+    final scheme = theme.colorScheme;
+    final divider = theme.dividerColor;
+    return MessengerThemeData(
+      primary: scheme.primary,
+      background: scheme.surface,
+      surface: scheme.surface,
+      border: divider,
+      subtleText: scheme.onSurfaceVariant.withValues(alpha: 0.9),
+      mutedText: scheme.onSurfaceVariant.withValues(alpha: 0.7),
+      searchBackground: scheme.surfaceContainerHighest,
+      threadBackgroundMobile: scheme.surfaceContainerLow,
+      bubbleMine: scheme.primary,
+      bubbleOther: scheme.surface,
+      bubbleMineText: scheme.onPrimary,
+      bubbleOtherText: scheme.onSurface,
+      bubbleMineTime: scheme.onPrimary.withValues(alpha: 0.7),
+      bubbleOtherTime: scheme.onSurfaceVariant.withValues(alpha: 0.9),
+      composerFieldBackground: scheme.surfaceContainerHighest,
+      onlineIndicator: const Color(0xFF10B981),
+      offlineIndicator: scheme.onSurfaceVariant.withValues(alpha: 0.7),
+      reactionBackground: scheme.surface,
+      reactionBorder: divider,
+      dateSeparatorBackground: scheme.surfaceContainerHighest,
+      dateSeparatorText: scheme.onSurfaceVariant,
+      mediaPlaceholderBackground: scheme.surfaceContainerHighest,
+      mediaLoaderColor: scheme.primary,
+    );
+  }
 
   final Color primary;
   final Color background;
@@ -48,6 +82,12 @@ class MessengerThemeData {
   final Color dateSeparatorBackground;
   final Color dateSeparatorText;
 
+  /// Optional override for attachment image/voice loading placeholders.
+  final Color? mediaPlaceholderBackground;
+
+  /// Optional override for attachment media loader spinners.
+  final Color? mediaLoaderColor;
+
   MessengerThemeData copyWith({
     Color? primary,
     Color? background,
@@ -70,6 +110,8 @@ class MessengerThemeData {
     Color? reactionBorder,
     Color? dateSeparatorBackground,
     Color? dateSeparatorText,
+    Color? mediaPlaceholderBackground,
+    Color? mediaLoaderColor,
   }) {
     return MessengerThemeData(
       primary: primary ?? this.primary,
@@ -96,6 +138,9 @@ class MessengerThemeData {
       dateSeparatorBackground:
           dateSeparatorBackground ?? this.dateSeparatorBackground,
       dateSeparatorText: dateSeparatorText ?? this.dateSeparatorText,
+      mediaPlaceholderBackground:
+          mediaPlaceholderBackground ?? this.mediaPlaceholderBackground,
+      mediaLoaderColor: mediaLoaderColor ?? this.mediaLoaderColor,
     );
   }
 }
@@ -111,7 +156,8 @@ class MessengerTheme extends InheritedWidget {
 
   static MessengerThemeData of(BuildContext context) {
     final theme = context.dependOnInheritedWidgetOfExactType<MessengerTheme>();
-    return theme?.data ?? const MessengerThemeData();
+    return theme?.data ??
+        MessengerThemeData.fromMaterialTheme(Theme.of(context));
   }
 
   @override

@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'example_configuration_page.dart';
+import 'example_chat_session_holder.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,14 +28,18 @@ class MessengerExampleApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Health Messenger UI Example',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2B6E62)),
-        useMaterial3: true,
+    return ExampleChatSessionHolder(
+      child: MaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: 'Health Messenger UI Example',
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xFF2B6E62),
+          ),
+          useMaterial3: true,
+        ),
+        home: const ExampleConfigurationPage(),
       ),
-      home: const ExampleConfigurationPage(),
     );
   }
 }

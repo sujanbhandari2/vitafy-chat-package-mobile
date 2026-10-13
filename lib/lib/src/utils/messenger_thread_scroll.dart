@@ -16,6 +16,29 @@ abstract final class MessengerThreadScroll {
   /// [maxScrollExtent] updates (e.g. keyboard inset) are picked up.
   static const int defaultSettleFrames = 6;
 
+  static List<ScrollPosition> _attachedReadyPositions(
+    ScrollController controller,
+  ) {
+    if (!controller.hasClients) {
+      return const [];
+    }
+    return controller.positions
+        .where((position) => position.hasContentDimensions)
+        .toList(growable: false);
+  }
+
+  static bool _hasAnyReadyPosition(ScrollController controller) {
+    if (!controller.hasClients) {
+      return false;
+    }
+    for (final position in controller.positions) {
+      if (position.hasContentDimensions) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// Schedules [ScrollPosition.jumpTo] after the scroll view is attached and
   /// laid out, with bounded retries, then chained settle frames.
   static void scheduleJumpToBottom(
@@ -28,17 +51,18 @@ abstract final class MessengerThreadScroll {
     void tick() {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         attempt++;
-        final ready = controller.hasClients &&
-            controller.position.hasContentDimensions;
+        final ready = _hasAnyReadyPosition(controller);
         if (!ready && attempt < maxAttempts) {
           tick();
           return;
         }
-        if (!controller.hasClients ||
-            !controller.position.hasContentDimensions) {
+        final positions = _attachedReadyPositions(controller);
+        if (positions.isEmpty) {
           return;
         }
-        controller.jumpTo(controller.position.maxScrollExtent);
+        for (final position in positions) {
+          position.jumpTo(position.maxScrollExtent);
+        }
         _scheduleSettleJumpChain(controller, frames: settleFrames);
       });
     }
@@ -57,11 +81,13 @@ abstract final class MessengerThreadScroll {
         return;
       }
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!controller.hasClients ||
-            !controller.position.hasContentDimensions) {
+        final positions = _attachedReadyPositions(controller);
+        if (positions.isEmpty) {
           return;
         }
-        controller.jumpTo(controller.position.maxScrollExtent);
+        for (final position in positions) {
+          position.jumpTo(position.maxScrollExtent);
+        }
         step(remaining - 1);
       });
     }
@@ -82,14 +108,12 @@ abstract final class MessengerThreadScroll {
     void tick() {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         attempt++;
-        final ready = controller.hasClients &&
-            controller.position.hasContentDimensions;
+        final ready = _hasAnyReadyPosition(controller);
         if (!ready && attempt < maxAttempts) {
           tick();
           return;
         }
-        if (!controller.hasClients ||
-            !controller.position.hasContentDimensions) {
+        if (!_hasAnyReadyPosition(controller)) {
           return;
         }
         unawaited(_animateThenSettle(
@@ -108,20 +132,30 @@ abstract final class MessengerThreadScroll {
     required Duration duration,
     required Curve curve,
   }) async {
+    final positions = _attachedReadyPositions(controller);
+    if (positions.isEmpty) {
+      return;
+    }
     try {
-      await controller.animateTo(
-        controller.position.maxScrollExtent,
-        duration: duration,
-        curve: curve,
+      await Future.wait(
+        positions.map(
+          (position) => position.animateTo(
+            position.maxScrollExtent,
+            duration: duration,
+            curve: curve,
+          ),
+        ),
       );
     } catch (_) {
       // Controller may be disposed mid-animation.
     }
-    if (!controller.hasClients ||
-        !controller.position.hasContentDimensions) {
+    final settledPositions = _attachedReadyPositions(controller);
+    if (settledPositions.isEmpty) {
       return;
     }
-    controller.jumpTo(controller.position.maxScrollExtent);
+    for (final position in settledPositions) {
+      position.jumpTo(position.maxScrollExtent);
+    }
     _scheduleSettleJumpChain(controller);
   }
 }

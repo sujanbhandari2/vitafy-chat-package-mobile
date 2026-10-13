@@ -9,47 +9,76 @@ class UnreadMerger {
   /// Merges per-conversation unread from a REST list into [previous].
   ///
   /// Resolution order per row:
-  ///   1. Explicit numeric `unreadCount` / `unread` from the server wins (back-compat).
-  ///      A value of `0` or less clears the entry.
-  ///   2. Otherwise, when `latestMessageId` and the current user's message status
-  ///      are present, derive unread from `lastReadMessageId` vs `latestMessageId`.
-  ///      Unread sets the entry to `max(previous, 1)` so any prior socket-derived
-  ///      count is preserved while a fresh seed still shows bold as `1`.
+  ///   1. When a latest message id exists, derive unread from `lastReadMessageId`
+  ///      vs latest (integer compare). This overrides `unreadCount: 0` from REST.
+  ///      Unread sets the entry to `max(previous, server unreadCount if > 0, 1)`.
+  ///   2. Otherwise, explicit numeric `unreadCount` / `unread` from the server
+  ///      (back-compat). A value of `0` or less clears the entry.
   ///   3. Rows with neither signal are left untouched.
   ///
-  /// When [activeConversationId] is set, that conversation is force-cleared so
-  /// the open thread stays at zero on refresh (matches join+markRead semantics).
+  /// When [activeConversationId] is set and [clearActiveConversationUnread] is
+  /// true (thread visible), that conversation is force-cleared on refresh.
   static Map<String, int> mergeFromConversations(
     Map<String, int> previous,
     List<Conversation> list, {
     required String currentUserId,
     String? activeConversationId,
+    bool clearActiveConversationUnread = false,
   }) {
     final next = Map<String, int>.from(previous);
     final active = activeConversationId?.trim();
     for (final c in list) {
       final id = c.id;
       final u = c.unreadCount;
+
+      // Web list refresh: trust positive unreadCount; zero clears unless read
+      // cursors still show mail behind latest (REST unreadCount can lag).
       if (u != null) {
-        if (u <= 0) {
-          next.remove(id);
-        } else {
+        if (u > 0 &&
+            (!_hasLatestMessageId(c) || c.isUnreadFor(currentUserId))) {
           next[id] = u;
-        }
-      } else if (c.latestMessageId != null &&
-          c.messageStatusByUserId.isNotEmpty) {
-        if (c.isUnreadFor(currentUserId)) {
-          final prev = next[id] ?? 0;
-          next[id] = prev > 1 ? prev : 1;
-        } else {
+        } else if (!_hasLatestMessageId(c) ||
+            !c.isUnreadFor(currentUserId)) {
           next.remove(id);
+        } else {
+          final prev = next[id] ?? 0;
+          next[id] = _maxUnreadCount(prev, 1, 1);
         }
+        continue;
       }
-      if (active != null && active.isNotEmpty && id == active) {
+
+      // No explicit count: derive unread from read cursor vs latest message id.
+      // Do not clear [previous] solely because cursors look caught up — avoids
+      // wiping socket `conversation_message` badges on REST refresh.
+      if (_hasLatestMessageId(c) && c.isUnreadFor(currentUserId)) {
+        final prev = next[id] ?? 0;
+        next[id] = _maxUnreadCount(prev, 1, 1);
+      }
+
+      if (clearActiveConversationUnread &&
+          active != null &&
+          active.isNotEmpty &&
+          id == active) {
         next.remove(id);
       }
     }
     return next;
+  }
+
+  static bool _hasLatestMessageId(Conversation c) {
+    final id = c.latestMessageId?.trim();
+    if (id != null && id.isNotEmpty) {
+      return true;
+    }
+    final mid = c.latestMessage?.id.trim();
+    return mid != null && mid.isNotEmpty;
+  }
+
+  static int _maxUnreadCount(int a, int b, int c) {
+    var max = a;
+    if (b > max) max = b;
+    if (c > max) max = c;
+    return max;
   }
 
   /// Applies authoritative unread from a `conversation_message` list event.
@@ -131,6 +160,30 @@ class UnreadMerger {
     final next = Map<String, int>.from(previous);
     final id = message.conversationId;
     next[id] = (next[id] ?? 0) + 1;
+    return next;
+  }
+
+  /// When a peer adds a reaction and the thread is not open, mark the
+  /// conversation unread (bold preview in the list).
+  static Map<String, int> incrementForReaction(
+    Map<String, int> previous,
+    MessageReaction reaction, {
+    required String currentUserId,
+    String? activeConversationId,
+  }) {
+    if (reaction.userId.trim() == currentUserId.trim()) {
+      return previous;
+    }
+    final cid = reaction.conversationId?.trim() ?? '';
+    if (cid.isEmpty) {
+      return previous;
+    }
+    final active = activeConversationId?.trim() ?? '';
+    if (active.isNotEmpty && cid == active) {
+      return previous;
+    }
+    final next = Map<String, int>.from(previous);
+    next[cid] = (next[cid] ?? 0) + 1;
     return next;
   }
 

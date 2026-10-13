@@ -71,7 +71,25 @@ client.events.listen((event) {
 import 'package:health_messenger_ui/lib/health_messenger_ui.dart';
 
 // Use the widgets in your UI tree. See the /example app for a full integration.
+
+MessengerChatShell(
+  // ...required args
+  packageDialogTheme: Theme.of(context).copyWith(
+    dialogTheme: const DialogThemeData(
+      titleTextStyle: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+      contentTextStyle: TextStyle(fontSize: 14, height: 1.4),
+    ),
+  ),
+);
 ```
+
+`packageDialogTheme` applies to package-owned dialogs (delete confirmations, image preview). Pass a full `ThemeData` from `Theme.of(context).copyWith(dialogTheme: …)` so field-wise overrides stay complete.
+
+**Creating a group with one selected peer**
+
+- Prefer `onCreateGroupRequested` (not `onCreateGroupSelected` alone) so you receive a [MessengerGroupCreateRequest] with a resolved name.
+- For `POST …/users/start-conversation`, Vitafy treats **two users + empty `groupName` as DIRECT**. Use `request.startConversationGroupName()` or `ChatClient.startGroupConversation(...)` so a non-empty name is always sent.
+- For `POST …/conversations`, pass `type: 'GROUP'` explicitly (the example app does this when not using the dummy start-conversation path).
 
 ## Parity with the Vitafy web widget
 

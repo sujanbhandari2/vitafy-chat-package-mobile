@@ -70,6 +70,8 @@ class ChatMessage {
     required this.readReceipts,
     this.sender,
     this.deliveryStatus,
+    this.deliveredToCount,
+    this.readByCount,
   });
 
   final String id;
@@ -94,14 +96,23 @@ class ChatMessage {
   /// Server-provided delivery/read aggregate when present (e.g. SENT, DELIVERED, SEEN).
   final String? deliveryStatus;
 
+  /// Other participants with a delivery cursor at or past this message (REST aggregate).
+  final int? deliveredToCount;
+
+  /// Other participants with a read cursor at or past this message (REST aggregate).
+  final int? readByCount;
+
   bool get isDeleted => deletedAt != null;
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
-    final rawReactions = json['reactions'] as List<dynamic>? ?? <dynamic>[];
-    final rawDelivered =
-        json['deliveredReceipts'] as List<dynamic>? ?? <dynamic>[];
-    final rawReceipts = json['readReceipts'] as List<dynamic>? ?? <dynamic>[];
-    final rawAttachments = json['attachments'] as List<dynamic>? ?? <dynamic>[];
+    final rawReactions = _asDynamicList(json['reactions']);
+    final rawDelivered = _asDynamicList(
+      json['deliveredReceipts'] ?? json['delivered_receipts'],
+    );
+    final rawReceipts = _asDynamicList(
+      json['readReceipts'] ?? json['read_receipts'],
+    );
+    final rawAttachments = _asDynamicList(json['attachments']);
     final rawType =
         json['type']?.toString() ?? json['messageType']?.toString() ?? 'TEXT';
 
@@ -112,14 +123,14 @@ class ChatMessage {
           '',
       tenantId:
           json['tenantId']?.toString() ?? json['tenant_id']?.toString() ?? '',
-      senderId:
-          json['senderId']?.toString() ?? json['sender_id']?.toString() ?? '',
+      senderId: _senderIdFromJson(json),
       type: parseMessageType(rawType),
-      content: json['content']?.toString() ?? '',
+      content: _stringContentFromJson(json['content']),
       attachments: rawAttachments
+          .whereType<Map>()
           .map(
             (item) => ChatAttachment.fromJson(
-              Map<String, dynamic>.from(item as Map),
+              Map<String, dynamic>.from(item),
             ),
           )
           .toList(),
@@ -145,23 +156,26 @@ class ChatMessage {
         json['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
       ),
       reactions: rawReactions
+          .whereType<Map>()
           .map(
             (item) => MessageReaction.fromJson(
-              Map<String, dynamic>.from(item as Map),
+              Map<String, dynamic>.from(item),
             ),
           )
           .toList(),
       deliveredReceipts: rawDelivered
+          .whereType<Map>()
           .map(
             (item) => DeliveredReceipt.fromJson(
-              Map<String, dynamic>.from(item as Map),
+              Map<String, dynamic>.from(item),
             ),
           )
           .toList(),
       readReceipts: rawReceipts
+          .whereType<Map>()
           .map(
             (item) =>
-                ReadReceipt.fromJson(Map<String, dynamic>.from(item as Map)),
+                ReadReceipt.fromJson(Map<String, dynamic>.from(item)),
           )
           .toList(),
       sender: json['sender'] is Map
@@ -169,9 +183,11 @@ class ChatMessage {
               Map<String, dynamic>.from(json['sender'] as Map),
             )
           : null,
-      deliveryStatus: json['deliveryStatus']?.toString() ??
-          json['delivery_status']?.toString() ??
-          json['status']?.toString(),
+      deliveryStatus: _deliveryStatusFromJson(json),
+      deliveredToCount: _intFromJson(
+        json['deliveredToCount'] ?? json['delivered_to_count'],
+      ),
+      readByCount: _intFromJson(json['readByCount'] ?? json['read_by_count']),
     );
   }
 
@@ -189,6 +205,8 @@ class ChatMessage {
     List<DeliveredReceipt>? deliveredReceipts,
     List<ReadReceipt>? readReceipts,
     String? deliveryStatus,
+    int? deliveredToCount,
+    int? readByCount,
   }) {
     return ChatMessage(
       id: id,
@@ -210,8 +228,74 @@ class ChatMessage {
       readReceipts: readReceipts ?? this.readReceipts,
       sender: sender,
       deliveryStatus: deliveryStatus ?? this.deliveryStatus,
+      deliveredToCount: deliveredToCount ?? this.deliveredToCount,
+      readByCount: readByCount ?? this.readByCount,
     );
   }
+}
+
+int? _intFromJson(dynamic raw) {
+  if (raw == null) {
+    return null;
+  }
+  if (raw is int) {
+    return raw;
+  }
+  if (raw is num) {
+    return raw.toInt();
+  }
+  return int.tryParse(raw.toString());
+}
+
+/// Prisma JSONB / Nest payloads often send `attachments`/`reactions` as `{}`
+/// instead of `[]` — never cast those fields with `as List`.
+List<dynamic> _asDynamicList(dynamic raw) {
+  if (raw == null) {
+    return const <dynamic>[];
+  }
+  if (raw is List) {
+    return raw;
+  }
+  if (raw is Map) {
+    // Empty `{}` means "no items" (Prisma JSONB default), not one blank object.
+    if (raw.isEmpty) {
+      return const <dynamic>[];
+    }
+    // Single attachment object → one-item list.
+    return <dynamic>[raw];
+  }
+  return const <dynamic>[];
+}
+
+String _stringContentFromJson(dynamic raw) {
+  if (raw == null) {
+    return '';
+  }
+  if (raw is String) {
+    return raw;
+  }
+  if (raw is Map) {
+    final map = Map<String, dynamic>.from(raw);
+    for (final key in const ['text', 'body', 'caption', 'content', 'message']) {
+      final value = map[key];
+      if (value is String && value.trim().isNotEmpty) {
+        return value;
+      }
+    }
+  }
+  return raw.toString();
+}
+
+String? _deliveryStatusFromJson(Map<String, dynamic> json) {
+  final explicit = json['deliveryStatus'] ?? json['delivery_status'];
+  if (explicit != null) {
+    final s = explicit.toString().trim();
+    if (s.isNotEmpty) {
+      return s;
+    }
+  }
+  // Do not map generic `status` (e.g. Vitafy REST uses READ for message lifecycle).
+  return null;
 }
 
 class ChatAttachment {
@@ -275,7 +359,7 @@ class ReplyToMessage {
       id: json['id']?.toString() ?? '',
       senderId: json['senderId']?.toString() ?? '',
       type: parseMessageType(json['type']?.toString() ?? 'TEXT'),
-      content: json['content']?.toString() ?? '',
+      content: _stringContentFromJson(json['content']),
       createdAt: DateTime.parse(
         json['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
       ),
@@ -345,6 +429,8 @@ class MessageReaction {
     required this.userId,
     required this.reactionType,
     this.conversationId,
+    this.createdAt,
+    this.user,
   });
 
   final String id;
@@ -352,10 +438,16 @@ class MessageReaction {
   final String userId;
   final String reactionType;
   final String? conversationId;
+  final DateTime? createdAt;
+  final ChatMessageSender? user;
 
   factory MessageReaction.fromJson(Map<String, dynamic> json) {
-    final rawReaction =
-        json['reactionType']?.toString() ?? json['emoji']?.toString() ?? '👍';
+    final rawReaction = json['reactionType']?.toString() ??
+        json['reaction_type']?.toString() ??
+        json['emoji']?.toString() ??
+        '👍';
+    final rawUser = json['user'] ?? json['chatUser'];
+    final userMap = rawUser is Map ? Map<String, dynamic>.from(rawUser) : null;
     return MessageReaction(
       id: json['id']?.toString() ?? '',
       messageId:
@@ -363,10 +455,27 @@ class MessageReaction {
       userId: json['userId']?.toString() ??
           json['chatUserId']?.toString() ??
           json['user_id']?.toString() ??
+          json['chat_user_id']?.toString() ??
+          userMap?['id']?.toString() ??
           '',
-      reactionType: rawReaction,
+      reactionType: rawReaction.trim().isEmpty ? '👍' : rawReaction.trim(),
       conversationId: json['conversationId']?.toString() ??
           json['conversation_id']?.toString(),
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ??
+          DateTime.tryParse(json['created_at']?.toString() ?? '') ??
+          (json['createdAtMs'] is num
+              ? DateTime.fromMillisecondsSinceEpoch(
+                  (json['createdAtMs'] as num).toInt(),
+                )
+              : null) ??
+          (json['created_at_ms'] is num
+              ? DateTime.fromMillisecondsSinceEpoch(
+                  (json['created_at_ms'] as num).toInt(),
+                )
+              : null),
+      user: rawUser is Map
+          ? ChatMessageSender.fromJson(Map<String, dynamic>.from(rawUser))
+          : null,
     );
   }
 
@@ -377,6 +486,8 @@ class MessageReaction {
       userId: userId,
       reactionType: reactionType,
       conversationId: conversationId ?? this.conversationId,
+      createdAt: createdAt,
+      user: user,
     );
   }
 }
@@ -481,4 +592,26 @@ class DeletedMessageEvent {
           json['user_id']?.toString(),
     );
   }
+}
+
+String _senderIdFromJson(Map<String, dynamic> json) {
+  final rawSender = json['sender'];
+  final senderMap =
+      rawSender is Map ? Map<String, dynamic>.from(rawSender) : null;
+  for (final value in [
+    json['senderId'],
+    json['sender_id'],
+    json['chatUserId'],
+    json['chat_user_id'],
+    senderMap?['id'],
+  ]) {
+    if (value == null) {
+      continue;
+    }
+    final trimmed = value.toString().trim();
+    if (trimmed.isNotEmpty) {
+      return trimmed;
+    }
+  }
+  return '';
 }
