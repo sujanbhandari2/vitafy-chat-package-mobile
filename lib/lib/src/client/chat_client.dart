@@ -28,6 +28,7 @@ class ChatClient {
   ChatServiceConfig get config => _service.config;
   Stream<ChatSocketEvent> get events => repository.socketEvents;
   Stream<ChatConnectionState> get connectionState => _service.connectionState;
+  bool get isSocketConnected => _service.socketClient.isConnected;
 
   Future<void> connect(ChatAuth auth) => repository.connectSocket(auth);
 

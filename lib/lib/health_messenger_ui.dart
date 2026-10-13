@@ -37,6 +37,7 @@ export 'src/widgets/messenger_composer_bar.dart';
 export 'src/widgets/messenger_conversation_list.dart';
 export 'src/widgets/messenger_conversation_list_item.dart';
 export 'src/widgets/messenger_conversation_tile.dart';
+export 'src/widgets/messenger_connection_edge_case_view.dart';
 export 'src/widgets/messenger_message_bubble.dart';
 export 'src/widgets/messenger_media_send_orchestrator.dart';
 export 'src/widgets/messenger_list_search_chrome.dart';

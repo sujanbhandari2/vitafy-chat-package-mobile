@@ -215,7 +215,8 @@ class MessengerChatThread extends StatefulWidget {
       associatedPeopleSectionHeaderBuilder;
 
   /// Custom row builder for associated people in the thread panel.
-  final Widget Function(BuildContext context, MessengerAvailablePersonData data)?
+  final Widget Function(
+          BuildContext context, MessengerAvailablePersonData data)?
       associatedPeopleItemBuilder;
 
   /// Empty copy when every associated person is already in this conversation.
@@ -348,6 +349,7 @@ class _MessengerChatThreadState extends State<MessengerChatThread> {
               deleteActionTextStyle: Theme.of(context).textTheme.bodyMedium!,
               attachmentCaptionTextStyle: widget.attachmentCaptionTextStyle,
               contentBuilders: overrides?.messageContentBuilders,
+              avatarBuilder: overrides?.messageAvatarBuilder,
               message: message,
               isMine: mine,
               currentUserId: widget.currentUserId,

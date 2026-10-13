@@ -82,12 +82,30 @@ class _GroupAvatarCircle extends StatelessWidget {
       child: imageUrl == null
           ? labelWidget
           : ClipOval(
-              child: Image.network(
-                imageUrl!,
-                width: size,
-                height: size,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Center(child: labelWidget),
+              child: Builder(
+                builder: (context) {
+                  final pixelSize =
+                      (size * MediaQuery.devicePixelRatioOf(context)).ceil();
+                  final fallback = Center(child: labelWidget);
+                  return Image.network(
+                    imageUrl!,
+                    width: size,
+                    height: size,
+                    fit: BoxFit.cover,
+                    cacheWidth: pixelSize,
+                    cacheHeight: pixelSize,
+                    filterQuality: FilterQuality.medium,
+                    gaplessPlayback: true,
+                    frameBuilder:
+                        (context, child, frame, wasSynchronouslyLoaded) {
+                      if (wasSynchronouslyLoaded || frame != null) {
+                        return child;
+                      }
+                      return fallback;
+                    },
+                    errorBuilder: (_, __, ___) => fallback,
+                  );
+                },
               ),
             ),
     );

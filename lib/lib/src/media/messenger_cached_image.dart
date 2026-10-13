@@ -54,6 +54,8 @@ class _MessengerCachedImageState extends State<MessengerCachedImage> {
   Map<String, String> _networkHeaders = const {};
   int _loadGeneration = 0;
   String? _lastResolvedSource;
+  String? _lastHeadersFingerprint;
+  String? _lastMediaBaseOrigin;
 
   @override
   void didChangeDependencies() {
@@ -69,9 +71,25 @@ class _MessengerCachedImageState extends State<MessengerCachedImage> {
     }
   }
 
+  String _headersFingerprint(Map<String, String> headers) {
+    if (headers.isEmpty) {
+      return '';
+    }
+    final keys = headers.keys.toList()..sort();
+    return keys.map((k) => '$k=${headers[k]}').join('|');
+  }
+
   void _scheduleResolve() {
     final raw = widget.source.trim();
-    if (raw == _lastResolvedSource && !_loading && !_failed) {
+    final scope = MessengerMediaCacheScope.maybeOf(context);
+    final origin = scope?.mediaBaseOrigin;
+    final headersFingerprint = _headersFingerprint(scope?.staticHeaders ?? {});
+    final sameSource = raw == _lastResolvedSource;
+    final sameOrigin = origin == _lastMediaBaseOrigin;
+    final sameHeaders = headersFingerprint == _lastHeadersFingerprint;
+    // Same inputs → skip (covers in-flight, success, and failed). Retry only
+    // when source / media origin / auth header fingerprint changes.
+    if (sameSource && sameOrigin && sameHeaders) {
       return;
     }
     _loadGeneration++;
@@ -93,10 +111,13 @@ class _MessengerCachedImageState extends State<MessengerCachedImage> {
       return;
     }
 
-    final resolved = MessengerMediaCacheScope.maybeOf(context) != null
+    final scope = MessengerMediaCacheScope.maybeOf(context);
+    final resolved = scope != null
         ? MessengerMediaCacheScope.resolveMediaUrl(context, raw)
         : messengerAbsoluteMediaUrl(raw);
     _lastResolvedSource = raw;
+    _lastMediaBaseOrigin = scope?.mediaBaseOrigin;
+    _lastHeadersFingerprint = _headersFingerprint(scope?.staticHeaders ?? {});
 
     if (!messengerMediaSourceIsNetwork(resolved)) {
       final file = File(resolved);
@@ -132,7 +153,6 @@ class _MessengerCachedImageState extends State<MessengerCachedImage> {
       });
     }
 
-    final scope = MessengerMediaCacheScope.maybeOf(context);
     final headers = scope != null
         ? await MessengerMediaCacheScope.resolveHeaders(context, resolved)
         : const <String, String>{};
@@ -173,6 +193,18 @@ class _MessengerCachedImageState extends State<MessengerCachedImage> {
       _useNetworkFallback = true;
       _networkHeaders = headers;
       _resolvedUrl = resolved;
+    });
+  }
+
+  void _markNetworkFailed() {
+    if (!mounted || _failed) {
+      return;
+    }
+    setState(() {
+      _failed = true;
+      _useNetworkFallback = false;
+      _file = null;
+      _loading = false;
     });
   }
 
@@ -242,12 +274,17 @@ class _MessengerCachedImageState extends State<MessengerCachedImage> {
               ),
             );
           },
-          errorBuilder: (_, __, ___) => Center(
-            child: Text(
-              widget.errorMessage,
-              style: TextStyle(color: theme.mutedText, fontSize: 12),
-            ),
-          ),
+          errorBuilder: (_, __, ___) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _markNetworkFailed();
+            });
+            return Center(
+              child: Text(
+                widget.errorMessage,
+                style: TextStyle(color: theme.mutedText, fontSize: 12),
+              ),
+            );
+          },
         ),
       );
     }

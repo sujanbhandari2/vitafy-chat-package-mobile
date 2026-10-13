@@ -56,12 +56,10 @@ class MessengerAvatar extends StatelessWidget {
       child: imageUrl == null
           ? labelWidget
           : ClipOval(
-              child: Image.network(
-                imageUrl!,
-                width: size,
-                height: size,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Center(child: labelWidget),
+              child: _DecodedNetworkAvatar(
+                imageUrl: imageUrl!,
+                size: size,
+                fallback: Center(child: labelWidget),
               ),
             ),
     );
@@ -106,5 +104,42 @@ class MessengerAvatar extends StatelessWidget {
       ],
     );
   }
+}
 
+/// Loads a remote avatar at display size so large originals are not fully
+/// decoded into memory for a small circular chip.
+class _DecodedNetworkAvatar extends StatelessWidget {
+  const _DecodedNetworkAvatar({
+    required this.imageUrl,
+    required this.size,
+    required this.fallback,
+  });
+
+  final String imageUrl;
+  final double size;
+  final Widget fallback;
+
+  @override
+  Widget build(BuildContext context) {
+    final pixelSize = (size * MediaQuery.devicePixelRatioOf(context)).ceil();
+    return Image.network(
+      imageUrl,
+      width: size,
+      height: size,
+      fit: BoxFit.cover,
+      // Decode near display resolution — avoids multi-megapixel bitmaps for
+      // 26–48px chips and cuts perceived load/hang time after download.
+      cacheWidth: pixelSize,
+      cacheHeight: pixelSize,
+      filterQuality: FilterQuality.medium,
+      gaplessPlayback: true,
+      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+        if (wasSynchronouslyLoaded || frame != null) {
+          return child;
+        }
+        return fallback;
+      },
+      errorBuilder: (_, __, ___) => fallback,
+    );
+  }
 }

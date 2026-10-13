@@ -230,7 +230,8 @@ After upgrading, do a **full stop + rebuild** of the host app (`flutter clean` i
 - Map every attachment on incoming messages with `messengerAttachmentsFromChatMessage` so multi-image stacks render correctly (not only `attachments.first.url` in `content`).
 - Build conversation-list subtitles with `messengerConversationPreview` (same labels as reply chips: Photo, Voice message, File, Message deleted).
 - If media URLs require auth, pass `mediaCacheHeaders` or `mediaCacheHeadersForUrl` on `MessengerChatShell`, or rely on `mediaChatAuth` (shell merges `ChatAuth.toApiHeaders()` when static headers are omitted).
-- Relative attachment paths (e.g. `/api/upload/...`) are joined with `mediaBaseUrl` or `mediaChatClient.config.apiBaseUrl`. Host mappers should pass `mediaBaseOrigin` into `messengerAttachmentsFromChatMessage`.
+- **Auth headers are only attached for same-host URLs** (API origin). Public S3/CDN attachment URLs are fetched without `Authorization` / `X-Api-Key`, matching web `<img>` behavior — sending chat JWT to object storage was a common cause of “Unable to load image”.
+- Relative attachment paths (e.g. `/uploads/...`) are joined with the **server origin** derived from `mediaBaseUrl` / `mediaChatClient.config.apiBaseUrl` (trailing `/api` is stripped, matching web `getServerOrigin`). Host mappers should pass `mediaBaseOrigin` into `messengerAttachmentsFromChatMessage`.
 - Logout clears the cache automatically when `clearMediaCacheOnLogout` is true (default). To clear manually: `await MessengerMediaCacheScope.clearCache(context)`.
 - **Signed URLs:** cache keys are normalized URLs. Short-lived query tokens may prevent hits; supply a custom `mediaCache` with stable keys (e.g. message id + attachment index) if needed.
 
@@ -254,6 +255,7 @@ After upgrading, do a **full stop + rebuild** of the host app (`flutter clean` i
 | Wrong tenant’s chats | `FLAVOR` dart-define missing → no `DEV_`/`QA_` prefix on `externalTenantId` |
 | `flutter pub get` path error | `health_messenger_ui.path` in Vitafy `pubspec.yaml` must exist on disk |
 | Push off | Firebase not initialized, missing platform config, or permission denied |
+| “Unable to load image” on S3/CDN attachments | Ensure package strips auth for cross-origin media (same-host only). Fully restart the host app after upgrading. |
 | Advisories decode warning on `pub get` | Known pub.dev noise; dependencies still resolve — see [example/README.md](example/README.md) |
 
 ---

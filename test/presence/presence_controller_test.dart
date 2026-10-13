@@ -207,8 +207,8 @@ void main() {
       connectionStateController.add(ChatConnectionState.disconnected);
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
-      expect(controller.presence.value.phase,
-          LocalPresencePhase.backgroundGrace);
+      expect(
+          controller.presence.value.phase, LocalPresencePhase.backgroundGrace);
       expect(reconnectCalls, 0);
 
       controller.dispose();
@@ -245,6 +245,71 @@ void main() {
       controller.dispose();
       await connectionStateController.close();
     });
+
+    test('failed reconnect is retried after delay while foreground', () async {
+      final connectionStateController =
+          StreamController<ChatConnectionState>.broadcast();
+
+      var reconnectCalls = 0;
+
+      final controller = PresenceController(
+        config: const PresenceConfig(
+          backgroundOfflineGrace: Duration(milliseconds: 60),
+          inactiveDebounce: Duration.zero,
+          reconnectRetryDelay: Duration(milliseconds: 30),
+        ),
+        connectionStateStream: connectionStateController.stream,
+        reconnectSocket: () async {
+          reconnectCalls++;
+          throw Exception('handshake failed');
+        },
+        disconnectSocket: () {},
+        emitGoingOffline: (_) async {},
+        now: () => DateTime.utc(2026, 01, 01),
+        initialLifecycleState: AppLifecycleState.resumed,
+      );
+
+      connectionStateController.add(ChatConnectionState.disconnected);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(reconnectCalls, 1);
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(reconnectCalls, greaterThanOrEqualTo(2));
+
+      controller.dispose();
+      await connectionStateController.close();
+    });
+
+    test('zero reconnect retry delay does not schedule another attempt',
+        () async {
+      final connectionStateController =
+          StreamController<ChatConnectionState>.broadcast();
+
+      var reconnectCalls = 0;
+
+      final controller = PresenceController(
+        config: const PresenceConfig(
+          backgroundOfflineGrace: Duration(milliseconds: 60),
+          inactiveDebounce: Duration.zero,
+          reconnectRetryDelay: Duration.zero,
+        ),
+        connectionStateStream: connectionStateController.stream,
+        reconnectSocket: () async {
+          reconnectCalls++;
+          throw Exception('handshake failed');
+        },
+        disconnectSocket: () {},
+        emitGoingOffline: (_) async {},
+        now: () => DateTime.utc(2026, 01, 01),
+        initialLifecycleState: AppLifecycleState.resumed,
+      );
+
+      connectionStateController.add(ChatConnectionState.disconnected);
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(reconnectCalls, 1);
+
+      controller.dispose();
+      await connectionStateController.close();
+    });
   });
 }
-

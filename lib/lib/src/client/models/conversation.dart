@@ -439,6 +439,7 @@ class ConversationParticipantUser {
     required this.username,
     required this.role,
     this.externalUserRole,
+    this.externalUserId,
     this.email,
     this.avatarUrl,
     this.status,
@@ -453,6 +454,12 @@ class ConversationParticipantUser {
   /// Prefer this over [role].label when showing badges — [parseRole] collapses
   /// many Vitafy roles into three enum values.
   final String? externalUserRole;
+
+  /// Host platform id (`externalUserId` / `providerUserId`).
+  ///
+  /// Conversation create responses often omit the associated-user preview link.
+  /// This id joins the chat participant back to that directory photo.
+  final String? externalUserId;
   final String? email;
   final String? avatarUrl;
   final String? status;
@@ -483,6 +490,15 @@ class ConversationParticipantUser {
           ? AppRole.client
           : parseRole(effectiveRawRole),
       externalUserRole: effectiveRawRole,
+      externalUserId: _firstNonEmpty(
+        json,
+        const [
+          'externalUserId',
+          'external_user_id',
+          'providerUserId',
+          'provider_user_id',
+        ],
+      ),
       email: _firstNonEmpty(json, const ['email']),
       avatarUrl: _firstNonEmpty(
         json,

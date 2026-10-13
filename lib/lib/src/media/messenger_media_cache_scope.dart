@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../utils/messenger_media_url.dart';
 import 'default_messenger_media_cache.dart';
 import 'messenger_media_cache.dart';
 
@@ -54,10 +53,18 @@ class MessengerMediaCacheScope extends InheritedWidget {
     if (scope == null) {
       return const {};
     }
+    final Map<String, String> raw;
     if (scope.headersForUrl != null) {
-      return scope.headersForUrl!(url);
+      raw = await scope.headersForUrl!(url);
+    } else {
+      raw = scope.staticHeaders;
     }
-    return scope.staticHeaders;
+    // Drop chat JWT / API key for public S3/CDN hosts (web `<img>` parity).
+    return messengerHeadersForMediaUrl(
+      url,
+      headers: raw,
+      mediaBaseOrigin: scope.mediaBaseOrigin,
+    );
   }
 
   /// Clears all cached media files when a scope is available.

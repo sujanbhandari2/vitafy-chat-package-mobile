@@ -43,6 +43,7 @@ class MessengerMessageBubble extends StatefulWidget {
     this.showDeliveryStatus = true,
     this.onRetryUpload,
     this.contentBuilders,
+    this.avatarBuilder,
   });
 
   final MessengerChatMessage message;
@@ -74,6 +75,7 @@ class MessengerMessageBubble extends StatefulWidget {
   final bool showDeliveryStatus;
   final VoidCallback? onRetryUpload;
   final MessengerMessageContentBuilders? contentBuilders;
+  final MessengerMessageAvatarBuilder? avatarBuilder;
 
   @override
   State<MessengerMessageBubble> createState() => _MessengerMessageBubbleState();
@@ -106,12 +108,22 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             if (!widget.isMine) ...[
-              MessengerAvatar(
-                label: _initials(widget.message.senderLabel),
-                imageUrl: widget.message.senderAvatarUrl,
-                size: 26,
-                compact: true,
-              ),
+              widget.avatarBuilder?.call(
+                    context,
+                    MessengerMessageAvatarData(
+                      message: widget.message,
+                      label: _initials(widget.message.senderLabel),
+                      imageUrl: widget.message.senderAvatarUrl,
+                      size: 26,
+                      compact: true,
+                    ),
+                  ) ??
+                  MessengerAvatar(
+                    label: _initials(widget.message.senderLabel),
+                    imageUrl: widget.message.senderAvatarUrl,
+                    size: 26,
+                    compact: true,
+                  ),
               const SizedBox(width: 6),
             ],
             Flexible(
@@ -348,8 +360,7 @@ class _MessengerMessageBubbleState extends State<MessengerMessageBubble> {
         );
       },
     );
-    final customBuilder =
-        widget.contentBuilders?.builderForKind(contentKind);
+    final customBuilder = widget.contentBuilders?.builderForKind(contentKind);
     if (customBuilder != null) {
       return customBuilder(context, data);
     }

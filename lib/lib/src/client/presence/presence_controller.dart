@@ -30,8 +30,7 @@ class PresenceController {
         _emitGoingOffline = emitGoingOffline,
         _now = now {
     _lifecycleSubscription = lifecycleStream?.listen(handleLifecycleState);
-    _connectionSubscription =
-        _connectionStateStream.listen(_onConnectionState);
+    _connectionSubscription = _connectionStateStream.listen(_onConnectionState);
 
     // Initialize snapshot based on lifecycle so apps that bootstrap while
     // already resumed become "online immediately".
@@ -51,6 +50,7 @@ class PresenceController {
 
   Timer? _inactiveDebounceTimer;
   Timer? _backgroundGraceTimer;
+  Timer? _reconnectRetryTimer;
 
   bool _isOnlineIntent = false;
   bool _reconnectInFlight = false;
@@ -177,6 +177,28 @@ class PresenceController {
     _backgroundGraceTimer = null;
   }
 
+  void _cancelReconnectRetry() {
+    _reconnectRetryTimer?.cancel();
+    _reconnectRetryTimer = null;
+  }
+
+  void _scheduleReconnectRetry() {
+    if (_disposed || !_mayReconnectSocket) {
+      return;
+    }
+    if (_reconnectRetryTimer != null) {
+      return;
+    }
+    final delay = _config.reconnectRetryDelay;
+    if (delay <= Duration.zero) {
+      return;
+    }
+    _reconnectRetryTimer = Timer(delay, () {
+      _reconnectRetryTimer = null;
+      unawaited(_tryReconnect('retry_after_failure'));
+    });
+  }
+
   void _setOnlineIntent(
     LocalPresencePhase phase, {
     DateTime? graceEndsAt,
@@ -201,6 +223,7 @@ class PresenceController {
     _offlineInFlight = true;
     try {
       _cancelGraceTimers();
+      _cancelReconnectRetry();
       _isOnlineIntent = false;
 
       _snapshot.value = PresenceSnapshot(
@@ -244,8 +267,11 @@ class PresenceController {
     _reconnectInFlight = true;
     try {
       await _reconnectSocket();
+      _cancelReconnectRetry();
     } catch (_) {
-      // Reconnect errors are handled by the connection state machine.
+      // Handshake failures emit `failed` while this call is still in-flight,
+      // so the connection listener cannot start the next attempt itself.
+      _scheduleReconnectRetry();
     } finally {
       _reconnectInFlight = false;
     }
@@ -257,6 +283,7 @@ class PresenceController {
     }
     switch (state) {
       case ChatConnectionState.connected:
+        _cancelReconnectRetry();
         return;
       case ChatConnectionState.disconnected:
         if (_intentionalDisconnect) {
@@ -283,7 +310,7 @@ class PresenceController {
     _connectionSubscription?.cancel();
     _inactiveDebounceTimer?.cancel();
     _backgroundGraceTimer?.cancel();
+    _cancelReconnectRetry();
     _snapshot.dispose();
   }
 }
-

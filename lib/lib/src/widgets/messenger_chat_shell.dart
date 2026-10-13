@@ -676,13 +676,13 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
   String? get _mediaBaseOrigin {
     final explicit = widget.mediaBaseUrl?.trim();
     if (explicit != null && explicit.isNotEmpty) {
-      return messengerNormalizeMediaOrigin(explicit);
+      return messengerMediaServerOrigin(explicit);
     }
     final apiBase = widget.mediaChatClient?.config.apiBaseUrl.trim() ?? '';
     if (apiBase.isEmpty) {
       return null;
     }
-    return messengerNormalizeMediaOrigin(apiBase);
+    return messengerMediaServerOrigin(apiBase);
   }
 
   String _resolveMediaUrl(String url) {
@@ -695,6 +695,14 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
       return widget.mediaCacheHeaders!;
     }
     return widget.mediaChatAuth?.toApiHeaders() ?? const {};
+  }
+
+  Map<String, String> _mediaHeadersForUrl(String url) {
+    return messengerHeadersForMediaUrl(
+      url,
+      headers: _resolvedStaticMediaHeaders,
+      mediaBaseOrigin: _mediaBaseOrigin,
+    );
   }
 
   void _handleLogout() {
@@ -735,14 +743,20 @@ class _MessengerChatShellState extends State<MessengerChatShell> {
     if (widget.mediaCacheHeadersForUrl != null) {
       for (final url in limited) {
         final headers = await widget.mediaCacheHeadersForUrl!(url);
-        await _mediaCache.getFile(url, headers: headers);
+        await _mediaCache.getFile(
+          url,
+          headers: messengerHeadersForMediaUrl(
+            url,
+            headers: headers,
+            mediaBaseOrigin: _mediaBaseOrigin,
+          ),
+        );
       }
       return;
     }
-    await _mediaCache.prefetch(
-      limited,
-      headers: _resolvedStaticMediaHeaders,
-    );
+    for (final url in limited) {
+      await _mediaCache.getFile(url, headers: _mediaHeadersForUrl(url));
+    }
   }
 
   @override

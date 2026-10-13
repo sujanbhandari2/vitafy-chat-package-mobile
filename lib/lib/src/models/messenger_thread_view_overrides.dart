@@ -139,6 +139,28 @@ typedef MessengerMessageBubbleBuilder = Widget Function(
   MessengerMessageBubbleContext contextData,
 );
 
+/// Data for replacing the default sender avatar beside a message bubble.
+class MessengerMessageAvatarData {
+  const MessengerMessageAvatarData({
+    required this.message,
+    required this.label,
+    required this.imageUrl,
+    required this.size,
+    required this.compact,
+  });
+
+  final MessengerChatMessage message;
+  final String label;
+  final String? imageUrl;
+  final double size;
+  final bool compact;
+}
+
+typedef MessengerMessageAvatarBuilder = Widget Function(
+  BuildContext context,
+  MessengerMessageAvatarData data,
+);
+
 /// Data passed to per-type message content builders inside a bubble.
 class MessengerMessageContentData {
   const MessengerMessageContentData({
@@ -322,6 +344,7 @@ class MessengerThreadViewOverrides {
   const MessengerThreadViewOverrides({
     this.headerBuilder,
     this.messageBubbleBuilder,
+    this.messageAvatarBuilder,
     this.messageContentBuilders,
     this.composerBuilder,
     this.threadOverlayBuilder,
@@ -330,6 +353,10 @@ class MessengerThreadViewOverrides {
 
   final MessengerThreadHeaderBuilder? headerBuilder;
   final MessengerMessageBubbleBuilder? messageBubbleBuilder;
+
+  /// Replaces the default [MessengerAvatar] beside peer message bubbles.
+  /// Hosts can inject a disk-cached avatar widget here.
+  final MessengerMessageAvatarBuilder? messageAvatarBuilder;
   final MessengerMessageContentBuilders? messageContentBuilders;
   final MessengerComposerBuilder? composerBuilder;
   final MessengerThreadOverlayBuilder? threadOverlayBuilder;

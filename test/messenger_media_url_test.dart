@@ -18,4 +18,55 @@ void main() {
       'https://cdn.example/x.png',
     );
   });
+
+  test('messengerMediaServerOrigin strips trailing /api', () {
+    expect(
+      messengerMediaServerOrigin('https://api.example.com/api/'),
+      'https://api.example.com',
+    );
+    expect(
+      messengerMediaServerOrigin('https://api.example.com'),
+      'https://api.example.com',
+    );
+  });
+
+  test('messengerHeadersForMediaUrl drops auth for public CDN hosts', () {
+    const headers = {
+      'Authorization': 'Bearer jwt',
+      'X-Api-Key': 'key:secret',
+    };
+    expect(
+      messengerHeadersForMediaUrl(
+        'https://cdn.example.com/chat/photo.jpg',
+        headers: headers,
+        mediaBaseOrigin: 'https://api.example.com',
+      ),
+      isEmpty,
+    );
+    expect(
+      messengerHeadersForMediaUrl(
+        'https://api.example.com/uploads/photo.jpg',
+        headers: headers,
+        mediaBaseOrigin: 'https://api.example.com',
+      ),
+      headers,
+    );
+  });
+
+  test('messengerMediaUrlIsSameOrigin compares hosts only', () {
+    expect(
+      messengerMediaUrlIsSameOrigin(
+        'https://api.example.com/path/a.png',
+        mediaBaseOrigin: 'https://api.example.com/api',
+      ),
+      isTrue,
+    );
+    expect(
+      messengerMediaUrlIsSameOrigin(
+        'https://bucket.s3.amazonaws.com/a.png',
+        mediaBaseOrigin: 'https://api.example.com',
+      ),
+      isFalse,
+    );
+  });
 }

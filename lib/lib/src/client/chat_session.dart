@@ -43,6 +43,7 @@ class ChatSession {
   ChatTenantScope? get tenantScope => _tenantScope;
   TenantUser? get currentUser => _currentUser;
   ChatAuth? get sessionAuth => _sessionAuth;
+  bool get isSocketConnected => _client.isSocketConnected;
 
   /// Snapshot of the local user's own presence intent/state.
   ///

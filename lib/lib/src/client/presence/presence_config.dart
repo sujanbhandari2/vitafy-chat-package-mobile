@@ -14,6 +14,7 @@ class PresenceConfig {
     this.disconnectSocketOnOffline = true,
     this.emitGoingOfflineOnOffline = true,
     this.disconnectSocketWhenBackgrounded = true,
+    this.reconnectRetryDelay = const Duration(seconds: 2),
   });
 
   /// When the app moves to background (paused/hidden), keep the user online
@@ -40,15 +41,24 @@ class PresenceConfig {
   /// user returns before grace times out.
   final bool disconnectSocketWhenBackgrounded;
 
+  /// Delay before retrying a failed [PresenceController] reconnect.
+  ///
+  /// Handshake timeouts emit `failed` while a reconnect is still in-flight, so
+  /// the connection listener will not schedule another attempt by itself.
+  /// [Duration.zero] disables this extra retry.
+  final Duration reconnectRetryDelay;
+
   PresenceConfig copyWith({
     Duration? backgroundOfflineGrace,
     Duration? inactiveDebounce,
     bool? disconnectSocketOnOffline,
     bool? emitGoingOfflineOnOffline,
     bool? disconnectSocketWhenBackgrounded,
+    Duration? reconnectRetryDelay,
   }) {
     return PresenceConfig(
-      backgroundOfflineGrace: backgroundOfflineGrace ?? this.backgroundOfflineGrace,
+      backgroundOfflineGrace:
+          backgroundOfflineGrace ?? this.backgroundOfflineGrace,
       inactiveDebounce: inactiveDebounce ?? this.inactiveDebounce,
       disconnectSocketOnOffline:
           disconnectSocketOnOffline ?? this.disconnectSocketOnOffline,
@@ -56,7 +66,7 @@ class PresenceConfig {
           emitGoingOfflineOnOffline ?? this.emitGoingOfflineOnOffline,
       disconnectSocketWhenBackgrounded: disconnectSocketWhenBackgrounded ??
           this.disconnectSocketWhenBackgrounded,
+      reconnectRetryDelay: reconnectRetryDelay ?? this.reconnectRetryDelay,
     );
   }
 }
-
